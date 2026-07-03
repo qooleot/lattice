@@ -73,9 +73,28 @@ Lattice sits between them: the rigor of formal methods, the readability of prose
 
 Everything reduces to three things. Every other concept is a plugin into one of them.
 
-1. **One language** — an AST with formal semantics, rendered/edited through three projections (prose, code, diagram).
-2. **One elicitation loop** — *recognition over recall*: propose a candidate invariant → ask the single cheapest, most-informative question → the human judges a concrete case → prune/refine → verify. Fed by many **candidate sources**.
-3. **One oracle** — the same invariants compiled to four **targets**: design-time model check, conformance/property tests, runtime monitors, deterministic simulation testing.
+1. **One *object* language** — the spec (context/aggregate/machine), an AST with formal semantics, rendered/edited through three projections (prose, code, diagram). *Honest scoping:* "one language" means one object language **for the people modeling domains** — it is **not** a claim that the whole system is one grammar. Two smaller authored languages sit beside it, plus a compile target (see §3.2). Naming them honestly matters because they are the real surface area a user confronts.
+2. **One elicitation loop** — *recognition over recall*: propose a candidate invariant → ask the single cheapest, most-informative question → the human judges a concrete case → prune/refine → verify. Fed by many **candidate sources**. *Honest scoping:* in a well-covered domain this loop is **not** the workhorse — templates + LLM seeding + inference are (see §8 intro and §16). Its value scales with domain novelty.
+3. **One oracle** — the same invariants compiled to four **targets**: design-time model check, conformance/property tests, runtime monitors, deterministic simulation testing. *The anti-drift guarantee rests on the conformance adapter — designed in §11.5, not hand-waved.*
+
+### 3.1 Cast of roles — who is "the human"
+
+The doc uses "the human" for very different people; they have very different tolerances. Explicitly:
+
+| Role | Authors | Judges / reads | Tolerance for loops |
+|---|---|---|---|
+| **Domain expert / founder** | nothing in code; edits *structured* fields | judges concrete cases (recognition), reads prose, resolves policy forks (open decisions) | **low** — the question-minimization (§8) exists for them |
+| **Engineer** | the object language (code projection); **owns the residual conformance adapter** (§11.5) | code, diagrams | high |
+| **Platform team** | rules/templates in the **meta-language** (§10.3) — rare, specialist | the catalog | high |
+| **The agent (LLM)** | drafts formalizations, candidate invariants, and first-draft adapters | — | n/a (pays the formalization tax) |
+
+### 3.2 The three authored languages (surface area, honestly)
+
+- **Object language** — the spec DSL (`context`/`aggregate`/`machine`/`service`). What most users touch. One AST, three projections (§6).
+- **Meta-language** — the rule/template language (§10.3): a real programming language with quantifiers and `emit` that pattern-matches over the object language's *reflected meta-model*. A **separate** language with its own AST that emits object-level invariants. Touched only by the platform team, rarely.
+- **Compiled substrate** — the temporal-logic / relational form the two above compile to (§10.3 bottom). A compile target; **nobody authors it**.
+
+Prose and diagram are **projections/views**, not separate authored languages (see §6 for the authoring boundary).
 
 ---
 
@@ -125,7 +144,7 @@ We generated ~25 loose concepts. They collapse to **7 components + candidate sou
 - `machine` — a Harel statechart inside an aggregate: **orthogonal (parallel) `region`s**, hierarchical states, guarded transitions with effects, `emits`, and cross-region rules (`when <RegionA> enters <S>: <RegionB> -> <T>`). Prefer orthogonal regions over a flat enum when a thing has independent concerns (e.g. Access × Billing — see §5.6).
 - `transition` — `from … to …`, `when <trigger>`, `requires <pre>`, `atomic do { <effect> }`, `ensures <post>`, `emits <event>`.
 - `event` — a domain event (a past-tense **fact**; distinct from a transition — see §13).
-- `service` — an application/domain service = a **verified command**, not an RPC endpoint (§5.3). **Atomic by default** — a single transaction on one aggregate, no intermediate states. It grows a `saga { … }` body **only when the tool detects that it crosses the atomicity boundary** (an `external` side-effect, an out-of-band `wait`, or multiple aggregates). RPC/OpenAPI is one generated *projection* of it.
+- `service` — an application/domain service = a **verified command**, not an RPC endpoint (§5.3). **Atomic by default** — a single transaction on one aggregate, no intermediate states. It grows a `saga { … }` body **only when it crosses the atomicity boundary** — which the tool *derives from your own declarations* (you wrote an `external` call, an out-of-band `wait`, or a mutation spanning aggregates), not from discovering hidden concurrency. RPC/OpenAPI is one generated *projection* of it.
 - `acl` — an Anti-Corruption Layer (§5.4): a context-map relationship (`[D,ACL]<-[U,OHS,PL]`) **plus** a first-class, checkable `translate` (a decision table) with totality/unambiguity invariants and `dedup`. Where an external system's flat model is quarantined.
 - `repository` — nested in its aggregate (one per root, DDD); the **collection port** (maps to a data-plane port); method signatures carry the "many" side.
 - `invariant` / `liveness` — structural or behavioral safety, and temporal liveness (`leads-to`, `under fairness(...)`).
@@ -294,7 +313,7 @@ service CancelSubscription {
 }
 ```
 
-A `saga` appears **only when the tool detects broken atomicity** — an `external` side-effect that can't be rolled back, an out-of-band `wait`, or a span across aggregates that don't share a transaction. It is *derived and flagged*, not chosen:
+A `saga` appears **only when the operation crosses the atomicity boundary** — an `external` side-effect that can't be rolled back, an out-of-band `wait`, or a span across aggregates that don't share a transaction. This is *derivation from your own declarations, not discovery*: you already wrote the `external` call and the `wait`; the tool infers the consequence (you can't be one transaction) and **forces you to handle it** rather than letting you silently assume atomicity. It is derived and flagged, not chosen:
 
 ```
 service UpgradePlan {
@@ -339,7 +358,22 @@ The core is a **typed AST with formal semantics** (a transition system + relatio
 - **Code** — typed, diff-able, PR-able. What engineers read/write.
 - **Diagram** — statechart + context map, generated.
 
-`code → prose` (pretty-print) and `code → diagram` are easy. **`prose → code` is the hard direction — it is autoformalization** (see §19, Risk 1/4). **Design decision:** prose is a **read-mostly, structured projection**. The expert edits *guided* fields (typed slots, dropdowns, judged cases), not freeform paragraphs that get parsed. They *read* fluent English and *judge* concrete cases; they do not author paragraphs the tool must parse. This is a weaker but honest version of "everyone edits their own view," and it avoids recreating the Rebel two-sources-of-truth problem *inside the tool*.
+`code → prose` (pretty-print) and `code → diagram` are easy. **`prose → code` is the hard direction — it is autoformalization** (see §19, Risk 1/4).
+
+**The authoring boundary (one rule, applied everywhere in this doc):**
+
+| Prose usage | Who | Safe? |
+|---|---|---|
+| **Read** a rendered view | everyone | yes — pure `code → prose` |
+| **Judge** concrete cases the tool generates | domain expert | yes — recognition, no parsing |
+| **Author via structured fields** (typed slots, dropdowns, decision-table cells) | domain expert | yes — the tool controls the grammar |
+| **Author freeform paragraphs the tool parses back to AST** | — | **no — deferred** (autoformalization risk) |
+
+This resolves two apparent contradictions elsewhere in the doc:
+- **§17** (the rich prose spec) is a **rendered/read view** — not English a domain expert typed as paragraphs.
+- **§10.3** (the "readable rule" prose) is a **rendered/structured view** of a rule whose *canonical authored form is the engineer-code projection*. A platform author writes the typed rule (or fills structured slots); they do not type English the tool parses.
+
+Net: everyone *reads* fluent prose; domain experts *author by judging cases and filling structured fields*; **nobody authors freeform paragraphs the tool must parse.** This avoids recreating the Rebel two-sources-of-truth problem *inside the tool*.
 
 ---
 
@@ -392,6 +426,8 @@ The core is a **typed AST with formal semantics** (a transition system + relatio
 ## 8. The elicitation loop in detail
 
 The loop is *active learning over a hypothesis space of invariants*, with the model finder manufacturing the questions. It is the same skeleton as CEGIS/CEGAR — but the "counterexample" is a **question for a human**, optimized to be the cheapest possible.
+
+**Honest scoping — this is not the workhorse in covered domains.** In a solved domain like billing, templates + LLM seeding + inference resolve most invariants and this loop is lightly exercised (§16: 2 of 12). Its value is twofold and **scales with domain novelty**: (i) it is the **residual handler** for genuinely novel invariants no template covers and inference can't settle; (ii) it is the shared **question-selection layer** every candidate source flows through when a human must confirm — boundary-probing (§8.3) catches an over-general *template*-proposed invariant just as it catches a de-novo one. Build-order implication (§21): templates + seeding + inference are the MVP; the full version-space / MaxSAT machinery below is a later, novelty-driven investment, not the first thing to build.
 
 ### 8.1 The atomic operation — a distinguishing witness is a satisfiability query
 
@@ -494,7 +530,7 @@ Example: safety `available >= 0` is not inductive. CTI: `available=10` + `reserv
 
 ### 10.3 How a template is authored — three projections (like everything else)
 
-Prose (platform author's default view):
+Prose (a **rendered / structured** view — *not* freeform English the platform author types; the canonical authored form is the engineer-code projection below, per §6):
 ```
 rule Idempotency:
   wherever an external call has an idempotency key
@@ -569,6 +605,28 @@ The invariants become **properties** for a deterministic-simulation substrate:
 - **Catches:** deep concurrency/fault bugs (the race/saga class of §14) in the real system, not just the model. **Cannot:** run without the DST substrate; slower/costlier.
 
 **Note on layering:** target ① finds the race/saga bug at *design time* from the invariant; target ④ finds the *same* bug in the *real binary* from the *same* invariant. Design-time and runtime conformance from one source.
+
+### 11.5 The conformance adapter — how anti-drift actually works (and doesn't re-create two truths)
+
+**The whole anti-Rebel thesis hangs here, so it gets a design, not a clause.** Targets ② and ③ need to compare the *implementation* against the *spec*. The naive way is a hand-written "driver" mapping three things: command→entry-point, impl-events→spec-events, and impl-state→spec-state. That last map — the **abstraction function** — is a second source of truth, written by hand, that rots on every refactor. Maintaining it is *exactly where model-based-testing efforts die.* If we don't solve it, the drift we banished from the spec reappears in the adapter.
+
+The design is a **layered, generated-first fallback** that shrinks the hand-written surface toward zero and makes what remains self-checking:
+
+1. **Command → entry-point is generated, not written.** The service's RPC/OpenAPI surface is *already a generated projection of the spec* (§5.3). The driver invokes that same generated interface. The "which function to call" half of the adapter is free and **regenerates with the spec** — it can't drift because it isn't a separate artifact.
+
+2. **Primary conformance is at the event layer — no abstraction function at all.** The model-checker's trace *is* a domain-event stream (§13), and the implementation *already emits those domain events to the outbox* (spec-core A4b). So the default check is: *does the impl's emitted event sequence match an allowed spec trace?* This compares **observable histories** (Jepsen/Elle-style) over the stable, public event interface — there is **no impl-state→spec-state map to maintain.** This is the rot-resistant default, and it covers most conformance.
+
+3. **Runtime monitors (target ③) also need no offline abstraction function.** They are spec-compiled assertions running *inside* the implementation, reading its state directly at the point of execution. A large fraction of invariants are checkable this way with zero adapter.
+
+4. **State-level replay (the expensive path) reuses the generated persistence mapping.** When you *do* need to read "the aggregate's state" (for full trace-conformance), you go through the *same generated repository/ORM mapping the spec already produces* (spec-core's MikroORM-shaped SDK / repository ports). The abstraction function is **the persistence mapping read in reverse — generated, not hand-authored.**
+
+5. **The residual hand-written adapter is scoped, self-checking, and drift-detected.** Only implementation state the generated mapping doesn't cover — custom caches, denormalized read models — needs a hand fragment. Two guardrails keep it from becoming a rotting second truth:
+   - **It must pass its own round-trip conformance test:** write via the impl → read via the adapter → must equal the spec's expectation. *An adapter that lies or has rotted fails its own test* rather than silently corrupting every other test.
+   - **It is typed against the *generated* interface,** so a spec regeneration that changes that interface makes a stale fragment **fail to compile — loud, not silent.**
+
+**Who writes it:** the **engineer** owns the residual fragment; the **agent** drafts it from the spec + the impl. **Why it doesn't re-create two truths:** most of it is generated from the same spec (not a second truth); the primary check needs no state map (events); the residual hand-written surface is minimized, self-tested, and breaks loudly on drift.
+
+**Honest residual risk (added to §19):** this is the highest-risk *engineering* component, and the residual hand-written surface is **not zero** for implementations that diverge sharply from the generated persistence (heavy caching, event-sourced read models, polyglot storage). The claim is not "no adapter" — it is "the adapter is bounded, generated-first, and self-checking, so it fails loudly instead of drifting silently." De-risk it in the vertical slice (§21) on a *real* impl before trusting the anti-drift story.
 
 ---
 
@@ -688,6 +746,8 @@ Agent:    Converged: Active-while-unpaid only within `grace` of the due date. �
 ```
 Two questions, not twenty — the Question Planner asked the maximally-discriminating, reachable, minimal cases; everything else came from sources needing no interrogation. *(The "2 questions" is a best-case illustration, not a guarantee — see §19 Risk 3.)*
 
+**Read this ratio honestly (§8 intro).** 9 of 12 invariants came from templates + LLM seeding *because billing is a well-covered domain*; the active-learning loop did the residual 2. In a **novel** domain with no template coverage the ratio inverts — templates contribute little and the loop (plus inference) does most of the work, at a higher question cost. The loop's value scales with novelty; do not read "2 of 12" as "the loop is unimportant," nor as "elicitation is always cheap."
+
 ---
 
 ## 17. The human-readable spec (worked, prose projection)
@@ -773,6 +833,7 @@ Best mining source = the **DST/model-checker multiverse** (hostile states tests 
 | 3 | **Bounded ≠ correct / loop convergence** | "verified to depth 12", "2 questions" | small-scope heuristic; inductive invariant is the thing you seek; true invariant may not be in the hypothesis space; MaxSAT split intractable over infinite spaces | Medium (survivable if not oversold) | state the ceiling; bound the loop; fall back to "pick one of N"; measure real question counts | Research |
 | 4 | **Prose↔code round-trip** | "edit any projection" | prose→code is autoformalization; projectional editing is adoption-hostile; lossy projections recreate Rebel's two-truths **inside the tool** | Medium-high (fallback exists) | AST is the only editable thing; prose = read-mostly structured fields; give up freeform prose editing | Eng + research edge |
 | 5 | **Two-engine composition** | "Reachability-Bridge conjoins structural XOR + machine run" | Alloy (SAT/relational) and Apalache (SMT/temporal) have different logics/state models; least prior art | Medium (designable-away) | **start single-engine** (Alloy 6 does temporal; Apalache expresses relations); split only if forced | Eng |
+| 6 | **Conformance adapter rot** (the anti-drift keystone) | designed in §11.5 — but residual surface is non-zero | for impls that diverge from the generated persistence (heavy caching, event-sourced read models, polyglot storage), the impl-state→spec-state map is hand-written and rots — exactly where MBT dies | **High — the anti-Rebel thesis rests on it** | generate command→entry-point + state-read from the spec; make **event-trace conformance** (no state map) the default; residual fragment is **self-checking + fails-to-compile on drift**; de-risk on a real impl in the slice | Eng |
 
 Secondary: trace-mining signal-to-noise (Daikon is noisy; near-100% bug heuristic false-positives); adoption/meta-effort at Stripe scale even with per-invariant cost reduced.
 
@@ -800,7 +861,7 @@ This one experiment tells you which of two products you're actually building.
 ## 21. Recommended build sequence
 
 1. **Fidelity experiment (§20)** — gates the entire architecture direction.
-2. **Single-engine vertical slice** — pick Apalache *or* Alloy 6; model **one** primitive (Subscription) end-to-end: structure → statechart → a handful of invariants → the Oracle Compiler's target ① (design-time check) and ② (conformance tests). No Reachability-Bridge yet (§19 Risk 5).
+2. **Single-engine vertical slice** — pick Apalache *or* Alloy 6; model **one** primitive (Subscription) end-to-end: structure → statechart → a handful of invariants → the Oracle Compiler's target ① (design-time check) and ② (conformance tests). No Reachability-Bridge yet (§19 Risk 5). **Wire ② against a *real* implementation to de-risk the conformance adapter (§11.5, Risk 6): prove event-trace conformance works with no state map, and measure how much residual hand-written adapter the impl actually needs.** This validates the anti-drift keystone before anything is built on top of it. And note: this slice leans on templates + LLM seeding, *not* the full elicitation loop (§8 intro) — build the loop later, when a novel domain forces it.
 3. **The elicitation loop, minimal** — Hypothesis Manager + Question Planner over that one primitive; measure *real* question counts (§19 Risk 3).
 4. **Template catalog + tags** — the 12 starter templates; the three-projection rule authoring; `fixtures` self-tests.
 5. **Decision Ledger** — verdicts, open decisions, provenance.
