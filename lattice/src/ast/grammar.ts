@@ -1,5 +1,5 @@
 import type { Candidate, Diagnostic, Engine, Path, Predicate, Term } from './invariant.js';
-import type { DomainModel, AggregateDef, EntityDef } from './domain.js';
+import type { DomainModel, AggregateDef, EntityDef, Field } from './domain.js';
 
 type Owner = AggregateDef | EntityDef;
 
@@ -8,7 +8,7 @@ function ownerDef(m: DomainModel, name: string): Owner | undefined {
 }
 
 /** Resolve a field path from an owner, following refs across entities/aggregates. Returns the terminal field or null. */
-export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path): any | null {
+export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path): Field | null {
   let def = ownerDef(m, ownerName);
   for (let i = 0; i < path.length; i++) {
     if (!def) return null;
@@ -29,9 +29,10 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
     if (!resolveFieldPath(m, c.aggregate, p)) out.push({ code: 'unknown-path', message: `path ${p.join('.')} not found on ${c.aggregate}`, at });
   };
   const checkStates = (region: string, states: string[], at: string) => {
-    const r = agg.machine?.regions.find(x => x.name === region);
+    const machine = agg.kind === 'aggregate' ? agg.machine : undefined;
+    const r = machine?.regions.find((x: { name: string }) => x.name === region);
     if (!r) { out.push({ code: 'unknown-region', message: `no region ${region} on ${c.aggregate}`, at }); return; }
-    for (const s of states) if (!r.states.some(x => x.name === s))
+    for (const s of states) if (!r.states.some((x: { name: string }) => x.name === s))
       out.push({ code: 'unknown-state', message: `no state ${s} in ${c.aggregate}.${region}`, at });
   };
   const checkTerm = (t: Term, at: string) => {

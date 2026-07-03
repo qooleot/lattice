@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "engine": "tsx src/cli.ts",
     "fidelity": "tsx fidelity/harness.ts",
     "tally": "tsx fidelity/tally.ts"

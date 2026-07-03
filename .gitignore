@@ -1,0 +1,6 @@
+lattice/node_modules/
+lattice/dist/
+lattice/vendor/*.jar
+lattice/vendor/*.class
+lattice/.lattice-session*/
+.superpowers/

@@ -65,4 +65,10 @@ describe('validateModel', () => {
     m.aggregates[0]!.machine!.transitions[0]!.when = 'GhostEvent';
     expect(validateModel(m).map(d => d.code)).toContain('unknown-event');
   });
+
+  it('rejects a transition that references an unknown region', () => {
+    const m = structuredClone(good);
+    m.aggregates[0]!.machine!.transitions[0]!.region = 'Ghost';
+    expect(validateModel(m).map(d => d.code)).toContain('unknown-region');
+  });
 });
