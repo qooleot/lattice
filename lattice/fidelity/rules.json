@@ -1,0 +1,26 @@
+{
+  "billing": [
+    { "id": "b01", "rule": "A customer may have at most one active subscription per product family." },
+    { "id": "b02", "rule": "An invoice's line-item amounts must sum exactly to its total." },
+    { "id": "b03", "rule": "A trialing subscription becomes active only after its first successful payment." },
+    { "id": "b04", "rule": "An active subscription whose latest invoice is unpaid past the grace period must not remain active." },
+    { "id": "b05", "rule": "A canceled subscription never transitions to any other state." },
+    { "id": "b06", "rule": "Total refunds for an invoice may never exceed the amount captured for it." },
+    { "id": "b07", "rule": "Every invoice references an existing subscription." },
+    { "id": "b08", "rule": "The same billing period is never invoiced twice for one subscription." },
+    { "id": "b09", "rule": "Available plus reserved balance always equals the account's total balance." },
+    { "id": "b10", "rule": "After the configured maximum failed payment retries, a subscription is marked delinquent and no further retries occur." }
+  ],
+  "revrec": [
+    { "id": "r01", "rule": "For every performance obligation, recognized plus deferred revenue equals its allocated contract value." },
+    { "id": "r02", "rule": "Cumulative recognized revenue for an obligation never decreases." },
+    { "id": "r03", "rule": "A ratable obligation recognizes an equal amount in every period of its service term." },
+    { "id": "r04", "rule": "No revenue entry may post to a closed accounting period." },
+    { "id": "r05", "rule": "A usage-based obligation recognizes revenue only in or after the period in which the usage was reported." },
+    { "id": "r06", "rule": "At most one accounting period is open at any time." },
+    { "id": "r07", "rule": "Every revenue entry references an existing obligation and an existing accounting period." },
+    { "id": "r08", "rule": "Recognized revenue for an obligation never exceeds its allocated amount." },
+    { "id": "r09", "rule": "A closed period's recognized total is immutable; late adjustments post as corrections to an open period." },
+    { "id": "r10", "rule": "An on-delivery obligation recognizes its full allocated amount in the period of delivery." }
+  ]
+}

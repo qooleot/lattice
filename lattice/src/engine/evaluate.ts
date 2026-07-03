@@ -114,9 +114,9 @@ export function evaluateCandidate(c: Candidate, s: CaseState): Verdict {
   }
 }
 
-// A string field value that matches another entity's id-shape but no entity: treat 'obligation', 'customer',
-// 'plan', 'period', 'invoice', 'subscription' style fields as refs when their value is not any entity id AND
-// at least one entity id exists (so plain string data isn't misread). Conservative on purpose.
+// Conservative stub: any string field whose value is no entity's id counts as a dangling ref.
+// Exact for solver-produced witnesses (emitters guarantee non-state string fields are refs).
+// Hand-authored cases MUST use numbers/enums for data fields — enforced by convention in fidelity/PROTOCOL.md.
 function looksLikeRef(s: CaseState, _field: string, _e: CaseEntity): boolean {
   return s.entities.length > 0;
 }
