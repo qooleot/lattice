@@ -1,10 +1,10 @@
 import type { Candidate, Diagnostic, Engine, Path, Predicate, Term } from './invariant.js';
-import type { DomainModel } from './domain.js';
+import type { DomainModel, AggregateDef, EntityDef } from './domain.js';
 
-type Owner = { name: string };  // aggregate or entity definition subset we need
+type Owner = AggregateDef | EntityDef;
 
-function ownerDef(m: DomainModel, name: string): any | undefined {
-  return (m.aggregates as any[]).find(a => a.name === name) ?? (m.entities as any[]).find(e => e.name === name);
+function ownerDef(m: DomainModel, name: string): Owner | undefined {
+  return m.aggregates.find(a => a.name === name) ?? m.entities.find(e => e.name === name);
 }
 
 /** Resolve a field path from an owner, following refs across entities/aggregates. Returns the terminal field or null. */
@@ -12,7 +12,7 @@ export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path):
   let def = ownerDef(m, ownerName);
   for (let i = 0; i < path.length; i++) {
     if (!def) return null;
-    const f = (def.fields as any[]).find(x => x.name === path[i]);
+    const f = def.fields.find(x => x.name === path[i]);
     if (!f) return null;
     if (i === path.length - 1) return f;
     def = f.type.kind === 'ref' ? ownerDef(m, f.type.target) : undefined;
@@ -29,9 +29,9 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
     if (!resolveFieldPath(m, c.aggregate, p)) out.push({ code: 'unknown-path', message: `path ${p.join('.')} not found on ${c.aggregate}`, at });
   };
   const checkStates = (region: string, states: string[], at: string) => {
-    const r = agg.machine?.regions.find((x: any) => x.name === region);
+    const r = agg.machine?.regions.find(x => x.name === region);
     if (!r) { out.push({ code: 'unknown-region', message: `no region ${region} on ${c.aggregate}`, at }); return; }
-    for (const s of states) if (!r.states.some((x: any) => x.name === s))
+    for (const s of states) if (!r.states.some(x => x.name === s))
       out.push({ code: 'unknown-state', message: `no state ${s} in ${c.aggregate}.${region}`, at });
   };
   const checkTerm = (t: Term, at: string) => {
