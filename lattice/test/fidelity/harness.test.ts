@@ -36,4 +36,20 @@ describe('fidelity harness', () => {
     (bad.formalization as any).kind = 'wibble';
     expect(checkRecord(bad).grammarErrors.length).toBeGreaterThan(0);
   });
+  it('handles not-formalizable status without throwing', () => {
+    const notFormalizableRec: FidelityRecord = {
+      ruleId: 'r02',
+      status: 'not-formalizable',
+      model: record.model,
+      formalization: null,
+      cases: record.cases,
+      adversarial: record.adversarial,
+      humanVerdict: null
+    };
+    const r = checkRecord(notFormalizableRec);
+    expect(r.grammarErrors).toEqual([]);
+    expect(r.obviousPass).toBe(false);
+    expect(r.adversarialAgrees).toBe(null);
+    expect(r.perCase).toEqual([]);
+  });
 });
