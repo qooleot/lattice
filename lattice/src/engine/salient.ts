@@ -11,7 +11,12 @@ function pathsOf(c: Candidate): Path[] {
 }
 function collectCmps(p: Predicate, out: { op: Cmp; left: Term; right: Term }[]): void {
   switch (p.kind) {
-    case 'cmp': if (['lt','le','gt','ge'].includes(p.op) || [p.left, p.right].some(t => t.kind === 'now' || t.kind === 'plus')) out.push(p); break;
+    case 'cmp': {
+      const isOrderOrArith = ['lt','le','gt','ge'].includes(p.op) || [p.left, p.right].some(t => t.kind === 'now' || t.kind === 'plus');
+      const isFieldFieldEqNe = (p.op === 'eq' || p.op === 'ne') && p.left.kind === 'field' && p.right.kind === 'field';
+      if (isOrderOrArith || isFieldFieldEqNe) out.push(p);
+      break;
+    }
     case 'and': case 'or': p.args.forEach(a => collectCmps(a, out)); break;
     case 'not': collectCmps(p.arg, out); break;
     case 'implies': collectCmps(p.left, out); collectCmps(p.right, out); break;

@@ -113,9 +113,9 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
   // Probes may reuse exclusions scoped to H alone (recomputed fresh from each raw stored witness
   // via exclusionsFrom, never the ledger's stale `salient` field extracted w.r.t. whichever OTHER
   // pair was live when it was recorded) ONLY for candidate kinds whose extractSalient extraction
-  // is exhaustive relative to their own violation condition — i.e. every dimension the predicate
-  // reads is walked into a salient dim (statePredicate/conservation's collectCmps mirrors the
-  // whole guard+body comparison tree). For those, if a witness already got a verdict that,
+  // captures ordering/arith dims, enum-eq dims, and (as of trace-B review) field-field eq/ne dims;
+  // exclusion reuse is gated to statePredicate/conservation where the captured dims characterize
+  // the violation region for slice-1 candidates. For those, if a witness already got a verdict that,
   // reprojected onto H alone, reproduces H's violation shape exactly, going tautologically UNSAT
   // on a later probe is correct: it means every way H can be violated has already been shown and
   // judged, so there is nothing new left to probe for.

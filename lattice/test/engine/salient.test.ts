@@ -33,6 +33,26 @@ describe('extractSalient', () => {
     const facts = extractSalient([grace], s);
     expect(facts.find(f => f.dim === 'now le dueDate + grace')!.value).toBe(false);
   });
+  it('captures field-field eq/ne dims and avoids duplicate enum-eq dims', () => {
+    const fieldEqPred: Candidate = { kind: 'statePredicate', aggregate: 'Order',
+      body: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['a'] }, right: { kind: 'field', owner: 'self', path: ['b'] } } };
+    const s1: CaseState = { entities: [{ type: 'Order', id: 'o1', fields: { a: 1, b: 1 } }] };
+    const facts1 = extractSalient([fieldEqPred], s1);
+    expect(facts1.find(f => f.dim === 'a eq b')!.value).toBe(true);
+
+    const s2: CaseState = { entities: [{ type: 'Order', id: 'o2', fields: { a: 1, b: 2 } }] };
+    const facts2 = extractSalient([fieldEqPred], s2);
+    expect(facts2.find(f => f.dim === 'a eq b')!.value).toBe(false);
+
+    // Field-eq-enumval should only produce one dim (the enum form), not a duplicate eq form
+    const fieldEnumPred: Candidate = { kind: 'statePredicate', aggregate: 'Order',
+      body: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['kind'] }, right: { kind: 'enumval', enum: 'OrderKind', value: 'Correction' } } };
+    const s3: CaseState = { entities: [{ type: 'Order', id: 'o3', fields: { kind: 'Correction' } }] };
+    const facts3 = extractSalient([fieldEnumPred], s3);
+    const kindDims = facts3.filter(f => f.dim.includes('kind'));
+    expect(kindDims).toHaveLength(1);
+    expect(kindDims[0]!.dim).toBe('kind = Correction');
+  });
 });
 
 describe('renderWitnessTable', () => {
