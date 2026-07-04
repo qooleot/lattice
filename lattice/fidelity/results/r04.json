@@ -1,0 +1,78 @@
+{ "ruleId": "r04",
+  "status": "formalized",
+  "model": {
+    "context": "revenue-recognition",
+    "ticksPerDay": 24,
+    "enums": [],
+    "entities": [
+      { "kind": "entity", "name": "AccountingPeriod", "fields": [
+        { "name": "id", "type": {"kind":"prim","prim":"Id"}, "key": true }
+      ], "machine": {
+        "regions": [
+          { "name": "Lifecycle", "initial": "Open", "states": [
+            { "name": "Open", "tags": ["active"] },
+            { "name": "Closed", "tags": ["terminal"] }
+          ] }
+        ],
+        "transitions": []
+      } }
+    ],
+    "aggregates": [
+      { "kind": "aggregate", "name": "RevenueEntry", "fields": [
+        { "name": "id", "type": {"kind":"prim","prim":"Id"}, "key": true },
+        { "name": "period", "type": {"kind":"ref","target":"AccountingPeriod"} },
+        { "name": "amount", "type": {"kind":"prim","prim":"Money"} }
+      ] }
+    ],
+    "events": []
+  },
+  "formalization": {
+    "kind": "statePredicate",
+    "aggregate": "RevenueEntry",
+    "body": {
+      "kind": "not",
+      "arg": {
+        "kind": "inState",
+        "owner": "period",
+        "region": "Lifecycle",
+        "states": ["Closed"]
+      }
+    }
+  },
+  "cases": [
+    {
+      "desc": "Revenue entry posted to a period that is still open",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          { "type": "AccountingPeriod", "id": "P1", "fields": { "Lifecycle.state": "Open" } },
+          { "type": "RevenueEntry", "id": "R1", "fields": { "period": "P1", "amount": 5000 } }
+        ]
+      }
+    },
+    {
+      "desc": "Revenue entry posted to a period that has been closed",
+      "expected": "forbid",
+      "state": {
+        "entities": [
+          { "type": "AccountingPeriod", "id": "P2", "fields": { "Lifecycle.state": "Closed" } },
+          { "type": "RevenueEntry", "id": "R2", "fields": { "period": "P2", "amount": 1200 } }
+        ]
+      }
+    },
+    {
+      "desc": "Two revenue entries, one in an open period and one in a closed period",
+      "expected": "forbid",
+      "state": {
+        "entities": [
+          { "type": "AccountingPeriod", "id": "P3", "fields": { "Lifecycle.state": "Open" } },
+          { "type": "AccountingPeriod", "id": "P4", "fields": { "Lifecycle.state": "Closed" } },
+          { "type": "RevenueEntry", "id": "R3", "fields": { "period": "P3", "amount": 300 } },
+          { "type": "RevenueEntry", "id": "R4", "fields": { "period": "P4", "amount": 700 } }
+        ]
+      }
+    }
+  ],
+  "adversarial": null,
+  "humanVerdict": null
+}

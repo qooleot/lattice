@@ -1,0 +1,127 @@
+{
+  "ruleId": "b08",
+  "status": "formalized",
+  "model": {
+    "context": "billing",
+    "ticksPerDay": 24,
+    "enums": [
+      {
+        "name": "PeriodStatus",
+        "values": [
+          "Uninvoiced",
+          "Invoiced"
+        ]
+      }
+    ],
+    "entities": [],
+    "aggregates": [
+      {
+        "kind": "aggregate",
+        "name": "BillingPeriod",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          },
+          {
+            "name": "subscriptionId",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            }
+          },
+          {
+            "name": "periodStart",
+            "type": {
+              "kind": "prim",
+              "prim": "Date"
+            }
+          },
+          {
+            "name": "periodEnd",
+            "type": {
+              "kind": "prim",
+              "prim": "Date"
+            }
+          },
+          {
+            "name": "invoiceCount",
+            "type": {
+              "kind": "prim",
+              "prim": "Int"
+            }
+          }
+        ]
+      }
+    ],
+    "events": []
+  },
+  "formalization": {
+    "kind": "cardinality",
+    "aggregate": "BillingPeriod",
+    "where": null,
+    "atMost": 1
+  },
+  "cases": [
+    {
+      "desc": "A single billing period for a subscription has been invoiced exactly once — permitted.",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "BillingPeriod",
+            "id": "bp1",
+            "fields": {
+              "subscriptionId": "sub1",
+              "periodStart": 0,
+              "periodEnd": 720,
+              "invoiceCount": 1
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "A billing period has not yet been invoiced — permitted (zero invoices is not a double-invoice).",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "BillingPeriod",
+            "id": "bp2",
+            "fields": {
+              "subscriptionId": "sub1",
+              "periodStart": 720,
+              "periodEnd": 1440,
+              "invoiceCount": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "A billing period was invoiced twice for the same subscription — forbidden.",
+      "expected": "forbid",
+      "state": {
+        "entities": [
+          {
+            "type": "BillingPeriod",
+            "id": "bp3",
+            "fields": {
+              "subscriptionId": "sub1",
+              "periodStart": 0,
+              "periodEnd": 720,
+              "invoiceCount": 2
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "adversarial": null,
+  "humanVerdict": "failed-obvious"
+}

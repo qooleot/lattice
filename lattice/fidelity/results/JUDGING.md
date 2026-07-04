@@ -1,6 +1,6 @@
 # Fidelity Gate — Judging Worksheet
 
-13 survivors (passed grammar validation + all 3 obvious cases). Fill in the adversarial case + expected verdict for each, then tell the orchestrator to continue.
+15 survivors after Amendment 1 (b10, r05 appended at bottom; b08, r03, b02, b03, r04 out — see AMENDMENT.md). Fill in the adversarial case + expected verdict for each, then tell the orchestrator to continue.
 
 ## b01 — "A customer may have at most one active subscription per product family."
 
@@ -808,3 +808,24 @@ snapshot 1:
 - Optional override: if the formalization is obviously wrong/right regardless of the case, say so.
 
 ---
+
+---
+
+# AMENDMENT 1 UPDATE — survivor set is now 15 (see AMENDMENT.md)
+
+Re-run round results: **b10 and r05 join the survivors** (blocks below). Final non-survivors:
+b02, b03, r04 (not-formalizable, second strike) · b08, r03 (failed-obvious — caught by their own cases).
+
+## b10 — "After the configured maximum failed payment retries, a subscription is marked delinquent and no further retries occur."
+
+**Formalization (raw):** statePredicate on `Subscription`, where `failedRetryCount >= maxRetries`, body: `Lifecycle.state in {Delinquent}`.
+Cases: (below max, Active → permit ✓) (at max, Delinquent → permit ✓) (past max, still Active → forbid ✓)
+
+**YOUR TURN (human):** adversarial case + expected verdict (permit|forbid), optional override.
+
+## r05 — "A usage-based obligation recognizes revenue only in or after the period in which the usage was reported."
+
+**Formalization (raw):** statePredicate on `UsageObligation`, body: `recognizedPeriod >= usageReportedPeriod` (periods as integers).
+Cases: (same period → permit ✓) (later period → permit ✓) (earlier period → forbid ✓)
+
+**YOUR TURN (human):** adversarial case + expected verdict (permit|forbid), optional override.

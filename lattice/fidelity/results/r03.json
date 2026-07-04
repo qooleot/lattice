@@ -1,0 +1,191 @@
+{
+  "ruleId": "r03",
+  "status": "formalized",
+  "model": {
+    "context": "revenue-recognition",
+    "ticksPerDay": 24,
+    "enums": [],
+    "entities": [],
+    "aggregates": [
+      {
+        "kind": "aggregate",
+        "name": "RatableObligation",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          },
+          {
+            "name": "termStart",
+            "type": {
+              "kind": "prim",
+              "prim": "Date"
+            }
+          },
+          {
+            "name": "termEnd",
+            "type": {
+              "kind": "prim",
+              "prim": "Date"
+            }
+          },
+          {
+            "name": "totalAmount",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            }
+          },
+          {
+            "name": "periodLength",
+            "type": {
+              "kind": "prim",
+              "prim": "Duration"
+            }
+          },
+          {
+            "name": "periodsRecognized",
+            "type": {
+              "kind": "prim",
+              "prim": "Int"
+            }
+          },
+          {
+            "name": "amountPerPeriod",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            }
+          },
+          {
+            "name": "recognizedTotal",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            }
+          }
+        ]
+      }
+    ],
+    "events": []
+  },
+  "formalization": {
+    "kind": "statePredicate",
+    "aggregate": "RatableObligation",
+    "where": {
+      "kind": "cmp",
+      "op": "gt",
+      "left": {
+        "kind": "field",
+        "owner": "self",
+        "path": [
+          "periodsRecognized"
+        ]
+      },
+      "right": {
+        "kind": "int",
+        "value": 0
+      }
+    },
+    "body": {
+      "kind": "cmp",
+      "op": "eq",
+      "left": {
+        "kind": "field",
+        "owner": "self",
+        "path": [
+          "recognizedTotal"
+        ]
+      },
+      "right": {
+        "kind": "plus",
+        "left": {
+          "kind": "field",
+          "owner": "self",
+          "path": [
+            "amountPerPeriod"
+          ]
+        },
+        "right": {
+          "kind": "field",
+          "owner": "self",
+          "path": [
+            "amountPerPeriod"
+          ]
+        }
+      }
+    }
+  },
+  "cases": [
+    {
+      "desc": "Single period recognized, recognizedTotal equals one amountPerPeriod times periods so far (1 period): recognizedTotal == amountPerPeriod, treated as equal amount per period holding",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "RatableObligation",
+            "id": "ro1",
+            "fields": {
+              "termStart": 0,
+              "termEnd": 720,
+              "totalAmount": 1200,
+              "periodLength": 240,
+              "periodsRecognized": 1,
+              "amountPerPeriod": 400,
+              "recognizedTotal": 400
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "Two periods recognized, recognizedTotal equals exactly two times amountPerPeriod (equal recognition per period maintained)",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "RatableObligation",
+            "id": "ro2",
+            "fields": {
+              "termStart": 0,
+              "termEnd": 720,
+              "totalAmount": 1200,
+              "periodLength": 240,
+              "periodsRecognized": 2,
+              "amountPerPeriod": 400,
+              "recognizedTotal": 800
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "Two periods recognized but recognizedTotal is front-loaded (does not equal amountPerPeriod times periods), violating equal-amount-per-period recognition",
+      "expected": "forbid",
+      "state": {
+        "entities": [
+          {
+            "type": "RatableObligation",
+            "id": "ro3",
+            "fields": {
+              "termStart": 0,
+              "termEnd": 720,
+              "totalAmount": 1200,
+              "periodLength": 240,
+              "periodsRecognized": 2,
+              "amountPerPeriod": 400,
+              "recognizedTotal": 1100
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "adversarial": null,
+  "humanVerdict": "failed-obvious",
+  "notes": "The grammar's statePredicate/cmp forms only support binary comparisons and binary plus, so 'equal amount in every period' (a universally-quantified-over-periods constraint) is approximated here as a per-state algebraic identity (recognizedTotal == periodsRecognized * amountPerPeriod, expanded via nested plus for periodsRecognized=2) rather than a true iteration over periods; the grammar has no sum-over-range or forAll-periods construct, so this is the closest faithful encoding, not an exact restatement of the rule."
+}
