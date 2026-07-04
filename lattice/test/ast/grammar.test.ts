@@ -62,6 +62,17 @@ describe('validateCandidate', () => {
 });
 
 describe('validateCandidate — structural shape validation', () => {
+  it('treats explicit null as absent for optional statePredicate.where', () => {
+    const withNull: any = { kind: 'statePredicate', aggregate: 'Subscription',
+      where: null,
+      body: { kind: 'inState', owner: 'self', region: 'Access', states: ['Active'] } };
+    const withoutWhere: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'inState', owner: 'self', region: 'Access', states: ['Active'] } };
+    expect(validateCandidate(withNull, model)).toEqual([]);
+    expect(validateCandidate(withoutWhere, model)).toEqual([]);
+    expect(routeCandidate(withNull)).toEqual(routeCandidate(withoutWhere));
+  });
+
   it('rejects conservation with flat parts (string[] instead of Path[]) without throwing', () => {
     const bad: Candidate = {
       kind: 'conservation', aggregate: 'Subscription',

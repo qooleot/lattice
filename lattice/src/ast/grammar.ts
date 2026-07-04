@@ -96,6 +96,12 @@ function shapeErrors(c: any): Diagnostic[] {
 }
 
 export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
+  // Normalize explicit null to absent for optional statePredicate.where
+  // (JSON has no undefined, so LLM-emitted null must be treated as absent)
+  if (c.kind === 'statePredicate' && (c as any).where === null) {
+    delete (c as any).where;
+  }
+
   const shapeErrs = shapeErrors(c);
   if (shapeErrs.length) return shapeErrs;
 
