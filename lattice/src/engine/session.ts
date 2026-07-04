@@ -20,7 +20,7 @@ export interface SessionState {
 }
 export type LedgerEntry =
   | { kind: 'verdict'; at: string; witnessId: string; witness: CaseState; salient: SalientFact[]; judge: 'permit' | 'forbid'; question: string }
-  | { kind: 'open-decision'; at: string; topic: string; note: string; witnessId?: string }
+  | { kind: 'open-decision'; at: string; topic: string; note: string; witnessId?: string; salient?: SalientFact[]; witness?: CaseState }
   | { kind: 'adopted'; at: string; invariant: CandidateInvariant; provenance: string }
   | { kind: 'declined'; at: string; invariant: CandidateInvariant; reason: string }
   | { kind: 'structure'; at: string; question: string; answer: string };

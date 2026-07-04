@@ -12,7 +12,16 @@ export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path):
   let def = ownerDef(m, ownerName);
   for (let i = 0; i < path.length; i++) {
     if (!def) return null;
-    const f = def.fields.find(x => x.name === path[i]);
+    // Ref-hop machine-state path: a final `<Region>.state` segment reads the resolved owner's
+    // machine region state directly (not a declared field) — e.g. ['period', 'Lifecycle.state']
+    // hops through `period` then reads AccountingPeriod's Lifecycle region state.
+    const seg = path[i]!;
+    const stateMatch = seg.match(/^(\w+)\.state$/);
+    if (stateMatch && i === path.length - 1) {
+      const machine = (def as any).machine;
+      return machine?.regions.some((r: any) => r.name === stateMatch[1]) ? { name: seg, type: { kind: 'prim', prim: 'Text' } } : null;
+    }
+    const f = def.fields.find(x => x.name === seg);
     if (!f) return null;
     if (i === path.length - 1) return f;
     def = f.type.kind === 'ref' ? ownerDef(m, f.type.target) : undefined;

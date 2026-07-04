@@ -119,3 +119,14 @@ describe('routeCandidate', () => {
     expect(routeCandidate(rel)).toBe('alloy');
   });
 });
+
+describe('resolveFieldPath — ref-hop machine-state paths', () => {
+  it('accepts a ref-hop machine-state path (period → Lifecycle.state)', async () => {
+    const { revrecModel } = await import('../fixtures.js');
+    const c: Candidate = { kind: 'statePredicate', aggregate: 'RevenueEntry',
+      body: { kind: 'implies',
+        left: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['period', 'Lifecycle.state'] }, right: { kind: 'enumval', enum: 'PeriodState', value: 'Closed' } },
+        right: { kind: 'cmp', op: 'le', left: { kind: 'field', owner: 'self', path: ['postedAt'] }, right: { kind: 'field', owner: 'self', path: ['period', 'closedAt'] } } } };
+    expect(validateCandidate(c, revrecModel)).toEqual([]);
+  });
+});

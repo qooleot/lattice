@@ -22,6 +22,8 @@ export type PlannerOutput =
   | { type: 'converged' };
 
 const verdicts = (ledger: LedgerEntry[]) => ledger.filter(e => e.kind === 'verdict') as Extract<LedgerEntry, { kind: 'verdict' }>[];
+const openDecisionsWithWitness = (ledger: LedgerEntry[]) =>
+  ledger.filter(e => e.kind === 'open-decision' && e.witness !== undefined) as Extract<LedgerEntry, { kind: 'open-decision' }>[];
 // Exclusions must be recomputed against the CURRENT query's candidates, not reused from the
 // ledger's stored `salient` field: that field was extracted with respect to whichever candidates
 // were active when the verdict was recorded, and can be missing dims (e.g. a finer-grained field
@@ -30,8 +32,14 @@ const verdicts = (ledger: LedgerEntry[]) => ledger.filter(e => e.kind === 'verdi
 // distinguishes the new pair, even though the human was never shown or asked about that specific
 // combination. Rebuilding from the raw stored witness, scoped to the live candidates, keeps the
 // exclusion exactly as specific as what was actually shown.
+// An `undecided` verdict is parked, not judged permit/forbid — but the witness itself was already
+// shown to the human and must never be re-asked (that's the whole point of parking it). So its raw
+// witness participates in exclusions the SAME way a verdict's witness does: recomputed fresh
+// against the live candidates from the stored raw witness, never trusting the entry's stale
+// `salient` (extracted w.r.t. whatever candidates were live when it was parked).
 const exclusionsFrom = (ledger: LedgerEntry[], cands: Candidate[]): SalientFact[][] =>
-  verdicts(ledger).map(v => extractSalient(cands, v.witness)).filter(s => s.length > 0);
+  [...verdicts(ledger).map(v => v.witness), ...openDecisionsWithWitness(ledger).map(e => e.witness!)]
+    .map(w => extractSalient(cands, w)).filter(s => s.length > 0);
 const wid = (s: SessionState, ledger: LedgerEntry[], extra = 0) =>
   `w${verdicts(ledger).length + Object.keys(s.pendingWitnesses).length + 1 + extra}`;
 

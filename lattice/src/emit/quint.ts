@@ -42,9 +42,15 @@ function termToQuint(m: DomainModel, t: Term, self: string, ownerName: string): 
 function pathToQuint(m: DomainModel, path: Path, self: string, ownerName: string): string {
   let expr = self, owner = ownerName;
   for (let i = 0; i < path.length; i++) {
+    const seg = path[i]!;
+    // Ref-hop machine-state segment: '<Region>.state' reads the owner's region-state field
+    // directly (rendered `_state` per astToQuint's `${r.name}_state` var naming) — it is never
+    // a declared field, so it must skip the def/field lookup and the map-hop logic below.
+    const stateMatch = seg.match(/^(\w+)\.state$/);
+    if (stateMatch && i === path.length - 1) return `${expr}.${stateMatch[1]}_state`;
     const def = owners(m).find(o => o.name === owner)!;
-    const f = def.fields.find(x => x.name === path[i])!;
-    expr = `${expr}.${path[i]}`;
+    const f = def.fields.find(x => x.name === seg)!;
+    expr = `${expr}.${seg}`;
     if (i < path.length - 1 && f.type.kind === 'ref') {
       owner = f.type.target;
       expr = `${varName(owner)}.get(${expr})`;
@@ -66,9 +72,15 @@ function refHopsIn(m: DomainModel, path: Path, self: string, ownerName: string):
   const hops: string[] = [];
   let expr = self, owner = ownerName;
   for (let i = 0; i < path.length; i++) {
+    const seg = path[i]!;
+    // Ref-hop machine-state segment: not a declared field, so it can't be looked up on `def` —
+    // but the hop to reach `owner` (e.g. `period`) was already pushed onto `hops` on a prior
+    // iteration, so the existence gate on that referenced record still composes correctly.
+    const stateMatch = seg.match(/^(\w+)\.state$/);
+    if (stateMatch && i === path.length - 1) { expr = `${expr}.${stateMatch[1]}_state`; break; }
     const def = owners(m).find(o => o.name === owner)!;
-    const f = def.fields.find(x => x.name === path[i])!;
-    expr = `${expr}.${path[i]}`;
+    const f = def.fields.find(x => x.name === seg)!;
+    expr = `${expr}.${seg}`;
     if (i < path.length - 1 && f.type.kind === 'ref') {
       owner = f.type.target;
       expr = `${varName(owner)}.get(${expr})`;
@@ -124,6 +136,20 @@ function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
   throw new Error(`${c.kind} is never solver-queried on quint in slice-1 (template auto-adopt only)`);
 }
 
+// renderTerm (salient.ts) flattens a field path to a dot-joined string for the salient-fact `dim`
+// key (e.g. ['period', 'Lifecycle.state'] -> "period.Lifecycle.state"). A naive `.split('.')` to
+// invert that would over-split the trailing ref-hop machine-state segment ('Lifecycle.state') back
+// into two path elements ('Lifecycle', 'state'), which isn't a real field and crashes pathToQuint's
+// lookup. Only the LAST path segment can ever be a compound `<Region>.state` (resolveFieldPath only
+// accepts it there), so re-merge a trailing `Word.state` pair produced by the naive split.
+function splitPathStr(s: string): string[] {
+  const parts = s.split('.');
+  if (parts.length >= 2 && parts[parts.length - 1] === 'state') {
+    return [...parts.slice(0, -2), `${parts[parts.length - 2]}.state`];
+  }
+  return parts;
+}
+
 /** Rebuild judged shapes: match salient dims against the candidates' comparisons + enum-eq facts. */
 function shapeToQuint(m: DomainModel, facts: SalientFact[], cands: Candidate[], name: string): string {
   const agg = cands[0]!.aggregate;
@@ -131,11 +157,11 @@ function shapeToQuint(m: DomainModel, facts: SalientFact[], cands: Candidate[], 
   const conj: string[] = [];
   for (const f of facts) {
     const mVal = f.dim.match(/^([\w.]+) = (\w+)$/);
-    if (mVal) { conj.push(`${pathToQuint(m, mVal[1]!.split('.'), 'x', agg)} == "${mVal[2]}"`); continue; }
+    if (mVal) { conj.push(`${pathToQuint(m, splitPathStr(mVal[1]!), 'x', agg)} == "${mVal[2]}"`); continue; }
     const mCmp = f.dim.match(/^(.+) (eq|ne|lt|le|gt|ge) (.+)$/);
     if (mCmp) {
       const ops: Record<string, string> = { eq: '==', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' };
-      const render = (s: string) => s.split(' + ').map(part => part === 'now' || /^\d+$/.test(part) ? part : pathToQuint(m, part.split('.'), 'x', agg)).join(' + ');
+      const render = (s: string) => s.split(' + ').map(part => part === 'now' || /^\d+$/.test(part) ? part : pathToQuint(m, splitPathStr(part), 'x', agg)).join(' + ');
       conj.push(`(${render(mCmp[1]!)} ${ops[mCmp[2]!]} ${render(mCmp[3]!)}) == ${f.value}`);
     }
   }

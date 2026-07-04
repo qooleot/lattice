@@ -107,7 +107,8 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         const pending = s.pendingWitnesses[id];
         if (!pending) return { error: 'unknown-witness', id };
         if (values.judge === 'undecided') {
-          appendLedger(dir, { kind: 'open-decision', at: now(), topic: values.topic ?? 'unnamed', note: values.note ?? '', witnessId: id });
+          appendLedger(dir, { kind: 'open-decision', at: now(), topic: values.topic ?? 'unnamed', note: values.note ?? '',
+            witnessId: id, salient: pending.salient, witness: pending.witness });
           delete s.pendingWitnesses[id];
           return done({ parked: true });
         }
