@@ -1,0 +1,18 @@
+The rule: "After the configured maximum failed payment retries, a subscription is marked delinquent and no further retries occur."
+
+This decomposes into an invariant: if a subscription's failed-retry count has reached the configured maximum, then it must be in the delinquent state. This is a `statePredicate` — a single-state invariant tying the retry-count field to the lifecycle state. The "no further retries occur" clause is enforced by the same invariant (being delinquent is terminal-ish for retries), captured as: retries can never exceed the max.
+
+Best formalization: for every subscription, if `failedRetries >= maxRetries` then it is in the `Delinquent` state. This is checkable on a single state.
+
+```json
+{ "ruleId": "b10",
+  "status": "formalized",
+  "model": { ... },
+  "formalization": { statePredicate ... },
+  ...
+}
+```
+
+Here is my single JSON object:
+
+{ "ruleId": "b10", "status": "formalized", "model": { "context": "billing", "ticksPerDay": 24, "enums": [], "entities": [], "aggregates": [ { "kind": "aggregate", "name": "Subscription", "fields": [ { "name": "id", "type": { "kind": "prim", "prim": "Id" }, "key": true }, { "name": "failedRetries", "type": { "kind": "prim", "prim": "Int" } }, { "name": "maxRetries", "type": { "kind": "prim", "prim": "Int" } } ], "machine": { "regions": [ { "name": "Lifecycle", "initial": "Active", "states": [ { "name": "Active", "tags": ["active"] }, { "name": "Delinquent", "tags": ["active"] } ] } ], "transitions": [] } } ], "events": [] }, "formalization": { "kind": "statePredicate", "aggregate": "Subscription", "body": { "kind": "implies", "left": { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["failedRetries"] }, "right": { "kind": "field", "owner": "self", "path": ["maxRetries"] } }, "right": { "kind": "inState", "owner": "self", "region": "Lifecycle", "states": ["Delinquent"] } } }, "cases": [ { "desc": "Retries reached the configured max and subscription is marked delinquent", "expected": "permit", "state": { "entities": [ { "type": "Subscription", "id": "s1", "fields": { "Lifecycle.state": "Delinquent", "failedRetries": 3, "maxRetries": 3 } } ] } }, { "desc": "Retries below the max, subscription still active", "expected": "permit", "state": { "entities": [ { "type": "Subscription", "id": "s2", "fields": { "Lifecycle.state": "Active", "failedRetries": 1, "maxRetries": 3 } } ] } }, { "desc": "Retries reached the max but subscription is still Active (a further retry could occur) — violates the rule", "expected": "forbid", "state": { "entities": [ { "type": "Subscription", "id": "s3", "fields": { "Lifecycle.state": "Active", "failedRetries": 3, "maxRetries": 3 } } ] } } ], "adversarial": null, "humanVerdict": null }
