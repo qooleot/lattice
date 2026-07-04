@@ -36,7 +36,9 @@ export function checkRecord(r: FidelityRecord): CheckResult {
 }
 
 // CLI: npm run fidelity -- results/r01.json
-if (process.argv[2]) {
+// Guarded so importing this module (e.g. from apply.ts) has no side effects.
+const isMain = process.argv[1]?.endsWith('harness.ts') || process.argv[1]?.endsWith('harness.js');
+if (isMain && process.argv[2]) {
   const rec: FidelityRecord = JSON.parse(readFileSync(process.argv[2], 'utf8'));
   console.log(JSON.stringify(checkRecord(rec), null, 2));
 }
