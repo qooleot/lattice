@@ -17,13 +17,17 @@ export function validateModel(m: DomainModel): Diagnostic[] {
     if (t.kind === 'enum' && !enums.has(t.enum)) out.push({ code: 'unresolved-enum', message: `enum ${t.enum} not declared`, at });
     if (t.kind === 'list') checkType(t.of, at);
   };
+  const checkReservedField = (f: Field, at: string) => {
+    if (f.name === 'state')
+      out.push({ code: 'reserved-field-name', message: `'state' is reserved for machine-state keys (<Region>.state)`, at });
+  };
   const checkFields = (fs: Field[], owner: string, needKey: boolean) => {
-    fs.forEach(f => checkType(f.type, `${owner}.${f.name}`));
+    fs.forEach(f => { checkType(f.type, `${owner}.${f.name}`); checkReservedField(f, `${owner}.${f.name}`); });
     if (needKey && !fs.some(f => f.key)) out.push({ code: 'missing-key', message: `${owner} has no key field`, at: owner });
   };
 
   m.entities.forEach(e => checkFields(e.fields, e.name, true));
-  m.events.forEach(e => e.fields.forEach(f => checkType(f.type, `${e.name}.${f.name}`)));
+  m.events.forEach(e => e.fields.forEach(f => { checkType(f.type, `${e.name}.${f.name}`); checkReservedField(f, `${e.name}.${f.name}`); }));
   m.aggregates.forEach(a => {
     checkFields(a.fields, a.name, true);
     for (const r of a.machine?.regions ?? []) {

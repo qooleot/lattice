@@ -71,4 +71,10 @@ describe('validateModel', () => {
     m.aggregates[0]!.machine!.transitions[0]!.region = 'Ghost';
     expect(validateModel(m).map(d => d.code)).toContain('unknown-region');
   });
+
+  it('rejects a field literally named state', () => {
+    const m = structuredClone(good);
+    m.aggregates[0]!.fields.push({ name: 'state', type: { kind: 'prim', prim: 'Text' } });
+    expect(validateModel(m).map(d => d.code)).toContain('reserved-field-name');
+  });
 });

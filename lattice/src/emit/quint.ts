@@ -142,6 +142,10 @@ function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
 // into two path elements ('Lifecycle', 'state'), which isn't a real field and crashes pathToQuint's
 // lookup. Only the LAST path segment can ever be a compound `<Region>.state` (resolveFieldPath only
 // accepts it there), so re-merge a trailing `Word.state` pair produced by the naive split.
+// This merge is only unambiguous because a real field can never be named bare `state`:
+// validateModel (src/ast/validate.ts) now emits a `reserved-field-name` diagnostic for any field
+// literally named `state`, so a dot-joined path ending in `.state` can only ever be the synthetic
+// `<Region>.state` machine-state accessor, never a genuine `<something>.state` field access.
 function splitPathStr(s: string): string[] {
   const parts = s.split('.');
   if (parts.length >= 2 && parts[parts.length - 1] === 'state') {
