@@ -1,0 +1,102 @@
+{
+  "context": "Billing",
+  "ticksPerDay": 24,
+  "enums": [
+    {
+      "name": "InvStatus",
+      "values": [
+        "Paid",
+        "Unpaid"
+      ]
+    }
+  ],
+  "entities": [],
+  "aggregates": [
+    {
+      "kind": "aggregate",
+      "name": "Invoice",
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          },
+          "key": true
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "enum",
+            "enum": "InvStatus"
+          }
+        },
+        {
+          "name": "dueDate",
+          "type": {
+            "kind": "prim",
+            "prim": "Date"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "aggregate",
+      "name": "Subscription",
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          },
+          "key": true
+        },
+        {
+          "name": "grace",
+          "type": {
+            "kind": "prim",
+            "prim": "Duration"
+          }
+        },
+        {
+          "name": "invoice",
+          "type": {
+            "kind": "ref",
+            "target": "Invoice"
+          }
+        }
+      ],
+      "machine": {
+        "regions": [
+          {
+            "name": "Access",
+            "initial": "Trialing",
+            "states": [
+              {
+                "name": "Trialing"
+              },
+              {
+                "name": "Active",
+                "tags": [
+                  "active"
+                ]
+              },
+              {
+                "name": "Suspended"
+              },
+              {
+                "name": "Ended",
+                "tags": [
+                  "terminal"
+                ]
+              }
+            ]
+          }
+        ],
+        "transitions": []
+      }
+    }
+  ],
+  "events": []
+}

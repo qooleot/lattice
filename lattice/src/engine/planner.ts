@@ -58,6 +58,8 @@ async function solve(m: DomainModel, hi: Candidate, hj: Candidate | undefined,
     if (isProbe) {
       const r1 = await deps.alloy(m, { kind, hi, hj, exclusions, scope: 4, varyUnreferenced: true }, max);
       if (r1.sat) return { witnesses: byMinimalSize(r1.instances), ms: r1.ms };
+      const r = await deps.alloy(m, { kind, hi, hj, exclusions, scope: 4 }, max);
+      return { witnesses: r.sat ? byMinimalSize(r.instances) : [], ms: r1.ms + r.ms };
     }
     const r = await deps.alloy(m, { kind, hi, hj, exclusions, scope: 4 }, max);
     return { witnesses: r.sat ? byMinimalSize(r.instances) : [], ms: r.ms };
@@ -108,15 +110,25 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
   // 2–3. Sole survivor: probes for a-priori candidates only
   const H = active()[0]!;
   const apriori = H.inv.source === 'seed' || H.inv.source === 'template';
+  // Probes may reuse exclusions scoped to H alone (recomputed fresh from each raw stored witness
+  // via exclusionsFrom, never the ledger's stale `salient` field extracted w.r.t. whichever OTHER
+  // pair was live when it was recorded) ONLY for candidate kinds whose extractSalient extraction
+  // is exhaustive relative to their own violation condition — i.e. every dimension the predicate
+  // reads is walked into a salient dim (statePredicate/conservation's collectCmps mirrors the
+  // whole guard+body comparison tree). For those, if a witness already got a verdict that,
+  // reprojected onto H alone, reproduces H's violation shape exactly, going tautologically UNSAT
+  // on a later probe is correct: it means every way H can be violated has already been shown and
+  // judged, so there is nothing new left to probe for.
+  // `unique` candidates must NOT reuse exclusions this way (Task 17's masking bug): extractSalient
+  // only records pairwise by-key equality booleans, never unconstrained domain fields (e.g.
+  // plan.family) that a distinguish verdict's witness happened to leave fixed. Reprojecting that
+  // verdict onto H alone reproduces a shape matching `not Hi` on the dims it happens to check, but
+  // silently misses the dimension a real, still-outstanding refutation needs to vary — masking it
+  // behind a tautological `Hi or shape0`, exactly the bug Task 17 fixed by using no exclusions.
+  const probeExclusionsSafe = H.inv.candidate.kind === 'statePredicate' || H.inv.candidate.kind === 'conservation';
   if (apriori && !s.probesAsked.forbid) {
-    // Probes run at most once per session (probesAsked is a one-shot flag), so there is no
-    // "don't re-ask the same probe" concern for exclusions to guard against here. Reusing the
-    // distinguish-phase exclusions would be wrong: a unique-candidate's only violation shape is
-    // "some equal-by-keys pair", which is exactly `not Hi` — if that shape was already excluded
-    // (recorded from an unrelated distinguish verdict against a *different*, now-pruned pair),
-    // `(not Hi) and (not thatShape)` becomes a tautological contradiction and the solver can
-    // never find a real, still-outstanding refutation of Hi.
-    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-forbid', [], deps, 3);
+    const exclusions = probeExclusionsSafe ? exclusionsFrom(ledger, [H.inv.candidate]) : [];
+    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-forbid', exclusions, deps, 3);
     s.probesAsked.forbid = true;
     if (witnesses.length > 0) {
       s.phase = 'probe-forbid';
@@ -131,7 +143,8 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
   }
   const hasPermitEvidence = verdicts(ledger).some(v => v.judge === 'permit' && evaluateCandidate(H.inv.candidate, v.witness) === 'permit');
   if (apriori && !s.probesAsked.permit && !hasPermitEvidence) {
-    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-permit', [], deps, 3);
+    const exclusions = probeExclusionsSafe ? exclusionsFrom(ledger, [H.inv.candidate]) : [];
+    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-permit', exclusions, deps, 3);
     s.probesAsked.permit = true;
     if (witnesses.length > 0) {
       s.phase = 'probe-permit';

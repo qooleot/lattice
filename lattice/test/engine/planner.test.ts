@@ -3,7 +3,7 @@ import { nextQuestion, checkDistinct } from '../../src/engine/planner.js';
 import { registerCandidates, pruneOnVerdict, admit } from '../../src/engine/hypothesis.js';
 import { newSession, type LedgerEntry, type SessionState } from '../../src/engine/session.js';
 import { extractSalient } from '../../src/engine/salient.js';
-import { traceAModel } from '../fixtures.js';
+import { traceAModel, traceBModel, graceCandidate } from '../fixtures.js';
 import type { CandidateInvariant } from '../../src/ast/invariant.js';
 import type { CaseState } from '../../src/engine/evaluate.js';
 
@@ -124,6 +124,61 @@ describe('planner — trace A logic with fake solvers', () => {
     const q = await nextQuestion(s, ledger, traceAModel, deps);
     expect(q.type).toBe('question');
     expect((q as any).witness).toEqual(dpsf);
+  });
+
+  // Regression coverage for golden-trace-B: a probe-forbid on a sole-survivor `statePredicate`
+  // candidate MUST reuse exclusions scoped to that candidate (recomputed fresh from raw witnesses,
+  // same helper the distinguish loop uses) — going tautologically UNSAT once every way the
+  // candidate can be violated has already been shown and forbidden is correct, not a masking bug,
+  // because extractSalient's collectCmps walk is exhaustive over a statePredicate's own comparison
+  // tree (unlike `unique`, whose extraction is partial — see the *next* test for that contrast).
+  it('probe-forbid on a statePredicate reuses exclusions from a prior forbid verdict against it — goes UNSAT once fully covered', async () => {
+    const s = newSession(); s.phase = 'distinguish';
+    const ledger: LedgerEntry[] = [];
+    const H2: CandidateInvariant = { id: 'H2', name: 'graceWindow', prior: 0.9, source: 'seed', candidate: graceCandidate(true) };
+    registerCandidates(s, [H2]);
+    // A prior distinguish verdict already forbade a beyond-grace witness (the only violation shape
+    // a statePredicate implication has: guard true, body false).
+    const beyondGrace: CaseState = {
+      now: 220,
+      entities: [
+        { type: 'Invoice', id: 'i1', fields: { status: 'Unpaid', dueDate: 0 } },
+        { type: 'Subscription', id: 's1', fields: { 'Access.state': 'Active', grace: 72, invoice: 'i1' } }
+      ]
+    };
+    const salient = extractSalient([H2.candidate], beyondGrace);
+    ledger.push({ kind: 'verdict', at: 't0', witnessId: 'w0', witness: beyondGrace, salient, judge: 'forbid', question: 'q' });
+
+    const deps: any = {
+      alloy: async () => { throw new Error('statePredicate with arith routes to quint, not alloy'); },
+      quint: async (_m: unknown, q: any) => {
+        // Sanity: the exclusion shape must actually be wired into this query (no exclusions would
+        // be a silent false-pass of this regression test).
+        expect(q.exclusions.length).toBeGreaterThan(0);
+        return { violated: false, ms: 5 };   // UNSAT: nothing left uncovered by the exclusion
+      }
+    };
+    const q = await nextQuestion(s, ledger, traceBModel, deps);
+    // Sole a-priori survivor with no remaining probe-forbid witness ⇒ falls through to probe-permit,
+    // then (no permit evidence, no witness either in this stub) to the alternatives phase — it must
+    // NOT surface a probe-forbid question, since the only violation shape was already judged.
+    expect(q.type).not.toBe('probe-options');
+  });
+
+  // Contrast case: the SAME exclusion-reuse must NOT apply to `unique` candidates (Task 17's
+  // masking bug). extractSalient only records pairwise by-key equality booleans for `unique` —
+  // never unconstrained domain fields like plan.family — so reprojecting a forbid verdict onto a
+  // unique survivor alone reproduces a shape matching `not Hi` on the dims it happens to check,
+  // while silently missing the dimension a real, still-outstanding refutation needs to vary.
+  it('probe-forbid on a `unique` candidate still ignores exclusions — Task 17 masking guard holds', async () => {
+    const s = newSession(); s.phase = 'distinguish';
+    const ledger: LedgerEntry[] = [];
+    registerCandidates(s, [H1]);
+    const salient = extractSalient([H1.candidate], dpsf);
+    ledger.push({ kind: 'verdict', at: 't0', witnessId: 'w0', witness: dpsf, salient, judge: 'forbid', question: 'q' });
+    const deps = fakeDeps([[dpdf]]);   // a real, still-outstanding refutation (different family)
+    const q = await nextQuestion(s, ledger, traceAModel, deps);
+    expect(q.type).toBe('probe-options');   // must still be found — not masked by the stale reuse
   });
 
   // Regression coverage: Alloy's own enumeration order is first-SAT-found, not "most minimal" —

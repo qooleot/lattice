@@ -52,11 +52,52 @@ function pathToQuint(m: DomainModel, path: Path, self: string, ownerName: string
   }
   return expr;
 }
+
+// Every `<var>.get(<expr>)` sub-expression a multi-hop path passes through when crossing a ref
+// (mirrors pathToQuint's own ref-hop detection). Non-machine aggregates/entities start with
+// `exists: false` and are only ever populated by a `create_*` action (see initValue/emitOwnerSig
+// above) — but Quint's map model still returns a concrete (nondeterministically chosen) value for
+// every key regardless of that flag, since field access is never itself gated on `exists`. Without
+// requiring each hop's target to actually exist, Apalache is free to "read" a never-created
+// record's placeholder fields to manufacture a counterexample that refers to data that was never
+// instantiated — a spurious witness, not a real violation. refHopsInTerm/predToQuint's `cmp` case
+// below use these to gate each comparison on its ref targets actually existing.
+function refHopsIn(m: DomainModel, path: Path, self: string, ownerName: string): string[] {
+  const hops: string[] = [];
+  let expr = self, owner = ownerName;
+  for (let i = 0; i < path.length; i++) {
+    const def = owners(m).find(o => o.name === owner)!;
+    const f = def.fields.find(x => x.name === path[i])!;
+    expr = `${expr}.${path[i]}`;
+    if (i < path.length - 1 && f.type.kind === 'ref') {
+      owner = f.type.target;
+      expr = `${varName(owner)}.get(${expr})`;
+      hops.push(expr);
+    }
+  }
+  return hops;
+}
+function refHopsInTerm(m: DomainModel, t: Term, self: string, ownerName: string): string[] {
+  switch (t.kind) {
+    case 'field': return refHopsIn(m, t.path, self, ownerName);
+    case 'plus': return [...refHopsInTerm(m, t.left, self, ownerName), ...refHopsInTerm(m, t.right, self, ownerName)];
+    case 'int': case 'enumval': case 'now': return [];
+  }
+}
 function predToQuint(m: DomainModel, p: Predicate, self: string, ownerName: string): string {
   switch (p.kind) {
     case 'cmp': {
       const ops: Record<Cmp, string> = { eq: '==', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' };
-      return `(${termToQuint(m, p.left, self, ownerName)} ${ops[p.op]} ${termToQuint(m, p.right, self, ownerName)})`;
+      const cmp = `(${termToQuint(m, p.left, self, ownerName)} ${ops[p.op]} ${termToQuint(m, p.right, self, ownerName)})`;
+      // Match evaluate.ts's evalPred('cmp'): "unknown facts don't convict" — if either side reads
+      // through a ref to a record that was never created (see refHopsIn above), the comparison's
+      // operands are meaningless placeholder data, not a real fact, so this node must evaluate to
+      // true (vacuously) exactly like the TS judge does, rather than let Apalache read through to
+      // a never-created record to manufacture a spurious counterexample.
+      const hops = [...refHopsInTerm(m, p.left, self, ownerName), ...refHopsInTerm(m, p.right, self, ownerName)];
+      if (hops.length === 0) return cmp;
+      const allExist = [...new Set(hops)].map(h => `${h}.exists`).join(' and ');
+      return `((${allExist}) implies ${cmp})`;
     }
     case 'inState': return '(' + p.states.map(s => `${self}.${p.region}_state == "${s}"`).join(' or ') + ')';
     case 'and': return '(' + p.args.map(a => predToQuint(m, a, self, ownerName)).join(' and ') + ')';
@@ -75,6 +116,10 @@ function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
   if (c.kind === 'conservation') {
     const parts = c.parts.map(p => pathToQuint(m, p, 'x', c.aggregate)).join(' + ');
     return `val ${name} = ${v}.keys().forall(k => { val x = ${v}.get(k) not(x.exists) or (${parts} == ${pathToQuint(m, c.total, 'x', c.aggregate)}) })`;
+  }
+  if (c.kind === 'cardinality') {
+    const guard = c.where ? predToQuint(m, c.where, 'x', c.aggregate) : 'true';
+    return `val ${name} = ${v}.keys().filter(k => { val x = ${v}.get(k) x.exists and (${guard}) }).size() <= ${c.atMost}`;
   }
   throw new Error(`${c.kind} is never solver-queried on quint in slice-1 (template auto-adopt only)`);
 }

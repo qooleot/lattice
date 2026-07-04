@@ -63,6 +63,7 @@ describe.skipIf(!existsSync(ALLOY_JAR))('GOLDEN TRACE A', () => {
     expect(await checkDistinct(groundTruth, groundTruth, traceAModel, realDeps)).toBe(false);
     // latency budget (§2.4)
     latencies.sort((a, b) => a - b);
+    expect(latencies.length).toBeGreaterThan(0);
     expect(latencies[Math.floor(latencies.length / 2)]!).toBeLessThanOrEqual(10_000);
     expect(Math.max(...latencies)).toBeLessThanOrEqual(45_000);
 
