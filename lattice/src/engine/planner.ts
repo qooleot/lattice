@@ -22,17 +22,45 @@ export type PlannerOutput =
   | { type: 'converged' };
 
 const verdicts = (ledger: LedgerEntry[]) => ledger.filter(e => e.kind === 'verdict') as Extract<LedgerEntry, { kind: 'verdict' }>[];
-const exclusionsFrom = (ledger: LedgerEntry[]): SalientFact[][] => verdicts(ledger).map(v => v.salient).filter(s => s.length > 0);
+// Exclusions must be recomputed against the CURRENT query's candidates, not reused from the
+// ledger's stored `salient` field: that field was extracted with respect to whichever candidates
+// were active when the verdict was recorded, and can be missing dims (e.g. a finer-grained field
+// like plan.family) that a later, different candidate pair cares about. Reusing the stale,
+// coarser shape as an exclusion silently over-excludes — it can rule out the *only* witness that
+// distinguishes the new pair, even though the human was never shown or asked about that specific
+// combination. Rebuilding from the raw stored witness, scoped to the live candidates, keeps the
+// exclusion exactly as specific as what was actually shown.
+const exclusionsFrom = (ledger: LedgerEntry[], cands: Candidate[]): SalientFact[][] =>
+  verdicts(ledger).map(v => extractSalient(cands, v.witness)).filter(s => s.length > 0);
 const wid = (s: SessionState, ledger: LedgerEntry[], extra = 0) =>
   `w${verdicts(ledger).length + Object.keys(s.pendingWitnesses).length + 1 + extra}`;
+
+// Alloy's enumeration order is first-SAT-found, not minimality — an early instance can carry
+// gratuitous extra atoms (e.g. an unconstrained relation gets distinct values it didn't need to)
+// that make the witness harder for a human to read than necessary (kill criterion 1: witnesses
+// must be intelligible). Sorting by entity count prefers the most minimal instance among those
+// enumerated — a ground-truth-agnostic, general intelligibility improvement, not case-specific.
+function byMinimalSize(witnesses: CaseState[]): CaseState[] {
+  return [...witnesses].sort((a, b) => a.entities.length - b.entities.length);
+}
 
 async function solve(m: DomainModel, hi: Candidate, hj: Candidate | undefined,
   kind: 'distinguish' | 'probe-forbid' | 'probe-permit', exclusions: SalientFact[][], deps: SolverDeps, max: number,
 ): Promise<{ witnesses: CaseState[]; ms: number }> {
   const engine = hj && routeCandidate(hj) === 'quint' ? 'quint' : routeCandidate(hi);
   if (engine === 'alloy') {
+    // Boundary probes first ask for a witness that also varies a domain field the candidate
+    // itself ignores (see AlloyQuery.varyUnreferenced) — more thorough, but that extra
+    // conjunct can occasionally be unsatisfiable on its own even though the plain probe isn't
+    // (e.g. too few atoms at this scope). Falling back keeps the probe itself infallible; the
+    // nudge is a best-effort quality improvement, never a correctness requirement.
+    const isProbe = kind === 'probe-forbid' || kind === 'probe-permit';
+    if (isProbe) {
+      const r1 = await deps.alloy(m, { kind, hi, hj, exclusions, scope: 4, varyUnreferenced: true }, max);
+      if (r1.sat) return { witnesses: byMinimalSize(r1.instances), ms: r1.ms };
+    }
     const r = await deps.alloy(m, { kind, hi, hj, exclusions, scope: 4 }, max);
-    return { witnesses: r.sat ? r.instances : [], ms: r.ms };
+    return { witnesses: r.sat ? byMinimalSize(r.instances) : [], ms: r.ms };
   }
   const r = await deps.quint(m, { kind, hi, hj, exclusions, maxSteps: 10 });
   return { witnesses: r.violated && r.witness ? [r.witness] : [], ms: r.ms };
@@ -44,7 +72,6 @@ export async function checkDistinct(survivor: Candidate, alt: Candidate, m: Doma
 }
 
 export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: DomainModel, deps: SolverDeps): Promise<PlannerOutput> {
-  const exclusions = exclusionsFrom(ledger);
   const active = () => activeCandidates(s);
 
   // 1. Distinguish highest-combined-prior separable pair
@@ -53,7 +80,8 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
     let advanced = false;
     for (let i = 0; i < sorted.length && !advanced; i++) for (let j = i + 1; j < sorted.length; j++) {
       const [a, b] = [sorted[i]!, sorted[j]!];
-      const { witnesses, ms } = await solve(m, a.inv.candidate, b.inv.candidate, 'distinguish', exclusions, deps, 1);
+      const exclusions = exclusionsFrom(ledger, [a.inv.candidate, b.inv.candidate]);
+      const { witnesses, ms } = await solve(m, a.inv.candidate, b.inv.candidate, 'distinguish', exclusions, deps, 5);
       if (witnesses.length === 0) {                          // equivalent over scope ⇒ merge, never ask
         const [win, lose] = a.inv.prior >= b.inv.prior ? [a, b] : [b, a];
         lose.status = 'merged'; lose.mergedInto = win.inv.id;
@@ -81,7 +109,14 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
   const H = active()[0]!;
   const apriori = H.inv.source === 'seed' || H.inv.source === 'template';
   if (apriori && !s.probesAsked.forbid) {
-    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-forbid', exclusions, deps, 3);
+    // Probes run at most once per session (probesAsked is a one-shot flag), so there is no
+    // "don't re-ask the same probe" concern for exclusions to guard against here. Reusing the
+    // distinguish-phase exclusions would be wrong: a unique-candidate's only violation shape is
+    // "some equal-by-keys pair", which is exactly `not Hi` — if that shape was already excluded
+    // (recorded from an unrelated distinguish verdict against a *different*, now-pruned pair),
+    // `(not Hi) and (not thatShape)` becomes a tautological contradiction and the solver can
+    // never find a real, still-outstanding refutation of Hi.
+    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-forbid', [], deps, 3);
     s.probesAsked.forbid = true;
     if (witnesses.length > 0) {
       s.phase = 'probe-forbid';
@@ -96,7 +131,7 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
   }
   const hasPermitEvidence = verdicts(ledger).some(v => v.judge === 'permit' && evaluateCandidate(H.inv.candidate, v.witness) === 'permit');
   if (apriori && !s.probesAsked.permit && !hasPermitEvidence) {
-    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-permit', exclusions, deps, 3);
+    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-permit', [], deps, 3);
     s.probesAsked.permit = true;
     if (witnesses.length > 0) {
       s.phase = 'probe-permit';

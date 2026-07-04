@@ -90,4 +90,53 @@ describe('planner — trace A logic with fake solvers', () => {
     const deps = fakeDeps([[]]);
     expect(await checkDistinct(H1.candidate, H1.candidate, traceAModel, deps)).toBe(false);
   });
+
+  // Regression coverage for the golden-trace-A bug: exclusions must be recomputed against the
+  // CURRENT query's candidates, not reused verbatim from the ledger's stored `salient` field.
+  // A verdict recorded while only H1/H2 (customer, plan — no family) were active produces a
+  // shape with no `plan.family` dim. If that coarse shape is later reused verbatim to exclude a
+  // distinguish query between H1 and a *different*, family-aware candidate, it silently excludes
+  // the only witness that could ever distinguish them — see task-17 report for the full trace.
+  it('exclusions are rescoped per query — a stale coarse shape does not block a finer distinguish', async () => {
+    const s = newSession(); s.phase = 'distinguish';
+    const ledger: LedgerEntry[] = [];
+    const H1only = H1;
+    const H3: CandidateInvariant = { id: 'H3', name: 'H3', prior: 0.9, source: 'regen',
+      candidate: { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer'], ['plan', 'family']] } };
+    registerCandidates(s, [H1only]);
+    // Record a verdict from an earlier round where only H1 (customer-only) was under
+    // consideration — its extracted salient facts have no `plan.family` dim at all.
+    const staleWitness: CaseState = { entities: [
+      { type: 'Customer', id: 'c1', fields: {} }, { type: 'Family', id: 'f1', fields: {} }, { type: 'Family', id: 'f2', fields: {} },
+      { type: 'Plan', id: 'p1', fields: { family: 'f1' } }, { type: 'Plan', id: 'p2', fields: { family: 'f2' } },
+      { type: 'Subscription', id: 's1', fields: { customer: 'c1', plan: 'p1', 'Access.state': 'Active' } },
+      { type: 'Subscription', id: 's2', fields: { customer: 'c1', plan: 'p2', 'Access.state': 'Active' } }
+    ]};
+    const staleSalient = extractSalient([H1only.candidate], staleWitness);   // only `customer equal` + count — no plan dims at all
+    ledger.push({ kind: 'verdict', at: 't0', witnessId: 'w0', witness: staleWitness, salient: staleSalient, judge: 'permit', question: 'q' });
+
+    // Now a fresh alternative (H3, family-aware) is admitted and the loop must distinguish it
+    // from H1. The fake solver returns dpsf (same customer, same family) for this query — if the
+    // planner wrongly reused the stale shape (customer equal=true) as an exclusion, this witness
+    // would look identical on the recorded dims and get excluded, leaving nothing to return.
+    registerCandidates(s, [H3]);
+    const deps = fakeDeps([[dpsf]]);
+    const q = await nextQuestion(s, ledger, traceAModel, deps);
+    expect(q.type).toBe('question');
+    expect((q as any).witness).toEqual(dpsf);
+  });
+
+  // Regression coverage: Alloy's own enumeration order is first-SAT-found, not "most minimal" —
+  // an early instance can carry gratuitous extra atoms that make the witness harder to read than
+  // necessary. The planner should prefer the smallest enumerated instance.
+  it('prefers the smallest enumerated witness among several returned instances', async () => {
+    const s = newSession(); s.phase = 'distinguish';
+    const ledger: LedgerEntry[] = [];
+    registerCandidates(s, [H1, H2]);
+    const bigger: CaseState = { entities: [...dpsf.entities, { type: 'Customer', id: 'c9', fields: {} }] };
+    const deps = fakeDeps([[bigger, dpsf]]);   // bigger returned first, smaller second
+    const q = await nextQuestion(s, ledger, traceAModel, deps);
+    expect(q.type).toBe('question');
+    expect((q as any).witness).toEqual(dpsf);
+  });
 });
