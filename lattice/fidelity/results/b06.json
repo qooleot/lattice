@@ -1,1 +1,116 @@
-{"ruleId":"b06","status":"formalized","model":{"context":"billing","ticksPerDay":24,"enums":[],"entities":[],"aggregates":[{"kind":"aggregate","name":"Invoice","fields":[{"name":"id","type":{"kind":"prim","prim":"Id"},"key":true},{"name":"amountCaptured","type":{"kind":"prim","prim":"Money"}},{"name":"totalRefunded","type":{"kind":"prim","prim":"Money"}}]}],"events":[]},"formalization":{"kind":"statePredicate","aggregate":"Invoice","body":{"kind":"cmp","op":"le","left":{"kind":"field","owner":"self","path":["totalRefunded"]},"right":{"kind":"field","owner":"self","path":["amountCaptured"]}}},"cases":[{"desc":"Refunds below captured amount","expected":"permit","state":{"entities":[{"type":"Invoice","id":"inv1","fields":{"amountCaptured":10000,"totalRefunded":4000}}]}},{"desc":"Refunds exactly equal captured amount","expected":"permit","state":{"entities":[{"type":"Invoice","id":"inv2","fields":{"amountCaptured":10000,"totalRefunded":10000}}]}},{"desc":"Refunds exceed captured amount","expected":"forbid","state":{"entities":[{"type":"Invoice","id":"inv3","fields":{"amountCaptured":10000,"totalRefunded":12000}}]}}],"adversarial":null,"humanVerdict":null}
+{
+  "ruleId": "b06",
+  "status": "formalized",
+  "model": {
+    "context": "billing",
+    "ticksPerDay": 24,
+    "enums": [],
+    "entities": [],
+    "aggregates": [
+      {
+        "kind": "aggregate",
+        "name": "Invoice",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          },
+          {
+            "name": "amountCaptured",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            }
+          },
+          {
+            "name": "totalRefunded",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            }
+          }
+        ]
+      }
+    ],
+    "events": []
+  },
+  "formalization": {
+    "kind": "statePredicate",
+    "aggregate": "Invoice",
+    "body": {
+      "kind": "cmp",
+      "op": "le",
+      "left": {
+        "kind": "field",
+        "owner": "self",
+        "path": [
+          "totalRefunded"
+        ]
+      },
+      "right": {
+        "kind": "field",
+        "owner": "self",
+        "path": [
+          "amountCaptured"
+        ]
+      }
+    }
+  },
+  "cases": [
+    {
+      "desc": "Refunds below captured amount",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "Invoice",
+            "id": "inv1",
+            "fields": {
+              "amountCaptured": 10000,
+              "totalRefunded": 4000
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "Refunds exactly equal captured amount",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "Invoice",
+            "id": "inv2",
+            "fields": {
+              "amountCaptured": 10000,
+              "totalRefunded": 10000
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "Refunds exceed captured amount",
+      "expected": "forbid",
+      "state": {
+        "entities": [
+          {
+            "type": "Invoice",
+            "id": "inv3",
+            "fields": {
+              "amountCaptured": 10000,
+              "totalRefunded": 12000
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "adversarial": null,
+  "humanVerdict": "faithful",
+  "notes": "Human override: faithful."
+}
