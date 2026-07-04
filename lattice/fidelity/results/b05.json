@@ -1,1 +1,160 @@
-{"ruleId":"b05","status":"formalized","model":{"context":"subscriptions","ticksPerDay":24,"enums":[],"entities":[],"aggregates":[{"kind":"aggregate","name":"Subscription","fields":[{"name":"id","type":{"kind":"prim","prim":"Id"},"key":true}],"machine":{"regions":[{"name":"Lifecycle","initial":"Active","states":[{"name":"Trial","tags":["active"]},{"name":"Active","tags":["active"]},{"name":"PastDue","tags":["active"]},{"name":"Canceled","tags":["terminal"]}]}],"transitions":[]}}],"events":[]},"formalization":{"kind":"terminal","aggregate":"Subscription","region":"Lifecycle","state":"Canceled"},"cases":[{"desc":"Subscription stays Canceled across ticks — no transition out of terminal state","expected":"permit","state":{"entities":[{"type":"Subscription","id":"s1","fields":{"Lifecycle.state":"Canceled"}}],"trace":[[{"type":"Subscription","id":"s1","fields":{"Lifecycle.state":"Canceled"}}],[{"type":"Subscription","id":"s1","fields":{"Lifecycle.state":"Canceled"}}]]}},{"desc":"Active subscription transitions to Canceled — entering terminal state is allowed","expected":"permit","state":{"entities":[{"type":"Subscription","id":"s2","fields":{"Lifecycle.state":"Canceled"}}],"trace":[[{"type":"Subscription","id":"s2","fields":{"Lifecycle.state":"Active"}}]]}},{"desc":"Canceled subscription transitions back to Active — leaving terminal state is forbidden","expected":"forbid","state":{"entities":[{"type":"Subscription","id":"s3","fields":{"Lifecycle.state":"Active"}}],"trace":[[{"type":"Subscription","id":"s3","fields":{"Lifecycle.state":"Canceled"}}]]}}],"adversarial":null,"humanVerdict":null,"notes":"Canceled is a terminal state in the Lifecycle region; the terminal candidate asserts no outgoing transition once entered, judged over the trace."}
+{
+  "ruleId": "b05",
+  "status": "formalized",
+  "model": {
+    "context": "subscriptions",
+    "ticksPerDay": 24,
+    "enums": [],
+    "entities": [],
+    "aggregates": [
+      {
+        "kind": "aggregate",
+        "name": "Subscription",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          }
+        ],
+        "machine": {
+          "regions": [
+            {
+              "name": "Lifecycle",
+              "initial": "Active",
+              "states": [
+                {
+                  "name": "Trial",
+                  "tags": [
+                    "active"
+                  ]
+                },
+                {
+                  "name": "Active",
+                  "tags": [
+                    "active"
+                  ]
+                },
+                {
+                  "name": "PastDue",
+                  "tags": [
+                    "active"
+                  ]
+                },
+                {
+                  "name": "Canceled",
+                  "tags": [
+                    "terminal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "transitions": []
+        }
+      }
+    ],
+    "events": []
+  },
+  "formalization": {
+    "kind": "terminal",
+    "aggregate": "Subscription",
+    "region": "Lifecycle",
+    "state": "Canceled"
+  },
+  "cases": [
+    {
+      "desc": "Subscription stays Canceled across ticks — no transition out of terminal state",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "Subscription",
+            "id": "s1",
+            "fields": {
+              "Lifecycle.state": "Canceled"
+            }
+          }
+        ],
+        "trace": [
+          [
+            {
+              "type": "Subscription",
+              "id": "s1",
+              "fields": {
+                "Lifecycle.state": "Canceled"
+              }
+            }
+          ],
+          [
+            {
+              "type": "Subscription",
+              "id": "s1",
+              "fields": {
+                "Lifecycle.state": "Canceled"
+              }
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "desc": "Active subscription transitions to Canceled — entering terminal state is allowed",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "Subscription",
+            "id": "s2",
+            "fields": {
+              "Lifecycle.state": "Canceled"
+            }
+          }
+        ],
+        "trace": [
+          [
+            {
+              "type": "Subscription",
+              "id": "s2",
+              "fields": {
+                "Lifecycle.state": "Active"
+              }
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "desc": "Canceled subscription transitions back to Active — leaving terminal state is forbidden",
+      "expected": "forbid",
+      "state": {
+        "entities": [
+          {
+            "type": "Subscription",
+            "id": "s3",
+            "fields": {
+              "Lifecycle.state": "Active"
+            }
+          }
+        ],
+        "trace": [
+          [
+            {
+              "type": "Subscription",
+              "id": "s3",
+              "fields": {
+                "Lifecycle.state": "Canceled"
+              }
+            }
+          ]
+        ]
+      }
+    }
+  ],
+  "adversarial": null,
+  "humanVerdict": "faithful",
+  "notes": "Human override: faithful (no adversarial case needed — business intent matches letter: no reactivation of canceled subscriptions)."
+}
