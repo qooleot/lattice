@@ -20,7 +20,85 @@ export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path):
   return null;
 }
 
+const KNOWN_KINDS = new Set([
+  'statePredicate', 'unique', 'refsResolve', 'cardinality',
+  'terminal', 'monotonic', 'conservation', 'leadsTo'
+]);
+
+function truncate(v: unknown): string {
+  const s = JSON.stringify(v);
+  return s.length > 80 ? s.slice(0, 80) + '…' : s;
+}
+
+/**
+ * Structural shape validation for LLM-emitted JSON masquerading as a Candidate.
+ * Runs before any semantic checks — verifies the runtime shape actually matches
+ * the declared kind's TypeScript type, so later code can assume well-typed input.
+ */
+function shapeErrors(c: any): Diagnostic[] {
+  if (typeof c !== 'object' || c === null) return [{ code: 'ill-typed', message: `candidate: expected object, got ${truncate(c)}` }];
+  if (!KNOWN_KINDS.has(c.kind)) return [{ code: 'out-of-grammar', message: `unknown candidate kind ${truncate(c.kind)}` }];
+
+  const isString = (v: unknown) => typeof v === 'string';
+  const isPath = (v: unknown): v is string[] => Array.isArray(v) && v.every(isString);
+  const isPathArray = (v: unknown): v is string[][] => Array.isArray(v) && v.every(isPath);
+  const isTerm = (v: unknown): v is object => typeof v === 'object' && v !== null && isString((v as any).kind);
+  const isPredicate = (v: unknown): v is object => typeof v === 'object' && v !== null && isString((v as any).kind);
+  const isWhileStates = (v: unknown): v is object =>
+    typeof v === 'object' && v !== null && isString((v as any).region) &&
+    Array.isArray((v as any).states) && (v as any).states.every(isString);
+
+  const check = (ok: boolean, field: string, shape: string, value: unknown): Diagnostic | null =>
+    ok ? null : { code: 'ill-typed', message: `${field}: expected ${shape}, got ${truncate(value)}` };
+
+  let err: Diagnostic | null = null;
+  switch (c.kind) {
+    case 'statePredicate':
+      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
+        ?? (c.where !== undefined ? check(isPredicate(c.where), 'where', 'Predicate object', c.where) : null)
+        ?? check(isPredicate(c.body), 'body', 'Predicate object', c.body);
+      break;
+    case 'unique':
+      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
+        ?? check(isWhileStates(c.whileStates), 'whileStates', '{region: string, states: string[]}', c.whileStates)
+        ?? check(isPathArray(c.by), 'by', 'Path[] (array of string[])', c.by);
+      break;
+    case 'refsResolve':
+      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate);
+      break;
+    case 'cardinality':
+      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
+        ?? check(c.where === null || isPredicate(c.where), 'where', 'Predicate object or null', c.where)
+        ?? check(typeof c.atMost === 'number', 'atMost', 'number', c.atMost);
+      break;
+    case 'terminal':
+      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
+        ?? check(isString(c.region), 'region', 'string', c.region)
+        ?? check(isString(c.state), 'state', 'string', c.state);
+      break;
+    case 'monotonic':
+      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
+        ?? check(isPath(c.field), 'field', 'Path (array of string)', c.field);
+      break;
+    case 'conservation':
+      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
+        ?? check(isPathArray(c.parts), 'parts', 'Path[] (array of string[])', c.parts)
+        ?? check(isPath(c.total), 'total', 'Path (array of string)', c.total);
+      break;
+    case 'leadsTo':
+      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
+        ?? check(isPredicate(c.from), 'from', 'Predicate object', c.from)
+        ?? check(isPredicate(c.to), 'to', 'Predicate object', c.to)
+        ?? check(isString(c.fairness), 'fairness', 'string', c.fairness);
+      break;
+  }
+  return err ? [err] : [];
+}
+
 export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
+  const shapeErrs = shapeErrors(c);
+  if (shapeErrs.length) return shapeErrs;
+
   const out: Diagnostic[] = [];
   const agg = ownerDef(m, c.aggregate);
   if (!agg) return [{ code: 'unknown-aggregate', message: `no aggregate/entity named ${c.aggregate}` }];

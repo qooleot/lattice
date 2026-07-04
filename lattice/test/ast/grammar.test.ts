@@ -61,6 +61,35 @@ describe('validateCandidate', () => {
   });
 });
 
+describe('validateCandidate — structural shape validation', () => {
+  it('rejects conservation with flat parts (string[] instead of Path[]) without throwing', () => {
+    const bad: Candidate = {
+      kind: 'conservation', aggregate: 'Subscription',
+      parts: ['a', 'b'] as any, total: ['grace']
+    };
+    let result: ReturnType<typeof validateCandidate> = [];
+    expect(() => { result = validateCandidate(bad, model); }).not.toThrow();
+    expect(result.map(d => d.code)).toContain('ill-typed');
+  });
+
+  it('rejects unknown candidate kind as out-of-grammar', () => {
+    const bad: any = { kind: 'wibble', aggregate: 'Subscription' };
+    const result = validateCandidate(bad, model);
+    expect(result.map(d => d.code)).toContain('out-of-grammar');
+  });
+
+  it('rejects unique with flat by (string[] instead of Path[]) as ill-typed', () => {
+    const bad: Candidate = {
+      kind: 'unique', aggregate: 'Subscription',
+      whileStates: { region: 'Access', states: ['Active'] },
+      by: ['customer'] as any
+    };
+    let result: ReturnType<typeof validateCandidate> = [];
+    expect(() => { result = validateCandidate(bad, model); }).not.toThrow();
+    expect(result.map(d => d.code)).toContain('ill-typed');
+  });
+});
+
 describe('routeCandidate', () => {
   it('routes structural forms to alloy', () => {
     expect(routeCandidate(uniqueCand)).toBe('alloy');

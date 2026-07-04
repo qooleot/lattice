@@ -34,7 +34,16 @@ describe('fidelity harness', () => {
   it('flags grammar violations', () => {
     const bad = structuredClone(record);
     (bad.formalization as any).kind = 'wibble';
-    expect(checkRecord(bad).grammarErrors.length).toBeGreaterThan(0);
+    const result = checkRecord(bad);
+    expect(result.grammarErrors.length).toBeGreaterThan(0);
+    expect(result.grammarErrors.map(d => d.code)).toContain('out-of-grammar');
+  });
+  it('handles ill-typed candidate shape (flat parts) without throwing', () => {
+    const bad = structuredClone(record);
+    (bad.formalization as any).parts = ['recognized', 'deferred'];
+    let result: ReturnType<typeof checkRecord> = { grammarErrors: [], obviousPass: false, adversarialAgrees: null, perCase: [] };
+    expect(() => { result = checkRecord(bad); }).not.toThrow();
+    expect(result.grammarErrors.length).toBeGreaterThan(0);
   });
   it('handles not-formalizable status without throwing', () => {
     const notFormalizableRec: FidelityRecord = {
