@@ -35,13 +35,21 @@ const now = () => new Date().toISOString();
 
 const VALID_JUDGES = ['permit', 'forbid', 'undecided'] as const;
 const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit']);
+// terminal/monotonic/leadsTo/refsResolve are template-adopted only (spec §7/§8): they either crash
+// candidateToQuint when pair-routed against a Quint-side candidate, or (refsResolve) mis-evaluate
+// on Quint witnesses that never populate the fields refsResolve's vacuous-true Alloy semantics
+// assume. They must never be elicited via propose/regenerate.
+const UNELICITABLE_KINDS = new Set(['terminal', 'monotonic', 'leadsTo', 'refsResolve']);
+const notElicitable = (kinds: string[]) =>
+  ({ error: 'not-elicitable', kinds, hint: 'these kinds are template-adopted, not elicited' });
 
 export async function runCommand(argv: string[], deps: SolverDeps): Promise<object> {
   try {
     const cmd = argv[0]!;
     const { values } = parseArgs({ args: argv.slice(1), options: {
       session: { type: 'string' }, model: { type: 'string' }, candidates: { type: 'string' }, candidate: { type: 'string' },
-      witness: { type: 'string' }, judge: { type: 'string' }, out: { type: 'string' }, topic: { type: 'string' }, note: { type: 'string' }
+      witness: { type: 'string' }, judge: { type: 'string' }, out: { type: 'string' }, topic: { type: 'string' }, note: { type: 'string' },
+      question: { type: 'string' }, answer: { type: 'string' }
     }});
 
     if (!values.session) return { error: 'missing-arg', arg: 'session' };
@@ -57,6 +65,10 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         break;
       case 'witness-show': if (!values.witness) return { error: 'missing-arg', arg: 'witness' }; break;
       case 'emit': if (!values.out) return { error: 'missing-arg', arg: 'out' }; break;
+      case 'structure':
+        if (!values.question) return { error: 'missing-arg', arg: 'question' };
+        if (!values.answer) return { error: 'missing-arg', arg: 'answer' };
+        break;
     }
 
     const s = loadState(dir);
@@ -84,6 +96,8 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         const invs = readJson(values.candidates!);
         if (isBadJson(invs)) return { error: 'bad-json-or-path', detail: invs[BAD_JSON] };
         const typedInvs: CandidateInvariant[] = invs;
+        const badKinds = typedInvs.map(i => i.candidate.kind).filter(k => UNELICITABLE_KINDS.has(k));
+        if (badKinds.length) return notElicitable(badKinds);
         const diags = typedInvs.flatMap(i => validateCandidate(i.candidate, model()).map(d => ({ ...d, candidate: i.id })));
         if (diags.length) return { error: 'out-of-grammar', diagnostics: diags };
         registerCandidates(s, typedInvs);
@@ -94,8 +108,19 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         if (out.type === 'converged') {
           const survivor = s.candidates.find(c => c.status === 'active');
           if (survivor) {
+            const priorLedger = readLedger(dir);
+            const hasVerdicts = priorLedger.some(e => e.kind === 'verdict');
+            if (!hasVerdicts) {
+              // Converged with zero judged cases: nothing in the ledger anchors this candidate.
+              // Adopting it silently would present an un-vetted hypothesis as settled — instead
+              // park it and surface an open decision for a human to confirm.
+              survivor.status = 'parked';
+              appendLedger(dir, { kind: 'open-decision', at: now(), topic: 'unanchored-survivor',
+                note: 'converged with no judged cases; needs human confirmation' });
+              return done({ ...out, warning: 'unanchored-survivor-parked' });
+            }
             survivor.status = 'adopted';
-            const wids = readLedger(dir).filter(e => e.kind === 'verdict').map(e => (e as any).witnessId).join(', ');
+            const wids = priorLedger.filter(e => e.kind === 'verdict').map(e => (e as any).witnessId).join(', ');
             appendLedger(dir, { kind: 'adopted', at: now(), invariant: survivor.inv, provenance: `elicited (${wids})` });
           }
         }
@@ -109,7 +134,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         if (values.judge === 'undecided') {
           appendLedger(dir, { kind: 'open-decision', at: now(), topic: values.topic ?? 'unnamed', note: values.note ?? '',
             witnessId: id, salient: pending.salient, witness: pending.witness });
-          delete s.pendingWitnesses[id];
+          for (const [k, v] of Object.entries(s.pendingWitnesses)) if (v.purpose === pending.purpose) delete s.pendingWitnesses[k];
           return done({ parked: true });
         }
         const judge = values.judge as 'permit' | 'forbid';
@@ -121,6 +146,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       case 'regenerate': {
         const raw = readJson(values.candidate!);
         if (isBadJson(raw)) return { error: 'bad-json-or-path', detail: raw[BAD_JSON] };
+        if (UNELICITABLE_KINDS.has(raw.candidate?.kind)) return notElicitable([raw.candidate.kind]);
         const source = s.phase === 'alternatives' ? 'alternative' : 'regen';
         const inv: CandidateInvariant = { ...raw, source };
         if (source === 'alternative') {
@@ -134,6 +160,10 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         const attemptsLeft = source === 'regen' ? 3 - s.regenAttempts : 2 - s.alternativeAttempts;
         if (r.ok && source === 'alternative') s.phase = 'distinguish';   // a live alternative reopens the loop
         return done({ ...r, attemptsLeft });
+      }
+      case 'structure': {
+        appendLedger(dir, { kind: 'structure', at: now(), question: values.question!, answer: values.answer! });
+        return { ok: true, ledgerCount: readLedger(dir).length };
       }
       case 'status':
         return { phase: s.phase, regenAttempts: s.regenAttempts, alternativeAttempts: s.alternativeAttempts,
@@ -150,7 +180,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         mkdirSync(values.out!, { recursive: true });
         const prose = join(values.out!, 'spec.prose.md'), lat = join(values.out!, 'spec.lat');
         writeFileSync(prose, astToProse(model(), adopted, ledger));
-        writeFileSync(lat, astToCode(model(), adopted));
+        writeFileSync(lat, astToCode(model(), adopted, ledger));
         return { written: [prose, lat] };
       }
       default: return { error: 'unknown-command', cmd };

@@ -135,6 +135,45 @@ describe('engine CLI', () => {
     expect(adoptedEntry.provenance).toContain('w1');
   });
 
+  it('next-question returning converged with zero verdicts parks the survivor as an unanchored-survivor open decision instead of adopting it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+      { id: 'H1', name: 'h1', prior: 0.5, source: 'seed', candidate: { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] } }
+    ])], fakeDeps);
+
+    // Drive the session to the brink of convergence: sole active survivor, both probes already
+    // asked, alternativeAttempts already exhausted (2) — next-question should return converged.
+    // Crucially, the ledger has NO verdict entries (probes returned UNSAT, alternatives exhausted
+    // without ever getting a judged case) — the survivor must not be silently adopted.
+    const stateFile = join(dir, 'state.json');
+    const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+    st.phase = 'alternatives';
+    st.alternativeAttempts = 2;
+    st.probesAsked = { forbid: true, permit: true };
+    writeFileSync(stateFile, JSON.stringify(st));
+
+    // sat:false deps ⇒ no witnesses were ever produced for this candidate; UNSAT throughout.
+    const unsatDeps: any = { alloy: async () => ({ sat: false, instances: [], ms: 1 }), quint: async () => ({ violated: false, ms: 1 }) };
+
+    const q: any = await runCommand(['next-question', '--session', dir], unsatDeps);
+    expect(q.type).toBe('converged');
+    expect(q.warning).toBe('unanchored-survivor-parked');
+
+    const st2: any = await runCommand(['status', '--session', dir], fakeDeps);
+    const h1 = st2.candidates.find((c: any) => c.id === 'H1');
+    expect(h1.status).toBe('parked');
+
+    const ledgerFile = join(dir, 'ledger.jsonl');
+    const ledger = readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l: string) => JSON.parse(l));
+    const openDecision = ledger.find((e: any) => e.kind === 'open-decision' && e.topic === 'unanchored-survivor');
+    expect(openDecision).toBeDefined();
+    // Template auto-adopts at init (e.g. NoOrphan_Subscription) are unrelated and expected; the
+    // elicited survivor H1 specifically must never get an 'adopted' ledger entry.
+    expect(ledger.find((e: any) => e.kind === 'adopted' && e.invariant.id === 'H1')).toBeUndefined();
+  });
+
   it('emit writes prose + code', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cli-'));
     writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
@@ -165,6 +204,44 @@ describe('engine CLI', () => {
     expect(st.candidates.find((c: any) => c.id === 'H1').status).toBe('active');
     expect(st.candidates.find((c: any) => c.id === 'H2').status).toBe('active');
     expect(st.ledgerCount).toBe(beforeLedgerCount);
+  });
+
+  it('propose rejects unsolvable candidate kinds (terminal/monotonic/leadsTo/refsResolve) as not-elicitable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    const bad = [
+      { id: 'T1', name: 't1', prior: 0.5, source: 'seed', candidate: { kind: 'terminal', aggregate: 'Subscription', region: 'Access', state: 'Ended' } },
+      { id: 'M1', name: 'm1', prior: 0.5, source: 'seed', candidate: { kind: 'monotonic', aggregate: 'Subscription', field: ['grace'] } }
+    ];
+    const r: any = await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify(bad)], fakeDeps);
+    expect(r.error).toBe('not-elicitable');
+    expect(r.kinds).toEqual(['terminal', 'monotonic']);
+    expect(r.hint).toMatch(/template-adopted/);
+
+    const st: any = await runCommand(['status', '--session', dir], fakeDeps);
+    expect(st.candidates.some((c: any) => c.id === 'T1' || c.id === 'M1')).toBe(false);
+  });
+
+  it('regenerate rejects an unsolvable candidate kind as not-elicitable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    const bad = { id: 'R1', name: 'r1', candidate: { kind: 'refsResolve', aggregate: 'Subscription' } };
+    const r: any = await runCommand(['regenerate', '--session', dir, '--candidate', JSON.stringify(bad)], fakeDeps);
+    expect(r.error).toBe('not-elicitable');
+    expect(r.kinds).toEqual(['refsResolve']);
+  });
+
+  it('structure command appends a structure ledger entry and works pre-init', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    const r: any = await runCommand(['structure', '--session', dir, '--question', 'What are the aggregates?', '--answer', 'Subscription, Customer'], fakeDeps);
+    expect(r.ok).toBe(true);
+    expect(r.ledgerCount).toBe(1);
+    const ledger = readFileSync(join(dir, 'ledger.jsonl'), 'utf8').trim().split('\n').map((l: string) => JSON.parse(l));
+    expect(ledger[0].kind).toBe('structure');
+    expect(ledger[0].question).toBe('What are the aggregates?');
+    expect(ledger[0].answer).toBe('Subscription, Customer');
   });
 
   it('missing --model on init returns a structured missing-arg error', async () => {

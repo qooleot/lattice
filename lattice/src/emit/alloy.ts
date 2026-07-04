@@ -93,7 +93,22 @@ function candidateToPred(c: Candidate, name: string): string {
   }
 }
 
-/** Rebuild a judged shape (salient facts) as an existential pattern to exclude. */
+/**
+ * Rebuild a judged shape (salient facts) as an existential pattern to exclude.
+ *
+ * NOTE (final review): this always emits a PAIR-shaped exclusion (`some disj a, b: agg | ...`).
+ * That is correct for `unique` subjects, whose whole candidate shape is inherently pairwise
+ * (a, b range over the same aggregate, comparing by-key fields between them). It is the WRONG
+ * shape for a `statePredicate` subject whose salient facts came from field-field eq/ne dims
+ * (e.g. `x.a = x.b` on a single record) — those dims describe a single-record fact, not a
+ * cross-record one, and forcing `some disj a, b` to exclude them doesn't express the same
+ * condition. This is currently unreachable in slice 1: statePredicate candidates whose facts
+ * include field-field eq/ne dims always route to Quint (see routeCandidate/predNeedsArith —
+ * arithmetic/ordering comparisons force the quint route, and field-field eq/ne dims only appear
+ * behind such comparisons in the slice-1 candidate set), so this Alloy path never actually sees
+ * them. Left as a known latent gap rather than fixed, since fixing it blind (without a witnessed
+ * repro reaching this code path) risks a subtler, harder-to-verify regression than the gap itself.
+ */
 function shapeToPred(facts: SalientFact[], subject: Candidate, name: string): string {
   const agg = subject.aggregate;
   const w = subject.kind === 'unique' ? subject.whileStates : null;

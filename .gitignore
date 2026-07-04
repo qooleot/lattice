@@ -1,3 +1,4 @@
+node_modules/
 lattice/node_modules/
 lattice/dist/
 lattice/vendor/*.jar

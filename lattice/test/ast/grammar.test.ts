@@ -99,6 +99,18 @@ describe('validateCandidate — structural shape validation', () => {
     expect(() => { result = validateCandidate(bad, model); }).not.toThrow();
     expect(result.map(d => d.code)).toContain('ill-typed');
   });
+
+  it('rejects a field Term with owner other than self', () => {
+    const bad: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'Subscription', path: ['status'] }, right: { kind: 'enumval', enum: 'Status', value: 'Paid' } } };
+    expect(validateCandidate(bad, model).map(d => d.code)).toContain('unsupported-owner');
+  });
+
+  it('rejects an inState Predicate with owner other than self', () => {
+    const bad: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'inState', owner: 'Subscription', region: 'Access', states: ['Active'] } };
+    expect(validateCandidate(bad, model).map(d => d.code)).toContain('unsupported-owner');
+  });
 });
 
 describe('routeCandidate', () => {

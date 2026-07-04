@@ -15,14 +15,18 @@ From the user's domain description, PROPOSE a concrete structure and let them co
 aggregates, entities, enums, machine regions/states (tag @active/@terminal), refs, field tags
 (@balance/@total/@monotonic on money-flow fields — these power auto-invariants). One question
 per message; multiple-choice when possible; the user judges, never authors. Budget ~10 questions.
+Record each structure Q&A via `engine structure --question ... --answer ...` as you go, so the
+ledger keeps a durable trace of how the structure was decided.
 When stable: `engine init --model <file>`. Fix any diagnostics by asking, not guessing.
 Present the auto-adopted template invariants as a list ("these come free — object to any?").
 
 ## Phase 1 — seeding
 Fold the engine's returned seeds with your own domain knowledge into 3–5 candidate invariants
 per open question, each with a prior (sum ≈ 1). Every candidate MUST be inside the closed grammar
-(lattice/src/ast/invariant.ts — statePredicate / unique / refsResolve / cardinality / terminal /
-monotonic / conservation). `engine propose`. If rejected: fix to the diagnostics, don't argue.
+(lattice/src/ast/invariant.ts) AND proposable: only statePredicate / unique / cardinality /
+conservation may be elicited. (terminal / monotonic / leadsTo / refsResolve are template-adopted
+only — `engine propose`/`regenerate` reject them with `not-elicitable`.) `engine propose`.
+If rejected: fix to the diagnostics, don't argue.
 
 ## Phase 2 — the loop
 Repeat `engine next-question`:

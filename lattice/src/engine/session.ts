@@ -17,6 +17,7 @@ export interface SessionState {
   alternativeAttempts: number;
   probesAsked: { forbid: boolean; permit: boolean };
   pendingWitnesses: Record<string, PendingWitness>;
+  witnessSeq: number;   // monotonic witness-id counter — never reused, unlike ledger+pending counts
 }
 export type LedgerEntry =
   | { kind: 'verdict'; at: string; witnessId: string; witness: CaseState; salient: SalientFact[]; judge: 'permit' | 'forbid'; question: string }
@@ -27,13 +28,16 @@ export type LedgerEntry =
 
 export function newSession(): SessionState {
   return { model: null, candidates: [], phase: 'structure', regenAttempts: 0, alternativeAttempts: 0,
-    probesAsked: { forbid: false, permit: false }, pendingWitnesses: {} };
+    probesAsked: { forbid: false, permit: false }, pendingWitnesses: {}, witnessSeq: 0 };
 }
 const stateFile = (dir: string) => join(dir, 'state.json');
 const ledgerFile = (dir: string) => join(dir, 'ledger.jsonl');
 
 export function loadState(dir: string): SessionState {
-  return existsSync(stateFile(dir)) ? JSON.parse(readFileSync(stateFile(dir), 'utf8')) : newSession();
+  if (!existsSync(stateFile(dir))) return newSession();
+  const s = JSON.parse(readFileSync(stateFile(dir), 'utf8'));
+  if (typeof s.witnessSeq !== 'number') s.witnessSeq = 0;   // old sessions predate the counter
+  return s;
 }
 export function saveState(dir: string, s: SessionState): void {
   mkdirSync(dir, { recursive: true });

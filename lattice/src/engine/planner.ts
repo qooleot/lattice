@@ -40,8 +40,10 @@ const openDecisionsWithWitness = (ledger: LedgerEntry[]) =>
 const exclusionsFrom = (ledger: LedgerEntry[], cands: Candidate[]): SalientFact[][] =>
   [...verdicts(ledger).map(v => v.witness), ...openDecisionsWithWitness(ledger).map(e => e.witness!)]
     .map(w => extractSalient(cands, w)).filter(s => s.length > 0);
-const wid = (s: SessionState, ledger: LedgerEntry[], extra = 0) =>
-  `w${verdicts(ledger).length + Object.keys(s.pendingWitnesses).length + 1 + extra}`;
+// Monotonic per-session counter — never recomputed from ledger+pending counts, which can repeat an
+// id once verdicts are pruned/cleared (e.g. sibling pendings cleared on verdict) while old witness
+// ids remain referenced in the ledger and in prior UI state.
+const wid = (s: SessionState) => `w${++s.witnessSeq}`;
 
 // Alloy's enumeration order is first-SAT-found, not minimality — an early instance can carry
 // gratuitous extra atoms (e.g. an unconstrained relation gets distinct values it didn't need to)
@@ -99,7 +101,7 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
       }
       const witness = witnesses[0]!;
       const salient = extractSalient(active().map(c => c.inv.candidate), witness);
-      const witnessId = wid(s, ledger);
+      const witnessId = wid(s);
       s.pendingWitnesses[witnessId] = { witness, purpose: 'distinguish', pair: [a.inv.id, b.inv.id], salient };
       s.phase = 'distinguish';
       return { type: 'question', witnessId, purpose: 'distinguish', pair: [a.inv.id, b.inv.id], witness, salient,
@@ -140,9 +142,9 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
     s.probesAsked.forbid = true;
     if (witnesses.length > 0) {
       s.phase = 'probe-forbid';
-      const options = witnesses.map((w, i) => {
+      const options = witnesses.map(w => {
         const salient = extractSalient([H.inv.candidate], w);
-        const witnessId = wid(s, ledger, i);
+        const witnessId = wid(s);
         s.pendingWitnesses[witnessId] = { witness: w, purpose: 'probe-forbid', salient };
         return { witnessId, witness: w, table: renderWitnessTable(w, m.ticksPerDay), salient };
       });
@@ -156,9 +158,9 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
     s.probesAsked.permit = true;
     if (witnesses.length > 0) {
       s.phase = 'probe-permit';
-      const options = witnesses.map((w, i) => {
+      const options = witnesses.map(w => {
         const salient = extractSalient([H.inv.candidate], w);
-        const witnessId = wid(s, ledger, i);
+        const witnessId = wid(s);
         s.pendingWitnesses[witnessId] = { witness: w, purpose: 'probe-permit', salient };
         return { witnessId, witness: w, table: renderWitnessTable(w, m.ticksPerDay), salient };
       });

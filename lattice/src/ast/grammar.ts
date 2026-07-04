@@ -128,9 +128,15 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
     for (const s of states) if (!r.states.some((x: { name: string }) => x.name === s))
       out.push({ code: 'unknown-state', message: `no state ${s} in ${c.aggregate}.${region}`, at });
   };
+  // Evaluator/emitters (evaluate.ts, alloy.ts, quint.ts) silently treat any `owner` value as the
+  // quantified subject ('self') — slice 1 never actually resolves a foreign owner. Make the
+  // grammar honest about that rather than let it quietly no-op on unsupported input.
+  const checkOwner = (owner: string, at: string) => {
+    if (owner !== 'self') out.push({ code: 'unsupported-owner', message: "only owner:'self' is supported in slice 1", at });
+  };
   const checkTerm = (t: Term, at: string) => {
     switch (t.kind) {
-      case 'field': checkPath(t.path, at); break;
+      case 'field': checkOwner(t.owner, at); checkPath(t.path, at); break;
       case 'enumval': {
         const e = m.enums.find(x => x.name === t.enum);
         if (!e) out.push({ code: 'unknown-enum', message: `no enum ${t.enum}`, at });
@@ -144,7 +150,7 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
   const checkPred = (p: Predicate, at: string) => {
     switch (p.kind) {
       case 'cmp': checkTerm(p.left, at); checkTerm(p.right, at); break;
-      case 'inState': checkStates(p.region, p.states, at); break;
+      case 'inState': checkOwner(p.owner, at); checkStates(p.region, p.states, at); break;
       case 'and': case 'or': p.args.forEach((a, i) => checkPred(a, `${at}.${p.kind}[${i}]`)); break;
       case 'not': checkPred(p.arg, at); break;
       case 'implies': checkPred(p.left, `${at}.if`); checkPred(p.right, `${at}.then`); break;

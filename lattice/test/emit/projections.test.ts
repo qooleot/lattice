@@ -26,13 +26,16 @@ describe('astToProse', () => {
 });
 
 describe('astToCode', () => {
-  const code = astToCode(traceAModel, [H3]);
+  const code = astToCode(traceAModel, [H3], ledger);
   it('pretty-prints the .lat projection', () => {
     expect(code).toContain('context Billing {');
     expect(code).toContain('aggregate Subscription {');
     expect(code).toContain('customer : ref Customer');
     expect(code).toContain('region Access { states { Trialing, Active @active, Ended @terminal } }');
     expect(code).toContain('unique while Active by (customer, plan.family)');
+  });
+  it('appends a ledger-anchor comment for an adopted invariant with a matching ledger entry', () => {
+    expect(code).toContain('⚓ elicited w1–w2');
   });
 });
 

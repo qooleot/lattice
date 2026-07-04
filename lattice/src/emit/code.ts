@@ -1,12 +1,15 @@
 import type { DomainModel, Field } from '../ast/domain.js';
 import type { CandidateInvariant } from '../ast/invariant.js';
+import type { LedgerEntry } from '../engine/session.js';
 import { renderCandidateEnglish } from './prose.js';
 
 const typeStr = (f: Field): string =>
   f.type.kind === 'prim' ? f.type.prim : f.type.kind === 'enum' ? f.type.enum
   : f.type.kind === 'ref' ? `ref ${f.type.target}` : `List<${typeStr({ ...f, type: f.type.of })}>`;
 
-export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string {
+export function astToCode(m: DomainModel, adopted: CandidateInvariant[], ledger: LedgerEntry[] = []): string {
+  const anchorFor = (id: string): string | undefined =>
+    (ledger.find(e => e.kind === 'adopted' && e.invariant.id === id) as Extract<LedgerEntry, { kind: 'adopted' }> | undefined)?.provenance;
   const pad = (n: string, w: number) => n + ' '.repeat(Math.max(1, w - n.length));
   const out: string[] = [`context ${m.context} {`, ''];
   for (const e of m.enums) out.push(`  enum ${e.name} { ${e.values.join(', ')} }`);
@@ -33,14 +36,18 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
     }
     for (const inv of adopted.filter(i => i.candidate.aggregate === a.name)) {
       const c = inv.candidate;
-      if (c.kind === 'unique') out.push(`    unique while ${c.whileStates.states.join('/')} by (${c.by.map(p => p.join('.')).join(', ')})`);
-      else out.push(`    invariant ${inv.name} {}  // ${renderCandidateEnglish(c)}`);
+      const anchor = anchorFor(inv.id);
+      const anchorSuffix = anchor ? `  // ⚓ ${anchor}` : '';
+      if (c.kind === 'unique') out.push(`    unique while ${c.whileStates.states.join('/')} by (${c.by.map(p => p.join('.')).join(', ')})${anchorSuffix}`);
+      else out.push(`    invariant ${inv.name} {}  // ${renderCandidateEnglish(c)}${anchorSuffix}`);
     }
     out.push('  }', '');
   }
   // context-level invariants on entities
-  for (const inv of adopted.filter(i => !m.aggregates.some(a => a.name === i.candidate.aggregate)))
-    out.push(`  invariant ${inv.name} {}  // ${renderCandidateEnglish(inv.candidate)}`);
+  for (const inv of adopted.filter(i => !m.aggregates.some(a => a.name === i.candidate.aggregate))) {
+    const anchor = anchorFor(inv.id);
+    out.push(`  invariant ${inv.name} {}  // ${renderCandidateEnglish(inv.candidate)}${anchor ? `  // ⚓ ${anchor}` : ''}`);
+  }
   out.push('}');
   return out.join('\n') + '\n';
 }

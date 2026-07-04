@@ -13,6 +13,15 @@ function collectCmps(p: Predicate, out: { op: Cmp; left: Term; right: Term }[]):
   switch (p.kind) {
     case 'cmp': {
       const isOrderOrArith = ['lt','le','gt','ge'].includes(p.op) || [p.left, p.right].some(t => t.kind === 'now' || t.kind === 'plus');
+      // field-vs-field eq/ne (e.g. `x.a = x.b`) is captured deliberately (trace-B review fix) —
+      // NOTE (final review): field-vs-INT eq/ne (e.g. `x.status = 3`) and other non-field-field
+      // eq/ne combinations are still dropped by design here, same as before that fix. Only
+      // order/arith comparisons and field-field eq/ne widen the `out` set; a plain field-vs-const
+      // eq/ne dim is instead captured separately via collectEnumEq's enum-value equality path
+      // (and, for non-enum int/text constants, not captured at all in slice 1). This is a known,
+      // intentional gap in salient-fact coverage, not an oversight — narrowing it further would
+      // require deciding how to render arbitrary int/text equality dims for shape exclusion, which
+      // is out of scope for this slice.
       const isFieldFieldEqNe = (p.op === 'eq' || p.op === 'ne') && p.left.kind === 'field' && p.right.kind === 'field';
       if (isOrderOrArith || isFieldFieldEqNe) out.push(p);
       break;
