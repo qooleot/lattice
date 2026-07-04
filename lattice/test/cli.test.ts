@@ -144,4 +144,53 @@ describe('engine CLI', () => {
     expect(readFileSync(join(dir, 'spec.lat'), 'utf8')).toContain('context Billing {');
     expect(out.written.length).toBe(2);
   });
+
+  it('rejects an invalid --judge without touching state or ledger', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+      { id: 'H1', name: 'h1', prior: 0.5, source: 'seed', candidate: { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] } },
+      { id: 'H2', name: 'h2', prior: 0.4, source: 'seed', candidate: { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['plan']] } }
+    ])], fakeDeps);
+    const q: any = await runCommand(['next-question', '--session', dir], fakeDeps);
+
+    const beforeLedgerCount = ((await runCommand(['status', '--session', dir], fakeDeps)) as any).ledgerCount;
+
+    const r: any = await runCommand(['verdict', '--session', dir, '--witness', q.witnessId, '--judge', 'bogus'], fakeDeps);
+    expect(r.error).toBe('invalid-judge');
+    expect(r.allowed).toEqual(['permit', 'forbid', 'undecided']);
+
+    const st: any = await runCommand(['status', '--session', dir], fakeDeps);
+    expect(st.candidates.find((c: any) => c.id === 'H1').status).toBe('active');
+    expect(st.candidates.find((c: any) => c.id === 'H2').status).toBe('active');
+    expect(st.ledgerCount).toBe(beforeLedgerCount);
+  });
+
+  it('missing --model on init returns a structured missing-arg error', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    const r: any = await runCommand(['init', '--session', dir], fakeDeps);
+    expect(r.error).toBe('missing-arg');
+    expect(r.arg).toBe('model');
+  });
+
+  it('propose before init returns no-model', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    const r: any = await runCommand(['propose', '--session', dir, '--candidates', '[]'], fakeDeps);
+    expect(r.error).toBe('no-model');
+  });
+
+  it('malformed inline JSON returns bad-json-or-path instead of throwing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    const r: any = await runCommand(['init', '--session', dir, '--model', '{not valid json'], fakeDeps);
+    expect(r.error).toBe('bad-json-or-path');
+    expect(typeof r.detail).toBe('string');
+  });
+
+  it('unknown command still returns a structured error', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    const r: any = await runCommand(['bogus-command', '--session', dir], fakeDeps);
+    expect(r.error).toBe('unknown-command');
+    expect(r.cmd).toBe('bogus-command');
+  });
 });

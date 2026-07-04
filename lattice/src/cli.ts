@@ -22,105 +22,144 @@ export const realDeps: SolverDeps = {
   quint: async (m, q) => runQuint(astToQuint(m, q), q.maxSteps)
 };
 
-const readJson = (v: string): any => JSON.parse(v.trim().startsWith('{') || v.trim().startsWith('[') ? v : readFileSync(v, 'utf8'));
+const BAD_JSON = Symbol('bad-json-or-path');
+const readJson = (v: string): any => {
+  try {
+    return JSON.parse(v.trim().startsWith('{') || v.trim().startsWith('[') ? v : readFileSync(v, 'utf8'));
+  } catch (err) {
+    return { [BAD_JSON]: String(err instanceof Error ? err.message : err) };
+  }
+};
+const isBadJson = (v: any): v is { [BAD_JSON]: string } => v != null && typeof v === 'object' && BAD_JSON in v;
 const now = () => new Date().toISOString();
 
-export async function runCommand(argv: string[], deps: SolverDeps): Promise<object> {
-  const cmd = argv[0]!;
-  const { values } = parseArgs({ args: argv.slice(1), options: {
-    session: { type: 'string' }, model: { type: 'string' }, candidates: { type: 'string' }, candidate: { type: 'string' },
-    witness: { type: 'string' }, judge: { type: 'string' }, out: { type: 'string' }, topic: { type: 'string' }, note: { type: 'string' }
-  }});
-  const dir = values.session!;
-  const s = loadState(dir);
-  const model = () => s.model as DomainModel;
-  const done = (out: object) => { saveState(dir, s); return out; };
+const VALID_JUDGES = ['permit', 'forbid', 'undecided'] as const;
+const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit']);
 
-  switch (cmd) {
-    case 'init': {
-      const m: DomainModel = readJson(values.model!);
-      const diags = validateModel(m);
-      if (diags.length) return { error: 'ill-formed-model', diagnostics: diags };
-      s.model = m;
-      const { adopt, seeds } = matchTemplates(m);
-      for (const inv of adopt) {
-        s.candidates.push({ inv, status: 'adopted' });
-        appendLedger(dir, { kind: 'adopted', at: now(), invariant: inv, provenance: `template ${inv.id}` });
-      }
-      s.phase = 'distinguish';
-      return done({ ok: true, adopted: adopt.map(a => ({ id: a.id, name: a.name })), seeds });
+export async function runCommand(argv: string[], deps: SolverDeps): Promise<object> {
+  try {
+    const cmd = argv[0]!;
+    const { values } = parseArgs({ args: argv.slice(1), options: {
+      session: { type: 'string' }, model: { type: 'string' }, candidates: { type: 'string' }, candidate: { type: 'string' },
+      witness: { type: 'string' }, judge: { type: 'string' }, out: { type: 'string' }, topic: { type: 'string' }, note: { type: 'string' }
+    }});
+
+    if (!values.session) return { error: 'missing-arg', arg: 'session' };
+    const dir = values.session;
+
+    switch (cmd) {
+      case 'init': if (!values.model) return { error: 'missing-arg', arg: 'model' }; break;
+      case 'propose': if (!values.candidates) return { error: 'missing-arg', arg: 'candidates' }; break;
+      case 'regenerate': if (!values.candidate) return { error: 'missing-arg', arg: 'candidate' }; break;
+      case 'verdict':
+        if (!values.witness) return { error: 'missing-arg', arg: 'witness' };
+        if (!values.judge) return { error: 'missing-arg', arg: 'judge' };
+        break;
+      case 'witness-show': if (!values.witness) return { error: 'missing-arg', arg: 'witness' }; break;
+      case 'emit': if (!values.out) return { error: 'missing-arg', arg: 'out' }; break;
     }
-    case 'propose': {
-      const invs: CandidateInvariant[] = readJson(values.candidates!);
-      const diags = invs.flatMap(i => validateCandidate(i.candidate, model()).map(d => ({ ...d, candidate: i.id })));
-      if (diags.length) return { error: 'out-of-grammar', diagnostics: diags };
-      registerCandidates(s, invs);
-      return done({ registered: invs.length });
-    }
-    case 'next-question': {
-      const out = await nextQuestion(s, readLedger(dir), model(), deps);
-      if (out.type === 'converged') {
-        const survivor = s.candidates.find(c => c.status === 'active');
-        if (survivor) {
-          survivor.status = 'adopted';
-          const wids = readLedger(dir).filter(e => e.kind === 'verdict').map(e => (e as any).witnessId).join(', ');
-          appendLedger(dir, { kind: 'adopted', at: now(), invariant: survivor.inv, provenance: `elicited (${wids})` });
+
+    const s = loadState(dir);
+    const model = () => s.model as DomainModel;
+    const done = (out: object) => { saveState(dir, s); return out; };
+
+    if (MODEL_COMMANDS.has(cmd) && !s.model) return { error: 'no-model', hint: 'run init first' };
+
+    switch (cmd) {
+      case 'init': {
+        const m = readJson(values.model!);
+        if (isBadJson(m)) return { error: 'bad-json-or-path', detail: m[BAD_JSON] };
+        const diags = validateModel(m as DomainModel);
+        if (diags.length) return { error: 'ill-formed-model', diagnostics: diags };
+        s.model = m as DomainModel;
+        const { adopt, seeds } = matchTemplates(m as DomainModel);
+        for (const inv of adopt) {
+          s.candidates.push({ inv, status: 'adopted' });
+          appendLedger(dir, { kind: 'adopted', at: now(), invariant: inv, provenance: `template ${inv.id}` });
         }
+        s.phase = 'distinguish';
+        return done({ ok: true, adopted: adopt.map(a => ({ id: a.id, name: a.name })), seeds });
       }
-      return done(out);
-    }
-    case 'verdict': {
-      const id = values.witness!;
-      const pending = s.pendingWitnesses[id];
-      if (!pending) return { error: 'unknown-witness', id };
-      if (values.judge === 'undecided') {
-        appendLedger(dir, { kind: 'open-decision', at: now(), topic: values.topic ?? 'unnamed', note: values.note ?? '', witnessId: id });
-        delete s.pendingWitnesses[id];
-        return done({ parked: true });
+      case 'propose': {
+        const invs = readJson(values.candidates!);
+        if (isBadJson(invs)) return { error: 'bad-json-or-path', detail: invs[BAD_JSON] };
+        const typedInvs: CandidateInvariant[] = invs;
+        const diags = typedInvs.flatMap(i => validateCandidate(i.candidate, model()).map(d => ({ ...d, candidate: i.id })));
+        if (diags.length) return { error: 'out-of-grammar', diagnostics: diags };
+        registerCandidates(s, typedInvs);
+        return done({ registered: typedInvs.length });
       }
-      const judge = values.judge as 'permit' | 'forbid';
-      appendLedger(dir, { kind: 'verdict', at: now(), witnessId: id, witness: pending.witness, salient: pending.salient, judge, question: '' });
-      const r = pruneOnVerdict(s, pending.witness, judge);
-      for (const [k, v] of Object.entries(s.pendingWitnesses)) if (v.purpose === pending.purpose) delete s.pendingWitnesses[k];
-      return done(r);
-    }
-    case 'regenerate': {
-      const raw = readJson(values.candidate!);
-      const source = s.phase === 'alternatives' ? 'alternative' : 'regen';
-      const inv: CandidateInvariant = { ...raw, source };
-      if (source === 'alternative') {
-        const survivor = s.candidates.find(c => c.status === 'active');
-        if (survivor && !(await checkDistinct(survivor.inv.candidate, inv.candidate, model(), deps))) {
-          s.alternativeAttempts++;
-          return done({ ok: false, reason: 'equivalent to survivor over scope', attemptsLeft: 2 - s.alternativeAttempts });
+      case 'next-question': {
+        const out = await nextQuestion(s, readLedger(dir), model(), deps);
+        if (out.type === 'converged') {
+          const survivor = s.candidates.find(c => c.status === 'active');
+          if (survivor) {
+            survivor.status = 'adopted';
+            const wids = readLedger(dir).filter(e => e.kind === 'verdict').map(e => (e as any).witnessId).join(', ');
+            appendLedger(dir, { kind: 'adopted', at: now(), invariant: survivor.inv, provenance: `elicited (${wids})` });
+          }
         }
+        return done(out);
       }
-      const r = admit(s, inv, model(), readLedger(dir));
-      const attemptsLeft = source === 'regen' ? 3 - s.regenAttempts : 2 - s.alternativeAttempts;
-      if (r.ok && source === 'alternative') s.phase = 'distinguish';   // a live alternative reopens the loop
-      return done({ ...r, attemptsLeft });
+      case 'verdict': {
+        if (!VALID_JUDGES.includes(values.judge as any)) return { error: 'invalid-judge', allowed: [...VALID_JUDGES] };
+        const id = values.witness!;
+        const pending = s.pendingWitnesses[id];
+        if (!pending) return { error: 'unknown-witness', id };
+        if (values.judge === 'undecided') {
+          appendLedger(dir, { kind: 'open-decision', at: now(), topic: values.topic ?? 'unnamed', note: values.note ?? '', witnessId: id });
+          delete s.pendingWitnesses[id];
+          return done({ parked: true });
+        }
+        const judge = values.judge as 'permit' | 'forbid';
+        appendLedger(dir, { kind: 'verdict', at: now(), witnessId: id, witness: pending.witness, salient: pending.salient, judge, question: '' });
+        const r = pruneOnVerdict(s, pending.witness, judge);
+        for (const [k, v] of Object.entries(s.pendingWitnesses)) if (v.purpose === pending.purpose) delete s.pendingWitnesses[k];
+        return done(r);
+      }
+      case 'regenerate': {
+        const raw = readJson(values.candidate!);
+        if (isBadJson(raw)) return { error: 'bad-json-or-path', detail: raw[BAD_JSON] };
+        const source = s.phase === 'alternatives' ? 'alternative' : 'regen';
+        const inv: CandidateInvariant = { ...raw, source };
+        if (source === 'alternative') {
+          const survivor = s.candidates.find(c => c.status === 'active');
+          if (survivor && !(await checkDistinct(survivor.inv.candidate, inv.candidate, model(), deps))) {
+            s.alternativeAttempts++;
+            return done({ ok: false, reason: 'equivalent to survivor over scope', attemptsLeft: 2 - s.alternativeAttempts });
+          }
+        }
+        const r = admit(s, inv, model(), readLedger(dir));
+        const attemptsLeft = source === 'regen' ? 3 - s.regenAttempts : 2 - s.alternativeAttempts;
+        if (r.ok && source === 'alternative') s.phase = 'distinguish';   // a live alternative reopens the loop
+        return done({ ...r, attemptsLeft });
+      }
+      case 'status':
+        return { phase: s.phase, regenAttempts: s.regenAttempts, alternativeAttempts: s.alternativeAttempts,
+          candidates: s.candidates.map(c => ({ id: c.inv.id, name: c.inv.name, prior: c.inv.prior, status: c.status })),
+          openDecisions: readLedger(dir).filter(e => e.kind === 'open-decision').length,
+          ledgerCount: readLedger(dir).length };
+      case 'witness-show': {
+        const p = s.pendingWitnesses[values.witness!];
+        return p ? { table: renderWitnessTable(p.witness, model()?.ticksPerDay) } : { error: 'unknown-witness' };
+      }
+      case 'emit': {
+        const adopted = s.candidates.filter(c => c.status === 'adopted').map(c => c.inv);
+        const ledger = readLedger(dir);
+        mkdirSync(values.out!, { recursive: true });
+        const prose = join(values.out!, 'spec.prose.md'), lat = join(values.out!, 'spec.lat');
+        writeFileSync(prose, astToProse(model(), adopted, ledger));
+        writeFileSync(lat, astToCode(model(), adopted));
+        return { written: [prose, lat] };
+      }
+      default: return { error: 'unknown-command', cmd };
     }
-    case 'status':
-      return { phase: s.phase, regenAttempts: s.regenAttempts, alternativeAttempts: s.alternativeAttempts,
-        candidates: s.candidates.map(c => ({ id: c.inv.id, name: c.inv.name, prior: c.inv.prior, status: c.status })),
-        openDecisions: readLedger(dir).filter(e => e.kind === 'open-decision').length,
-        ledgerCount: readLedger(dir).length };
-    case 'witness-show': {
-      const p = s.pendingWitnesses[values.witness!];
-      return p ? { table: renderWitnessTable(p.witness, model()?.ticksPerDay) } : { error: 'unknown-witness' };
-    }
-    case 'emit': {
-      const adopted = s.candidates.filter(c => c.status === 'adopted').map(c => c.inv);
-      const ledger = readLedger(dir);
-      mkdirSync(values.out!, { recursive: true });
-      const prose = join(values.out!, 'spec.prose.md'), lat = join(values.out!, 'spec.lat');
-      writeFileSync(prose, astToProse(model(), adopted, ledger));
-      writeFileSync(lat, astToCode(model(), adopted));
-      return { written: [prose, lat] };
-    }
-    default: return { error: 'unknown-command', cmd };
+  } catch (err) {
+    return { error: 'internal', message: String(err) };
   }
 }
 
 const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
-if (isMain) runCommand(process.argv.slice(2), realDeps).then(o => console.log(JSON.stringify(o, null, 2)));
+if (isMain) runCommand(process.argv.slice(2), realDeps)
+  .then(o => console.log(JSON.stringify(o, null, 2)))
+  .catch(err => { console.log(JSON.stringify({ error: 'internal', message: String(err) }, null, 2)); process.exitCode = 1; });
