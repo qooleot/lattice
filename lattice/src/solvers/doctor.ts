@@ -6,17 +6,22 @@ import { globSync } from 'node:fs';
 export const VENDOR = join(import.meta.dirname, '..', '..', 'vendor');
 export const ALLOY_JAR = join(VENDOR, 'alloy.jar');
 
+/** Parse major version from a `java -version` banner string. e.g. 8, 17, 21. Returns 0 if unparseable. */
+export function parseJavaMajor(banner: string): number {
+  // Matches `java version "1.8.0_131"` (old scheme) or `openjdk version "21.0.11"` (9+ scheme).
+  const m = /version "(\d+)(?:\.(\d+))?/.exec(banner);
+  if (!m) return 0;
+  const first = Number(m[1]);
+  // Old versioning scheme: 1.8 => major 8.
+  return first === 1 ? Number(m[2] ?? 0) : first;
+}
+
 /** Major version parsed from a `java -version` banner, e.g. 8, 17, 21. Returns 0 if unparseable. */
 function javaMajorVersion(javaPath: string): number {
   const r = spawnSync(javaPath, ['-version'], { encoding: 'utf8' });
   if (r.status !== 0) return 0;
   const text = (r.stderr || r.stdout || '').toString();
-  // Matches `java version "1.8.0_131"` (old scheme) or `openjdk version "21.0.11"` (9+ scheme).
-  const m = /version "(\d+)(?:\.(\d+))?/.exec(text);
-  if (!m) return 0;
-  const first = Number(m[1]);
-  // Old versioning scheme: 1.8 => major 8.
-  return first === 1 ? Number(m[2] ?? 0) : first;
+  return parseJavaMajor(text);
 }
 
 /**
@@ -63,7 +68,7 @@ export async function doctor(): Promise<DoctorReport> {
     const r = spawnSync(path, ['-version'], { encoding: 'utf8' });
     if (r.status === 0) {
       const text = (r.stderr || r.stdout || '').toString();
-      java = { ok: javaMajorVersion(path) >= 17, version: text.split('\n')[0] ?? '', path };
+      java = { ok: parseJavaMajor(text) >= 17, version: text.split('\n')[0] ?? '', path };
     }
   } catch { /* stays not-ok */ }
   let quint = false;
