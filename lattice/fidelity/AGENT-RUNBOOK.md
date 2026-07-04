@@ -112,15 +112,9 @@ npm run tally
 Also compute the per-domain split (the spec requires both rates reported separately):
 
 ```bash
-npx tsx -e "
-import { readdirSync, readFileSync } from 'fs';
-import { tallyRecords } from './fidelity/tally.js';
-const recs = readdirSync('fidelity/results').filter(f => f.endsWith('.json'))
-  .map(f => JSON.parse(readFileSync('fidelity/results/' + f, 'utf8')));
-console.log('billing:', tallyRecords(recs.filter(r => r.ruleId.startsWith('b'))));
-console.log('revrec :', tallyRecords(recs.filter(r => r.ruleId.startsWith('r'))));
-"
+npx tsx fidelity/split.ts
 ```
+(Use the script file — `tsx -e` cannot resolve relative TS imports.)
 
 Commit the results:
 
