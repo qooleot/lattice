@@ -1,0 +1,47 @@
+{ "ruleId": "r05",
+  "status": "formalized",
+  "model": {
+    "context": "RevenueRecognition",
+    "ticksPerDay": 24,
+    "enums": [],
+    "entities": [],
+    "aggregates": [
+      { "kind": "aggregate", "name": "UsageObligation", "fields": [
+        { "name": "id", "type": {"kind":"prim","prim":"Id"}, "key": true },
+        { "name": "usageReportedPeriod", "type": {"kind":"prim","prim":"Int"} },
+        { "name": "recognizedPeriod", "type": {"kind":"prim","prim":"Int"} }
+      ] }
+    ],
+    "events": []
+  },
+  "formalization": {
+    "kind": "statePredicate",
+    "aggregate": "UsageObligation",
+    "where": null,
+    "body": {
+      "kind": "cmp",
+      "op": "ge",
+      "left": { "kind": "field", "owner": "self", "path": ["recognizedPeriod"] },
+      "right": { "kind": "field", "owner": "self", "path": ["usageReportedPeriod"] }
+    }
+  },
+  "cases": [
+    { "desc": "Recognized in the same period usage was reported — permitted.",
+      "expected": "permit",
+      "state": { "entities": [
+        { "type": "UsageObligation", "id": "u1", "fields": { "usageReportedPeriod": 5, "recognizedPeriod": 5 } }
+      ] } },
+    { "desc": "Recognized in a later period than usage was reported — permitted.",
+      "expected": "permit",
+      "state": { "entities": [
+        { "type": "UsageObligation", "id": "u2", "fields": { "usageReportedPeriod": 5, "recognizedPeriod": 8 } }
+      ] } },
+    { "desc": "Recognized in a period before usage was reported — forbidden.",
+      "expected": "forbid",
+      "state": { "entities": [
+        { "type": "UsageObligation", "id": "u3", "fields": { "usageReportedPeriod": 5, "recognizedPeriod": 3 } }
+      ] } }
+  ],
+  "adversarial": null,
+  "humanVerdict": null
+}

@@ -1,0 +1,287 @@
+{
+  "ruleId": "b04",
+  "status": "formalized",
+  "model": {
+    "context": "billing",
+    "ticksPerDay": 24,
+    "enums": [
+      {
+        "name": "InvoiceStatus",
+        "values": [
+          "Paid",
+          "Unpaid"
+        ]
+      }
+    ],
+    "entities": [
+      {
+        "kind": "entity",
+        "name": "Invoice",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          },
+          {
+            "name": "status",
+            "type": {
+              "kind": "enum",
+              "enum": "InvoiceStatus"
+            }
+          },
+          {
+            "name": "dueAt",
+            "type": {
+              "kind": "prim",
+              "prim": "Date"
+            }
+          },
+          {
+            "name": "gracePeriod",
+            "type": {
+              "kind": "prim",
+              "prim": "Duration"
+            }
+          }
+        ]
+      }
+    ],
+    "aggregates": [
+      {
+        "kind": "aggregate",
+        "name": "Subscription",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          },
+          {
+            "name": "latestInvoice",
+            "type": {
+              "kind": "ref",
+              "target": "Invoice"
+            }
+          }
+        ],
+        "machine": {
+          "regions": [
+            {
+              "name": "Lifecycle",
+              "initial": "Active",
+              "states": [
+                {
+                  "name": "Active",
+                  "tags": [
+                    "active"
+                  ]
+                },
+                {
+                  "name": "PastDue",
+                  "tags": [
+                    "active"
+                  ]
+                },
+                {
+                  "name": "Canceled",
+                  "tags": [
+                    "terminal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "transitions": []
+        }
+      }
+    ],
+    "events": []
+  },
+  "formalization": {
+    "kind": "statePredicate",
+    "aggregate": "Subscription",
+    "where": {
+      "kind": "inState",
+      "owner": "self",
+      "region": "Lifecycle",
+      "states": [
+        "Active"
+      ]
+    },
+    "body": {
+      "kind": "not",
+      "arg": {
+        "kind": "and",
+        "args": [
+          {
+            "kind": "cmp",
+            "op": "eq",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "latestInvoice",
+                "status"
+              ]
+            },
+            "right": {
+              "kind": "enumval",
+              "enum": "InvoiceStatus",
+              "value": "Unpaid"
+            }
+          },
+          {
+            "kind": "cmp",
+            "op": "gt",
+            "left": {
+              "kind": "now"
+            },
+            "right": {
+              "kind": "plus",
+              "left": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "latestInvoice",
+                  "dueAt"
+                ]
+              },
+              "right": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "latestInvoice",
+                  "gracePeriod"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "cases": [
+    {
+      "desc": "Active subscription, latest invoice unpaid and past grace period — must not remain active",
+      "expected": "forbid",
+      "state": {
+        "now": 2400,
+        "entities": [
+          {
+            "type": "Subscription",
+            "id": "sub1",
+            "fields": {
+              "Lifecycle.state": "Active",
+              "latestInvoice": "inv1"
+            }
+          },
+          {
+            "type": "Invoice",
+            "id": "inv1",
+            "fields": {
+              "status": "Unpaid",
+              "dueAt": 1200,
+              "gracePeriod": 168
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "Active subscription, latest invoice unpaid but still within grace period — allowed",
+      "expected": "permit",
+      "state": {
+        "now": 1300,
+        "entities": [
+          {
+            "type": "Subscription",
+            "id": "sub1",
+            "fields": {
+              "Lifecycle.state": "Active",
+              "latestInvoice": "inv1"
+            }
+          },
+          {
+            "type": "Invoice",
+            "id": "inv1",
+            "fields": {
+              "status": "Unpaid",
+              "dueAt": 1200,
+              "gracePeriod": 168
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "Active subscription with latest invoice paid — allowed regardless of time",
+      "expected": "permit",
+      "state": {
+        "now": 5000,
+        "entities": [
+          {
+            "type": "Subscription",
+            "id": "sub1",
+            "fields": {
+              "Lifecycle.state": "Active",
+              "latestInvoice": "inv1"
+            }
+          },
+          {
+            "type": "Invoice",
+            "id": "inv1",
+            "fields": {
+              "status": "Paid",
+              "dueAt": 1200,
+              "gracePeriod": 168
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "adversarial": {
+    "desc": "Latest invoice Paid but an older invoice Unpaid ~50d past its 7d grace — intent: ANY unpaid-past-grace invoice matters, not just latest",
+    "expected": "forbid",
+    "state": {
+      "now": 2400,
+      "entities": [
+        {
+          "type": "Subscription",
+          "id": "sub1",
+          "fields": {
+            "latestInvoice": "inv1",
+            "Lifecycle.state": "Active"
+          }
+        },
+        {
+          "type": "Invoice",
+          "id": "inv1",
+          "fields": {
+            "status": "Paid",
+            "dueAt": 2000,
+            "gracePeriod": 168
+          }
+        },
+        {
+          "type": "Invoice",
+          "id": "inv0",
+          "fields": {
+            "status": "Unpaid",
+            "dueAt": 1000,
+            "gracePeriod": 168
+          }
+        }
+      ]
+    }
+  },
+  "humanVerdict": "subtle-wrong",
+  "notes": "Intent is ANY invoice unpaid past grace; formalization consults only latestInvoice. Expert: the elicitation loop should have asked 'latest paid but prior unpaid?' — exactly a boundary-probe question."
+}

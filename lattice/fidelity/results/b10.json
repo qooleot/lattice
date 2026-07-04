@@ -1,0 +1,150 @@
+{
+  "ruleId": "b10",
+  "status": "formalized",
+  "model": {
+    "context": "billing",
+    "ticksPerDay": 24,
+    "enums": [],
+    "entities": [],
+    "aggregates": [
+      {
+        "kind": "aggregate",
+        "name": "Subscription",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          },
+          {
+            "name": "failedRetryCount",
+            "type": {
+              "kind": "prim",
+              "prim": "Int"
+            }
+          },
+          {
+            "name": "maxRetries",
+            "type": {
+              "kind": "prim",
+              "prim": "Int"
+            }
+          }
+        ],
+        "machine": {
+          "regions": [
+            {
+              "name": "Lifecycle",
+              "initial": "Active",
+              "states": [
+                {
+                  "name": "Active",
+                  "tags": [
+                    "active"
+                  ]
+                },
+                {
+                  "name": "Delinquent",
+                  "tags": [
+                    "terminal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "transitions": []
+        }
+      }
+    ],
+    "events": []
+  },
+  "formalization": {
+    "kind": "statePredicate",
+    "aggregate": "Subscription",
+    "where": {
+      "kind": "cmp",
+      "op": "ge",
+      "left": {
+        "kind": "field",
+        "owner": "self",
+        "path": [
+          "failedRetryCount"
+        ]
+      },
+      "right": {
+        "kind": "field",
+        "owner": "self",
+        "path": [
+          "maxRetries"
+        ]
+      }
+    },
+    "body": {
+      "kind": "inState",
+      "owner": "self",
+      "region": "Lifecycle",
+      "states": [
+        "Delinquent"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "desc": "Failed retries below max, subscription still active",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "Subscription",
+            "id": "sub_1",
+            "fields": {
+              "failedRetryCount": 2,
+              "maxRetries": 4,
+              "Lifecycle.state": "Active"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "Failed retries reached max and subscription correctly marked delinquent",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "Subscription",
+            "id": "sub_2",
+            "fields": {
+              "failedRetryCount": 4,
+              "maxRetries": 4,
+              "Lifecycle.state": "Delinquent"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "Failed retries reached max but subscription still shows active (violation)",
+      "expected": "forbid",
+      "state": {
+        "entities": [
+          {
+            "type": "Subscription",
+            "id": "sub_3",
+            "fields": {
+              "failedRetryCount": 5,
+              "maxRetries": 3,
+              "Lifecycle.state": "Active"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "adversarial": null,
+  "humanVerdict": "faithful",
+  "notes": "Human override: faithful (notes: the no-further-retries half is a process rule for the machine, not this invariant)."
+}

@@ -1,0 +1,237 @@
+{
+  "ruleId": "b01",
+  "status": "formalized",
+  "model": {
+    "context": "subscriptions",
+    "ticksPerDay": 24,
+    "enums": [
+      {
+        "name": "ProductFamily",
+        "values": [
+          "Storage",
+          "Compute",
+          "Analytics"
+        ]
+      }
+    ],
+    "entities": [
+      {
+        "kind": "entity",
+        "name": "Customer",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          }
+        ]
+      }
+    ],
+    "aggregates": [
+      {
+        "kind": "aggregate",
+        "name": "Subscription",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          },
+          {
+            "name": "customer",
+            "type": {
+              "kind": "ref",
+              "target": "Customer"
+            }
+          },
+          {
+            "name": "family",
+            "type": {
+              "kind": "enum",
+              "enum": "ProductFamily"
+            }
+          }
+        ],
+        "machine": {
+          "regions": [
+            {
+              "name": "Lifecycle",
+              "initial": "Pending",
+              "states": [
+                {
+                  "name": "Pending"
+                },
+                {
+                  "name": "Active",
+                  "tags": [
+                    "active"
+                  ]
+                },
+                {
+                  "name": "Canceled",
+                  "tags": [
+                    "terminal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "transitions": []
+        }
+      }
+    ],
+    "events": []
+  },
+  "formalization": {
+    "kind": "unique",
+    "aggregate": "Subscription",
+    "whileStates": {
+      "region": "Lifecycle",
+      "states": [
+        "Active"
+      ]
+    },
+    "by": [
+      [
+        "customer"
+      ],
+      [
+        "family"
+      ]
+    ]
+  },
+  "cases": [
+    {
+      "desc": "Two active subscriptions for the same customer in different product families are permitted",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "Customer",
+            "id": "c1",
+            "fields": {}
+          },
+          {
+            "type": "Subscription",
+            "id": "s1",
+            "fields": {
+              "customer": "c1",
+              "family": "Storage",
+              "Lifecycle.state": "Active"
+            }
+          },
+          {
+            "type": "Subscription",
+            "id": "s2",
+            "fields": {
+              "customer": "c1",
+              "family": "Compute",
+              "Lifecycle.state": "Active"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "One active and one canceled subscription for the same customer and family is permitted (only active counts)",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "Customer",
+            "id": "c1",
+            "fields": {}
+          },
+          {
+            "type": "Subscription",
+            "id": "s1",
+            "fields": {
+              "customer": "c1",
+              "family": "Storage",
+              "Lifecycle.state": "Active"
+            }
+          },
+          {
+            "type": "Subscription",
+            "id": "s2",
+            "fields": {
+              "customer": "c1",
+              "family": "Storage",
+              "Lifecycle.state": "Canceled"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "Two active subscriptions for the same customer and same product family are forbidden",
+      "expected": "forbid",
+      "state": {
+        "entities": [
+          {
+            "type": "Customer",
+            "id": "c1",
+            "fields": {}
+          },
+          {
+            "type": "Subscription",
+            "id": "s1",
+            "fields": {
+              "customer": "c1",
+              "family": "Storage",
+              "Lifecycle.state": "Active"
+            }
+          },
+          {
+            "type": "Subscription",
+            "id": "s2",
+            "fields": {
+              "customer": "c1",
+              "family": "Storage",
+              "Lifecycle.state": "Active"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "adversarial": {
+    "desc": "Active + Trialing subscription, same customer, same family — expert: trialing counts as active",
+    "expected": "forbid",
+    "state": {
+      "entities": [
+        {
+          "type": "Customer",
+          "id": "c1",
+          "fields": {}
+        },
+        {
+          "type": "Subscription",
+          "id": "s1",
+          "fields": {
+            "customer": "c1",
+            "family": "Storage",
+            "Lifecycle.state": "Active"
+          }
+        },
+        {
+          "type": "Subscription",
+          "id": "s2",
+          "fields": {
+            "customer": "c1",
+            "family": "Storage",
+            "Lifecycle.state": "Trialing"
+          }
+        }
+      ]
+    }
+  },
+  "humanVerdict": "subtle-wrong",
+  "notes": "Letter-vs-intent catch: formalization faithful to literal rule text (state == Active only) but intent treats Trialing as active-equivalent."
+}

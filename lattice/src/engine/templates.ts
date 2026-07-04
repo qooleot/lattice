@@ -1,0 +1,80 @@
+import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
+import type { Candidate, CandidateInvariant } from '../ast/invariant.js';
+
+const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
+const mk = (id: string, name: string, candidate: Candidate, prior = 0.9): CandidateInvariant =>
+  ({ id, name, prior, source: 'template', candidate });
+
+export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; seeds: CandidateInvariant[] } {
+  const adopt: CandidateInvariant[] = [];
+  const seeds: CandidateInvariant[] = [];
+
+  for (const o of owners(m)) {
+    const refs = o.fields.filter(f => f.type.kind === 'ref');
+    const machine = (o as AggregateDef).machine;
+
+    // #1 conservation: >=2 @balance + a @total
+    const balances = o.fields.filter(f => f.tags?.includes('balance'));
+    const total = o.fields.find(f => f.tags?.includes('total'));
+    if (balances.length >= 2 && total)
+      adopt.push(mk(`tpl-1-${o.name}`, `Conservation_${o.name}`,
+        { kind: 'conservation', aggregate: o.name, parts: balances.map(b => [b.name]), total: [total.name] }));
+
+    // #2 non-negative for Money fields
+    for (const f of o.fields.filter(f => f.type.kind === 'prim' && f.type.prim === 'Money'))
+      adopt.push(mk(`tpl-2-${o.name}-${f.name}`, `NonNegative_${o.name}_${f.name}`,
+        { kind: 'statePredicate', aggregate: o.name,
+          body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [f.name] }, right: { kind: 'int', value: 0 } } }));
+
+    // #8 monotonic from @monotonic tag
+    for (const f of o.fields.filter(f => f.tags?.includes('monotonic')))
+      adopt.push(mk(`tpl-8-${o.name}-${f.name}`, `Monotonic_${o.name}_${f.name}`,
+        { kind: 'monotonic', aggregate: o.name, field: [f.name] }));
+
+    // #9 no-orphan for owners with refs
+    if (refs.length > 0)
+      adopt.push(mk(`tpl-9-${o.name}`, `NoOrphan_${o.name}`, { kind: 'refsResolve', aggregate: o.name }));
+
+    for (const r of machine?.regions ?? []) {
+      // #3 terminal
+      for (const s of r.states.filter(s => s.tags?.includes('terminal')))
+        adopt.push(mk(`tpl-3-${o.name}-${s.name}`, `Terminal_${o.name}_${s.name}`,
+          { kind: 'terminal', aggregate: o.name, region: r.name, state: s.name }));
+
+      // #7 single-active
+      const actives = r.states.filter(s => s.tags?.includes('active')).map(s => s.name);
+      if (actives.length > 0) {
+        if (refs.length === 0)
+          adopt.push(mk(`tpl-7-${o.name}`, `SingleActive_${o.name}`,
+            { kind: 'cardinality', aggregate: o.name, where: { kind: 'inState', owner: 'self', region: r.name, states: actives }, atMost: 1 }));
+        else
+          for (const f of refs)
+            seeds.push(mk(`tpl-7-${o.name}-${f.name}`, `UniquePer_${f.name}`,
+              { kind: 'unique', aggregate: o.name, whileStates: { region: r.name, states: actives }, by: [[f.name]] }, 0.4));
+      }
+
+      // #6+#11 grace-window shell: @active states + a Duration field + a (possibly one-hop) Date path
+      const duration = o.fields.find(f => f.type.kind === 'prim' && f.type.prim === 'Duration');
+      const datePath = findDatePath(m, o);
+      if (actives.length && duration && datePath)
+        seeds.push(mk(`tpl-11-${o.name}`, `DeadlineBound_${o.name}`,
+          { kind: 'statePredicate', aggregate: o.name,
+            body: { kind: 'implies',
+              left: { kind: 'inState', owner: 'self', region: r.name, states: actives },
+              right: { kind: 'cmp', op: 'le', left: { kind: 'now' },
+                right: { kind: 'plus', left: { kind: 'field', owner: 'self', path: datePath }, right: { kind: 'field', owner: 'self', path: [duration.name] } } } } }, 0.5));
+    }
+  }
+  return { adopt, seeds };
+}
+
+function findDatePath(m: DomainModel, o: AggregateDef | EntityDef): string[] | null {
+  const direct = o.fields.find(f => f.type.kind === 'prim' && f.type.prim === 'Date');
+  if (direct) return [direct.name];
+  for (const f of o.fields) if (f.type.kind === 'ref') {
+    const t = owners(m).find(x => x.name === (f.type as any).target);
+    const d = t?.fields.find(x => x.type.kind === 'prim' && x.type.prim === 'Date');
+    if (d) return [f.name, d.name];
+  }
+  return null;
+}

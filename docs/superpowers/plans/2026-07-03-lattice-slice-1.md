@@ -12,6 +12,7 @@
 
 ## Global Constraints
 
+- **GATE OUTCOME (2026-07-04): 29% subtle-wrong → pivot band; user decision: proceed with the pivot BINDING.** Consequences for all remaining tasks: the verdict ledger is the canonical spec artifact (not insurance — the rule); no LLM-seeded invariant is ever adopted without at least one judged ledger case anchoring it; the elicit-spec skill (Task 20) must never present an unprobed formalization as settled; emitted specs always render ledger anchors. Full findings: `lattice/fidelity/results/REPORT.md`.
 - **The fidelity gate (Task 4) blocks Tasks 5–20.** Do not start adapter/engine work until the gate is read against thresholds: < ~10% subtle-wrong → proceed; 10–30% → stop, flag example-set-as-spec pivot; > 30% → stop entirely (§2.0).
 - Latency budget (pre-registered, §2.4): witness generation p50 ≤ 10s, worst ≤ 45s. Golden tests assert it.
 - Regeneration cap: **3** attempts, then park as open decision. Alternatives phase: **2** attempts. Boundary probes: at most **1 forbid-side + 1 permit-side** per sole a-priori survivor; regenerated/alternative candidates get **no probes** (they converge via the alternatives phase).

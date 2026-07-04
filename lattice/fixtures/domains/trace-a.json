@@ -1,0 +1,113 @@
+{
+  "context": "Billing",
+  "ticksPerDay": 24,
+  "enums": [],
+  "entities": [
+    {
+      "kind": "entity",
+      "name": "Customer",
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          },
+          "key": true
+        }
+      ]
+    },
+    {
+      "kind": "entity",
+      "name": "Family",
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          },
+          "key": true
+        }
+      ]
+    },
+    {
+      "kind": "entity",
+      "name": "Plan",
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          },
+          "key": true
+        },
+        {
+          "name": "family",
+          "type": {
+            "kind": "ref",
+            "target": "Family"
+          }
+        }
+      ]
+    }
+  ],
+  "aggregates": [
+    {
+      "kind": "aggregate",
+      "name": "Subscription",
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          },
+          "key": true
+        },
+        {
+          "name": "customer",
+          "type": {
+            "kind": "ref",
+            "target": "Customer"
+          }
+        },
+        {
+          "name": "plan",
+          "type": {
+            "kind": "ref",
+            "target": "Plan"
+          }
+        }
+      ],
+      "machine": {
+        "regions": [
+          {
+            "name": "Access",
+            "initial": "Trialing",
+            "states": [
+              {
+                "name": "Trialing"
+              },
+              {
+                "name": "Active",
+                "tags": [
+                  "active"
+                ]
+              },
+              {
+                "name": "Ended",
+                "tags": [
+                  "terminal"
+                ]
+              }
+            ]
+          }
+        ],
+        "transitions": []
+      }
+    }
+  ],
+  "events": []
+}

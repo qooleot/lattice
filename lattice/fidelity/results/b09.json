@@ -1,0 +1,119 @@
+{
+  "ruleId": "b09",
+  "status": "formalized",
+  "model": {
+    "context": "account-balances",
+    "ticksPerDay": 24,
+    "enums": [],
+    "entities": [],
+    "aggregates": [
+      {
+        "kind": "aggregate",
+        "name": "Account",
+        "fields": [
+          {
+            "name": "id",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          },
+          {
+            "name": "available",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            }
+          },
+          {
+            "name": "total",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            }
+          }
+        ]
+      }
+    ],
+    "events": []
+  },
+  "formalization": {
+    "kind": "conservation",
+    "aggregate": "Account",
+    "parts": [
+      [
+        "available"
+      ],
+      [
+        "reserved"
+      ]
+    ],
+    "total": [
+      "total"
+    ]
+  },
+  "cases": [
+    {
+      "desc": "available 70 plus reserved 30 equals total 100",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "Account",
+            "id": "a1",
+            "fields": {
+              "available": 70,
+              "reserved": 30,
+              "total": 100
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "available 0 plus reserved 0 equals total 0",
+      "expected": "permit",
+      "state": {
+        "entities": [
+          {
+            "type": "Account",
+            "id": "a2",
+            "fields": {
+              "available": 0,
+              "reserved": 0,
+              "total": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "desc": "available 70 plus reserved 30 equals 100 but total is 90",
+      "expected": "forbid",
+      "state": {
+        "entities": [
+          {
+            "type": "Account",
+            "id": "a3",
+            "fields": {
+              "available": 70,
+              "reserved": 30,
+              "total": 90
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "adversarial": null,
+  "humanVerdict": "faithful",
+  "notes": "Human override: faithful (declined adversarial case; the conversation-example sign-trick was deliberately not auto-applied)."
+}
