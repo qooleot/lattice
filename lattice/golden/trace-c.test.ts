@@ -25,6 +25,13 @@ const H2: Candidate = { kind: 'statePredicate', aggregate: 'RevenueEntry',
 const H3: Candidate = { kind: 'statePredicate', aggregate: 'RevenueEntry',
   body: { kind: 'implies', left: stateEq('Closed'),
     right: { kind: 'cmp', op: 'le', left: posted, right: { kind: 'plus', left: closedAt, right: { kind: 'field', owner: 'self', path: ['period', 'lockWindow'] } } } } };
+// runCommand catches internal errors and returns { error, message } with no `type`;
+// unchecked, a solver failure mid-loop is silently swallowed and the trace drifts.
+const ok = (r: any) => {
+  if (r?.error) throw new Error(`runCommand error: ${r.error}: ${r.message}`);
+  return r;
+};
+
 const seeds: CandidateInvariant[] = [
   { id: 'H1', name: 'noPostToClosed', prior: 0.5, source: 'seed', candidate: H1 },
   { id: 'H2', name: 'correctionsMayRestate', prior: 0.3, source: 'seed', candidate: H2 },
@@ -52,24 +59,25 @@ describe.skipIf(!existsSync(ALLOY_JAR))('GOLDEN TRACE C — revenue recognition'
         // The pre-registered open decision: park the FIRST permit-side probe as usage-after-close.
         if (!parkedOnce && (q.purpose === 'probe-permit' || opt.purpose === 'probe-permit' || q.type === 'probe-options' && q.purpose === 'probe-permit')) {
           parkedOnce = true;
-          await runCommand(['verdict', '--session', dir, '--witness', opt.witnessId, '--judge', 'undecided',
-            '--topic', 'usage-after-close', '--note', 'catch-up in open period vs restate — founder undecided'], realDeps);
+          ok(await runCommand(['verdict', '--session', dir, '--witness', opt.witnessId, '--judge', 'undecided',
+            '--topic', 'usage-after-close', '--note', 'catch-up in open period vs restate — founder undecided'], realDeps));
           continue;
         }
         judgments++;
-        await runCommand(['verdict', '--session', dir, '--witness', opt.witnessId, '--judge',
-          evaluateCandidate(H1, opt.witness)], realDeps);            // ground truth judges
+        ok(await runCommand(['verdict', '--session', dir, '--witness', opt.witnessId, '--judge',
+          evaluateCandidate(H1, opt.witness)], realDeps));           // ground truth judges
         continue;
       }
       if (q.type === 'need-alternatives') {
-        await runCommand(['regenerate', '--session', dir, '--candidate', JSON.stringify({ id: 'A1', name: 'restate', prior: 0.2, candidate: H2 })], realDeps);
-        await runCommand(['regenerate', '--session', dir, '--candidate', JSON.stringify({ id: 'A2', name: 'same', prior: 0.2, candidate: H1 })], realDeps);
+        ok(await runCommand(['regenerate', '--session', dir, '--candidate', JSON.stringify({ id: 'A1', name: 'restate', prior: 0.2, candidate: H2 })], realDeps));
+        ok(await runCommand(['regenerate', '--session', dir, '--candidate', JSON.stringify({ id: 'A2', name: 'same', prior: 0.2, candidate: H1 })], realDeps));
         continue;
       }
       if (q.type === 'regenerate') {   // acceptable path if probes refute an over-pruned survivor
-        await runCommand(['regenerate', '--session', dir, '--candidate', JSON.stringify({ id: 'R1', name: 'gt', prior: 0.9, candidate: H1 })], realDeps);
+        ok(await runCommand(['regenerate', '--session', dir, '--candidate', JSON.stringify({ id: 'R1', name: 'gt', prior: 0.9, candidate: H1 })], realDeps));
         continue;
       }
+      if (q.type === undefined && q.error) throw new Error(`runCommand error: ${q.error}: ${q.message}`);
       throw new Error(`unexpected ${q.type}`);
     }
 

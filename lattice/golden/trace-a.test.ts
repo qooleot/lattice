@@ -50,6 +50,7 @@ describe.skipIf(!existsSync(ALLOY_JAR))('GOLDEN TRACE A', () => {
           { id: 'A2', name: 'sameThing', prior: 0.3, candidate: groundTruth })], realDeps);                // equivalent
         continue;
       }
+      if (q.type === undefined && q.error) throw new Error(`runCommand error: ${q.error}: ${q.message}`);
       throw new Error(`unexpected planner output ${q.type}`);
     }
 

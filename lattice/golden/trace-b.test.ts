@@ -43,6 +43,7 @@ describe('GOLDEN TRACE B', () => {
           { id: 'A2', name: 'sameGrace', prior: 0.2, candidate: graceCandidate(true) })], realDeps);      // equivalent
         continue;
       }
+      if (q.type === undefined && q.error) throw new Error(`runCommand error: ${q.error}: ${q.message}`);
       throw new Error(`unexpected ${q.type}`);
     }
 
