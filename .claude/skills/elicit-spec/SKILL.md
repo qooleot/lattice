@@ -10,6 +10,11 @@ Engine: `cd lattice && npx tsx src/cli.ts <command> --session <dir>` (JSON in, J
 Session dir: `.lattice-session-<slug>/` in the repo root. Commands: init, propose, next-question,
 verdict, regenerate, status, witness-show, emit (see lattice/src/cli.ts for flags).
 
+BEFORE the first engine call, ALWAYS run `bash lattice/scripts/ensure-ready.sh` once and confirm
+the doctor output is all-green. Fresh checkouts and git worktrees lack node_modules and the
+gitignored solver binaries; the script installs deps and links solvers from the main checkout
+(idempotent, seconds when already set up). If it fails, stop and show the user its output.
+
 ## Phase 0 — structure elicitation (you, no solver)
 From the user's domain description, PROPOSE a concrete structure and let them correct it:
 aggregates, entities, enums, machine regions/states (tag @active/@terminal), refs, field tags
