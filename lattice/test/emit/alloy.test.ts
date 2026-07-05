@@ -60,4 +60,21 @@ describe('astToAlloy', () => {
     const als = astToAlloy(traceAModel, { kind: 'distinguish', hi: h1, hj: h2, exclusions: [], scope: 4, varyUnreferenced: true });
     expect(als).toContain('run q { (Hi and not Hj) or (not Hi and Hj) } for 4 but 5 Int');
   });
+
+  // Regression: extractSalient now captures machine-state as a salient dim (`<Region>.state =
+  // <value>`) so a statePredicate candidate differing from another only by an inState guard isn't
+  // masked (see salient.ts's collectInStateRegions). Arithmetic-free statePredicates route to
+  // Alloy, and shapeToPred's generic dotted-path branch would previously emit invalid Alloy for
+  // this dim (`a.Access.state = Active` — there is no `.state` sub-relation on a region name).
+  // It must instead target the `<Region>_state` relation with the `<Agg>_<Region>_<Value>` one-sig.
+  it('rebuilds a machine-state exclusion dim (`<Region>.state = <value>`) into the region-state one-sig comparison, not a dotted field path', () => {
+    const guarded: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      where: { kind: 'inState', owner: 'self', region: 'Access', states: ['Active'] },
+      body: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['customer'] }, right: { kind: 'field', owner: 'self', path: ['customer'] } } };
+    const als = astToAlloy(traceAModel, { kind: 'probe-forbid', hi: guarded, exclusions: [[
+      { dim: 'Access.state = Active', value: true }
+    ]], scope: 4 });
+    expect(als).toContain('a.Access_state = Subscription_Access_Active');
+    expect(als).not.toContain('a.Access.state');
+  });
 });

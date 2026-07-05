@@ -32,6 +32,22 @@ function collectCmps(p: Predicate, out: { op: Cmp; left: Term; right: Term }[]):
     case 'inState': break;
   }
 }
+// Collect the distinct (region) names referenced by any `inState` predicate reachable within p —
+// e.g. a statePredicate guarded by `inState(Open,Paid,Uncollectible)` on region `Lifecycle` needs
+// its subjects' machine-state captured as a salient dim, or two candidates differing ONLY by that
+// guard look identical to extractSalient (same masking class as the Task-17 `unique` bug — see
+// planner.ts's `exclusionsFrom` comment). We only need the region name here: the actual value is
+// read per-subject from `fields["<region>.state"]`, same accessor `evaluateCandidate`/`resolveValue`
+// already use elsewhere for machine state.
+function collectInStateRegions(p: Predicate, out: Set<string>): void {
+  switch (p.kind) {
+    case 'inState': out.add(p.region); break;
+    case 'and': case 'or': p.args.forEach(a => collectInStateRegions(a, out)); break;
+    case 'not': collectInStateRegions(p.arg, out); break;
+    case 'implies': collectInStateRegions(p.left, out); collectInStateRegions(p.right, out); break;
+    case 'cmp': break;
+  }
+}
 function renderTerm(t: Term): string {
   switch (t.kind) {
     case 'field': return t.path.join('.');
@@ -86,6 +102,35 @@ export function extractSalient(cands: Candidate[], s: CaseState): SalientFact[] 
       }
       // enum-valued equality facts (e.g. kind = Correction) so shapes distinguish entry kinds
       for (const p of preds) collectEnumEq(p, subjects, s, facts);
+      // machine-state facts (e.g. Lifecycle.state = Open): collectCmps deliberately skips
+      // `inState` (it isn't a Cmp), so without this, two candidates differing only by an inState
+      // guard are indistinguishable to extractSalient — a prior verdict's rebuilt shape can then
+      // cover the whole Hi≠Hj region and the planner falsely merges them as equivalent. Captured
+      // in the SAME dim format collectEnumEq uses (`"<Region>.state = <value>"`, value `true`) so
+      // both shape rebuilders' existing enum-eq regex/branch pick it up unchanged.
+      //
+      // Both shape rebuilders reconstruct a witness's facts as a conjunction on ONE existentially
+      // quantified record (quint's `exists(k => ...)`, alloy's single `a`/`all x`) — never "for
+      // each subject". Quint models always instantiate 2 ids per aggregate (see astToQuint's
+      // `_IDS` pool), so a multi-region-state model routinely has two live subjects in different
+      // states within the same witness. Naively recording BOTH states as separate `true` facts
+      // (`Region.state = Active` and `Region.state = Trialing`) would conjoin them onto that one
+      // variable — `x.Region_state == "Active" and x.Region_state == "Trialing"` — which is
+      // unsatisfiable for a single record, silently turning the whole exclusion shape into a dead
+      // always-false conjunct (verified live: this masked the actual probe-forbid exclusion in
+      // golden trace B once inState capture was added). So only emit the fact when every subject
+      // that has this region agrees on its value — a disagreement means "which subject's state"
+      // is exactly the ambiguity a single-existential shape can't express, so drop it rather than
+      // emit a self-contradictory conjunct.
+      const regions = new Set<string>();
+      for (const p of preds) collectInStateRegions(p, regions);
+      for (const region of regions) {
+        const values = new Set(subjects.map(e => e.fields[`${region}.state`]).filter(v => v !== undefined));
+        if (values.size === 1) {
+          const v = [...values][0];
+          facts.set(`${region}.state = ${v}`, { dim: `${region}.state = ${v}`, value: true });
+        }
+      }
     }
   }
   return [...facts.values()].sort((a, b) => a.dim.localeCompare(b.dim));

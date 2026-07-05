@@ -41,4 +41,16 @@ describe('astToQuint', () => {
     expect(em.source).toContain('(invoices.get(x.invoice).exists) implies (invoices.get(x.invoice).status == "Unpaid")');
     expect(em.source).toContain('(invoices.get(x.invoice).exists) implies (now <= invoices.get(x.invoice).dueDate + x.grace)');
   });
+  // Regression: extractSalient now captures machine-state as a salient dim (`<Region>.state =
+  // <value>`) in the same format as enum-eq facts, so two statePredicate candidates differing
+  // only by an inState guard aren't masked (see salient.ts's collectInStateRegions). Confirms the
+  // quint rebuilder's existing enum-eq regex + splitPathStr ref-hop handling already round-trips
+  // that dim correctly, with no changes needed to shapeToQuint itself.
+  it('rebuilds a machine-state exclusion dim (`<Region>.state = <value>`) into a quint state comparison', () => {
+    const p = astToQuint(traceBModel, { kind: 'probe-forbid', hi: graceCandidate(true), exclusions: [[
+      { dim: 'Access.state = Active', value: true }
+    ]], maxSteps: 8 });
+    expect(p.source).toContain('val q_inv = Hi or shape0');
+    expect(p.source).toContain('x.Access_state == "Active"');
+  });
 });

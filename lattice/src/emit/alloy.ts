@@ -117,7 +117,17 @@ function shapeToPred(facts: SalientFact[], subject: Candidate, name: string): st
     const mEq = f.dim.match(/^(.+) equal$/);
     if (mEq) { const p = mEq[1]!.split('.'); conj.push(`${alloyPath('a', p)} ${f.value ? '=' : '!='} ${alloyPath('b', p)}`); continue; }
     const mVal = f.dim.match(/^(.+) = (.+)$/);
-    if (mVal) { conj.push(`${alloyPath('a', mVal[1]!.split('.'))} = ${mVal[2]}`); continue; }
+    if (mVal) {
+      // A dim whose path is `<Region>.state` (extractSalient's machine-state capture, same format
+      // as an enum-eq fact) is NOT a real field path — Alloy has no `.state` sub-relation on the
+      // region name. The region state lives on the `<Region>_state` relation, valued by the
+      // `<Agg>_<Region>_<Value>` one-sig (see emitStateSigs/inStateExpr) — the generic
+      // dotted-path -> `a.<path>` rendering below would emit invalid Alloy (`a.Lifecycle.state =
+      // Open`) for this case, so it must be special-cased ahead of the generic branch.
+      const stateMatch = mVal[1]!.match(/^(\w+)\.state$/);
+      if (stateMatch) { conj.push(`a.${stateMatch[1]}_state = ${agg}_${stateMatch[1]}_${mVal[2]}`); continue; }
+      conj.push(`${alloyPath('a', mVal[1]!.split('.'))} = ${mVal[2]}`); continue;
+    }
     // 'inState count' and comparison dims don't constrain structural shapes further
   }
   const inS = w ? `${inStateExpr(agg, 'a', w.region, w.states)} and ${inStateExpr(agg, 'b', w.region, w.states)} and ` : '';

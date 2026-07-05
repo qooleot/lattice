@@ -181,6 +181,51 @@ describe('planner — trace A logic with fake solvers', () => {
     expect(q.type).toBe('probe-options');   // must still be found — not masked by the stale reuse
   });
 
+  // Regression coverage for the live-discovered inState-masking bug: two statePredicate candidates
+  // differing ONLY by an inState guard (e.g. `totalDue <= parts` vs `inState(...) implies totalDue
+  // = parts`) must NOT be falsely merged as equivalent. Before the fix, collectCmps in salient.ts
+  // skipped `inState` predicates entirely, so extractSalient never captured machine-state as a
+  // salient dim — a prior verdict's rebuilt exclusion shape then covered the WHOLE Hi≠Hj region
+  // (same masking class as the Task-17 `unique` bug documented above `exclusionsFrom`), and the
+  // distinguish query went UNSAT purely because the exclusion was too coarse, not because the
+  // candidates actually agree. This test asserts directly on the exclusion contents handed to the
+  // fake solver — the machine-state dim must now be present, so the shape no longer blankets the
+  // whole region.
+  it('extractSalient captures inState guard dims — exclusions for a state-guarded statePredicate pair include the machine-state dim', async () => {
+    const s = newSession(); s.phase = 'distinguish';
+    const ledger: LedgerEntry[] = [];
+    const noGuard: CandidateInvariant = { id: 'HnoGuard', name: 'HnoGuard', prior: 0.6, source: 'seed', candidate: {
+      kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'le', left: { kind: 'field', owner: 'self', path: ['grace'] }, right: { kind: 'field', owner: 'self', path: ['grace'] } }
+    }};
+    const guarded: CandidateInvariant = { id: 'HGuarded', name: 'HGuarded', prior: 0.55, source: 'seed', candidate: {
+      kind: 'statePredicate', aggregate: 'Subscription',
+      where: { kind: 'inState', owner: 'self', region: 'Access', states: ['Active'] },
+      body: { kind: 'cmp', op: 'le', left: { kind: 'field', owner: 'self', path: ['grace'] }, right: { kind: 'field', owner: 'self', path: ['grace'] } }
+    }};
+    registerCandidates(s, [noGuard, guarded]);
+
+    // A prior verdict whose witness matches the arith dims (`grace le grace` trivially true) but
+    // carries a machine-state field the old extraction dropped entirely.
+    const priorWitness: CaseState = { entities: [
+      { type: 'Subscription', id: 's1', fields: { grace: 72, 'Access.state': 'Active' } }
+    ]};
+    const priorSalient = extractSalient([noGuard.candidate, guarded.candidate], priorWitness);
+    ledger.push({ kind: 'verdict', at: 't0', witnessId: 'w0', witness: priorWitness, salient: priorSalient, judge: 'permit', question: 'q' });
+
+    let capturedExclusions: any;
+    const deps: any = {
+      alloy: async () => ({ sat: false, instances: [], ms: 1 }),
+      quint: async (_m: unknown, q: any) => { capturedExclusions = q.exclusions; return { violated: false, ms: 1 }; }
+    };
+    await nextQuestion(s, ledger, traceBModel, deps);
+
+    expect(capturedExclusions).toBeDefined();
+    expect(capturedExclusions.length).toBeGreaterThan(0);
+    const dims = capturedExclusions.flatMap((facts: any[]) => facts.map(f => f.dim));
+    expect(dims).toContain('Access.state = Active');
+  });
+
   // Regression coverage: Alloy's own enumeration order is first-SAT-found, not "most minimal" —
   // an early instance can carry gratuitous extra atoms that make the witness harder to read than
   // necessary. The planner should prefer the smallest enumerated instance.
