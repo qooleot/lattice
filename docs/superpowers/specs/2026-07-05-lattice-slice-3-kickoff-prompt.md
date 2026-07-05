@@ -26,10 +26,13 @@ spec→implementation generation slice may be in flight; slice 3 is independent 
 on it, do not build it.
 
 Process (this repo's established flow — follow it exactly):
-1. Brainstorm with the human FIRST: the brief's §6 lists six open forks (storage model, LSP scope,
-   CLI surface, rename-vs-ledger semantics, comment policy, predicate concrete syntax). One
-   question at a time; the predicate-syntax question (§6.6) is the biggest hidden-scope item —
-   surface its cost honestly before the design is fixed.
+1. Brainstorm with the human FIRST: the brief's §6 lists the open forks (LSP scope, CLI surface,
+   rename-vs-ledger semantics, comment policy, predicate concrete syntax). The storage fork is
+   ALREADY DECIDED by the user: `.lat` is the source of truth — see the brief's §4 DECIDED block
+   for the binding consequences (ledger stays canonical for evidence; spec.json is a derived
+   cache; degraded-state story required for parse errors; predicate concrete syntax is now CORE
+   scope, not optional). One question at a time; the predicate-syntax question (§6.6) is the
+   biggest scope item — surface its cost honestly before the design is fixed.
 2. Write the design spec to `docs/superpowers/specs/2026-07-05-lattice-slice-3-lat-parser-design.md`,
    self-review, get the human's approval on the file.
 3. writing-plans → a TDD implementation plan with complete code per task; then subagent-driven

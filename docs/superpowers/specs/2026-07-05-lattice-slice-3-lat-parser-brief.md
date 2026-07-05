@@ -75,8 +75,18 @@ Which artifact is git-facing canonical?
   directly; but the ledger and provenance don't live in `.lat`, so truth is split across two files
   anyway; parse errors make the store unreadable.
 
-Prior lean from the parent plan ("the AST is the only editable thing", Risk 4 mitigation): A, with
-`.lat` as a faithful read-write *surface*. But present both to the user.
+**DECIDED (user, 2026-07-05): Option B — `.lat` is the source of truth.** Consequences the
+slice-3 design must honor:
+- The ledger (`ledger.jsonl`) REMAINS canonical for verdicts/anchors (gate binding): judged
+  evidence is never editable via text. `.lat` owns the spec content; the ledger owns the evidence;
+  provenance comments in `.lat` are renders of ledger data, ignored (not trusted) on parse.
+- `spec.json` demotes to a derived cache (still worth emitting for machine consumers like the
+  generation slice — regenerate it on every successful parse).
+- Parse errors now mean the canonical store is temporarily unreadable — the design needs an
+  explicit degraded-state story (last-good AST cache + loud diagnostics, never silent fallback).
+- The predicate concrete syntax (§6.6) is now unavoidable in v1: if `.lat` is truth, every adopted
+  invariant body must have a complete, parseable textual form — budget it as core scope, not an
+  option.
 
 ## 5. The core correctness property (must be a test from day one)
 
