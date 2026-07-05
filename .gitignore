@@ -1,9 +1,47 @@
+# Dependencies
 node_modules/
-lattice/node_modules/
-lattice/dist/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test output & coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Editor & IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Lattice: vendored solver artifacts (fetched locally, not committed)
 lattice/vendor/*.jar
 lattice/vendor/*.class
 lattice/vendor/jdk
+
+# Lattice: scratch sessions & solver output
 lattice/.lattice-session*/
 lattice/_apalache-out/
+
+# Tooling scratch
 .superpowers/
