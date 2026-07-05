@@ -17,7 +17,7 @@ describe('astToProse', () => {
   const prose = astToProse(traceAModel, [H3], ledger);
   it('renders lifecycle, invariants with anchors, and open decisions', () => {
     expect(prose).toContain('# Billing');
-    expect(prose).toContain('Trialing');
+    expect(prose).toContain('**Access states:** Trialing, Active, Ended (terminal)');
     expect(prose).toContain('Only one Subscription may be Active per (customer, plan.family)');
     expect(prose).toContain('elicited w1–w2');
     expect(prose).toContain('## ⚠️ Open decisions');

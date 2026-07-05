@@ -41,8 +41,18 @@ export function astToProse(m: DomainModel, adopted: CandidateInvariant[], ledger
     lines.push(`## ${a.name}`, '');
     if (a.doc) lines.push(a.doc, '');
     for (const r of a.machine?.regions ?? []) {
-      lines.push(`**${r.name} lifecycle:** ${r.states.map(s =>
-        s.tags?.includes('terminal') ? `${s.name} (terminal)` : s.name).join(' → ')}`, '');
+      const label = (s: string) => r.states.find(st => st.name === s)?.tags?.includes('terminal') ? `${s} (terminal)` : s;
+      // A linear `A → B → C` chain misreads as declaring transitions between adjacent states in
+      // that order, which isn't true unless the machine actually says so — states are just an
+      // enumerated set until a transition names a from/to pair. Render the DECLARED transitions
+      // (per-edge, since they may not be a simple chain) when present; otherwise fall back to a
+      // plain comma-separated list of states with no arrows, so no transition is implied.
+      const declared = (a.machine?.transitions ?? []).filter(t => t.region === r.name);
+      if (declared.length > 0) {
+        lines.push(`**${r.name} lifecycle:** ${declared.map(t => `${label(t.from)} → ${label(t.to)}`).join(', ')}`, '');
+      } else {
+        lines.push(`**${r.name} states:** ${r.states.map(s => label(s.name)).join(', ')}`, '');
+      }
     }
   }
   lines.push('## Always true', '');
