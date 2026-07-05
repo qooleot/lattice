@@ -11,7 +11,9 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[], ledger:
   const anchorFor = (id: string): string | undefined =>
     (ledger.find(e => e.kind === 'adopted' && e.invariant.id === id) as Extract<LedgerEntry, { kind: 'adopted' }> | undefined)?.provenance;
   const pad = (n: string, w: number) => n + ' '.repeat(Math.max(1, w - n.length));
-  const out: string[] = [`context ${m.context} {`, ''];
+  const out: string[] = [];
+  if (m.doc) out.push(`// ${m.doc}`);
+  out.push(`context ${m.context} {`, '');
   for (const e of m.enums) out.push(`  enum ${e.name} { ${e.values.join(', ')} }`);
   if (m.enums.length) out.push('');
   for (const ent of m.entities) {

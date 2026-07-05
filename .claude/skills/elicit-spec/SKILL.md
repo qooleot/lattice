@@ -24,6 +24,12 @@ Record each structure Q&A via `engine structure --question ... --answer ...` as 
 ledger keeps a durable trace of how the structure was decided.
 When stable: `engine init --model <file>`. Fix any diagnostics by asking, not guessing.
 Present the auto-adopted template invariants as a list ("these come free — object to any?").
+All declared names (context, aggregates, entities, enums, fields, states, events) are code
+identifiers: PascalCase/camelCase, no spaces or punctuation — `engine init` rejects violations
+with `invalid-name`. The human-readable description of the domain goes in the model's `doc`
+field, never in a name. Example: `{ "context": "Subscriptions", "doc": "Subscriptions API:
+hybrid license-fee + usage-based billing", ... }` emits `// Subscriptions API: ...` above
+`context Subscriptions {`.
 
 ## Phase 1 — seeding
 Fold the engine's returned seeds with your own domain knowledge into 3–5 candidate invariants

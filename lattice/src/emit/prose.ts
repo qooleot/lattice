@@ -36,6 +36,7 @@ export function renderCandidateEnglish(c: Candidate): string {
 
 export function astToProse(m: DomainModel, adopted: CandidateInvariant[], ledger: LedgerEntry[]): string {
   const lines: string[] = [`# ${m.context}`, ''];
+  if (m.doc) lines.push(`*${m.doc}*`, '');
   for (const a of m.aggregates) {
     lines.push(`## ${a.name}`, '');
     if (a.doc) lines.push(a.doc, '');

@@ -1,8 +1,38 @@
 import type { Diagnostic } from './invariant.js';
 import type { DomainModel, Field, TypeRef } from './domain.js';
 
+const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 export function validateModel(m: DomainModel): Diagnostic[] {
   const out: Diagnostic[] = [];
+  const checkName = (kind: string, value: string, at?: string) => {
+    if (!IDENT_RE.test(value))
+      out.push({ code: 'invalid-name', message: `${kind} name '${value}' is not a valid identifier (letters, digits, underscore; no spaces)`, at });
+  };
+
+  checkName('context', m.context);
+  for (const en of m.enums) {
+    checkName('enum', en.name, en.name);
+    for (const v of en.values) checkName('enum value', v, `${en.name}.${v}`);
+  }
+  for (const e of m.entities) {
+    checkName('entity', e.name, e.name);
+    for (const f of e.fields) checkName('field', f.name, `${e.name}.${f.name}`);
+  }
+  for (const a of m.aggregates) {
+    checkName('aggregate', a.name, a.name);
+    for (const f of a.fields) checkName('field', f.name, `${a.name}.${f.name}`);
+    for (const r of a.machine?.regions ?? []) {
+      checkName('machine region', r.name, `${a.name}.${r.name}`);
+      for (const s of r.states) checkName('state', s.name, `${a.name}.${r.name}.${s.name}`);
+    }
+    for (const t of a.machine?.transitions ?? []) checkName('transition', t.name, t.name);
+  }
+  for (const e of m.events) {
+    checkName('event', e.name, e.name);
+    for (const f of e.fields) checkName('field', f.name, `${e.name}.${f.name}`);
+  }
+
   const names = new Map<string, number>();
   const all = [...m.enums.map(e => e.name), ...m.entities.map(e => e.name), ...m.aggregates.map(a => a.name)];
   for (const n of all) names.set(n, (names.get(n) ?? 0) + 1);

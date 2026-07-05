@@ -23,6 +23,7 @@ export interface EventDef { name: string; fields: Field[] }
 
 export interface DomainModel {
   context: string;
+  doc?: string;              // free-form human description; exempt from identifier validation
   ticksPerDay?: number;      // time granularity; default 24 (tick = 1 hour)
   enums: EnumDef[];
   entities: EntityDef[];

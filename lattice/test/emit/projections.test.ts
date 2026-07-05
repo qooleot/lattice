@@ -39,6 +39,36 @@ describe('astToCode', () => {
   });
 });
 
+describe('DomainModel.doc rendering', () => {
+  const withDoc = { ...traceAModel, doc: 'Subscriptions API: hybrid license-fee + usage-based billing' };
+
+  it('renders doc as an italic subtitle under the prose title', () => {
+    const prose = astToProse(withDoc, [H3], ledger);
+    expect(prose).toContain('# Billing');
+    expect(prose).toContain('*Subscriptions API: hybrid license-fee + usage-based billing*');
+  });
+
+  it('renders doc as a leading comment above the context line in code', () => {
+    const code = astToCode(withDoc, [H3], ledger);
+    expect(code).toContain('// Subscriptions API: hybrid license-fee + usage-based billing');
+    expect(code.indexOf('//')).toBeLessThan(code.indexOf('context Billing {'));
+  });
+
+  it('omits the doc line entirely when doc is unset', () => {
+    const code = astToCode(traceAModel, [H3], ledger);
+    expect(code.startsWith('context Billing {')).toBe(true);
+  });
+});
+
+describe('emitted .lat smoke tripwire', () => {
+  it('first non-comment line is a valid context declaration', () => {
+    const withDoc = { ...traceAModel, doc: 'Subscriptions API: hybrid license-fee + usage-based billing' };
+    const code = astToCode(withDoc, [H3], ledger);
+    const firstNonComment = code.split('\n').find(l => l.trim() !== '' && !l.trim().startsWith('//'));
+    expect(firstNonComment).toMatch(/^context [A-Za-z_][A-Za-z0-9_]* \{$/);
+  });
+});
+
 describe('renderCandidateEnglish', () => {
   it('covers every candidate kind', () => {
     expect(renderCandidateEnglish(H3.candidate)).toContain('Only one Subscription');

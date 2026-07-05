@@ -77,4 +77,23 @@ describe('validateModel', () => {
     m.aggregates[0]!.fields.push({ name: 'state', type: { kind: 'prim', prim: 'Text' } });
     expect(validateModel(m).map(d => d.code)).toContain('reserved-field-name');
   });
+
+  it('rejects a context name with spaces (prose in a name field)', () => {
+    const m = structuredClone(good);
+    m.context = 'Subscriptions API: hybrid license-fee + usage-based billing';
+    expect(validateModel(m).map(d => d.code)).toContain('invalid-name');
+  });
+
+  it('rejects an enum value containing a dash', () => {
+    const m = structuredClone(good);
+    m.enums[0]!.values.push('Past-Due');
+    expect(validateModel(m).map(d => d.code)).toContain('invalid-name');
+  });
+
+  it('accepts valid snake_case and PascalCase names', () => {
+    const m = structuredClone(good);
+    m.entities[0]!.fields.push({ name: 'all_units', type: { kind: 'prim', prim: 'Int' } });
+    m.enums.push({ name: 'PaymentState', values: ['Trialing', 'PaymentSucceeded'] });
+    expect(validateModel(m).map(d => d.code)).not.toContain('invalid-name');
+  });
 });
