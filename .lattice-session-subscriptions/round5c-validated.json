@@ -1,0 +1,21 @@
+[
+  {
+    "id": "r5c-overage-needs-allowance",
+    "name": "Overage_Implies_Real_Allowance",
+    "prior": 0.95,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Plan",
+      "body": {
+        "kind": "and",
+        "args": [
+          { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["includedUnits"] }, "right": { "kind": "int", "value": 0 } },
+          { "kind": "implies",
+            "left": { "kind": "cmp", "op": "eq", "left": { "kind": "field", "owner": "self", "path": ["pricingMode"] }, "right": { "kind": "enumval", "enum": "UsagePricing", "value": "overage" } },
+            "right": { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["includedUnits"] }, "right": { "kind": "int", "value": 1 } } }
+        ]
+      }
+    }
+  }
+]

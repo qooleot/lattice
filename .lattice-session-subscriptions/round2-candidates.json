@@ -1,0 +1,69 @@
+[
+  {
+    "id": "r2-paid-covered",
+    "name": "Paid_Implies_Covered",
+    "prior": 0.35,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Invoice",
+      "where": { "kind": "inState", "owner": "self", "region": "settlement", "states": ["paid"] },
+      "body": {
+        "kind": "cmp",
+        "op": "ge",
+        "left": { "kind": "field", "owner": "self", "path": ["amountPaid"] },
+        "right": { "kind": "field", "owner": "self", "path": ["totalDue"] }
+      }
+    }
+  },
+  {
+    "id": "r2-paid-exact",
+    "name": "Paid_Implies_Exact_Payment",
+    "prior": 0.25,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Invoice",
+      "where": { "kind": "inState", "owner": "self", "region": "settlement", "states": ["paid"] },
+      "body": {
+        "kind": "cmp",
+        "op": "eq",
+        "left": { "kind": "field", "owner": "self", "path": ["amountPaid"] },
+        "right": { "kind": "field", "owner": "self", "path": ["totalDue"] }
+      }
+    }
+  },
+  {
+    "id": "r2-never-overpaid",
+    "name": "AmountPaid_Never_Exceeds_TotalDue",
+    "prior": 0.2,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Invoice",
+      "body": {
+        "kind": "cmp",
+        "op": "le",
+        "left": { "kind": "field", "owner": "self", "path": ["amountPaid"] },
+        "right": { "kind": "field", "owner": "self", "path": ["totalDue"] }
+      }
+    }
+  },
+  {
+    "id": "r2-open-owes",
+    "name": "Open_Invoice_Still_Owes",
+    "prior": 0.2,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Invoice",
+      "where": { "kind": "inState", "owner": "self", "region": "settlement", "states": ["open"] },
+      "body": {
+        "kind": "cmp",
+        "op": "lt",
+        "left": { "kind": "field", "owner": "self", "path": ["amountPaid"] },
+        "right": { "kind": "field", "owner": "self", "path": ["totalDue"] }
+      }
+    }
+  }
+]

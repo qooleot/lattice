@@ -1,0 +1,17 @@
+[
+  {
+    "id": "r5b-nonneg-only",
+    "name": "Allowance_NonNegative_Only",
+    "prior": 0.9,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Plan",
+      "body": {
+        "kind": "cmp", "op": "ge",
+        "left": { "kind": "field", "owner": "self", "path": ["includedUnits"] },
+        "right": { "kind": "int", "value": 0 }
+      }
+    }
+  }
+]

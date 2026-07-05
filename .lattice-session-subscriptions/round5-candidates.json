@@ -1,0 +1,55 @@
+[
+  {
+    "id": "r5-allowance-overage-only",
+    "name": "Allowance_Only_In_Overage_Mode",
+    "prior": 0.4,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Plan",
+      "body": {
+        "kind": "and",
+        "args": [
+          { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["includedUnits"] }, "right": { "kind": "int", "value": 0 } },
+          { "kind": "implies",
+            "left": { "kind": "cmp", "op": "eq", "left": { "kind": "field", "owner": "self", "path": ["pricingMode"] }, "right": { "kind": "enumval", "enum": "UsagePricing", "value": "all_units" } },
+            "right": { "kind": "cmp", "op": "eq", "left": { "kind": "field", "owner": "self", "path": ["includedUnits"] }, "right": { "kind": "int", "value": 0 } } }
+        ]
+      }
+    }
+  },
+  {
+    "id": "r5-nonneg-only",
+    "name": "Allowance_NonNegative_Only",
+    "prior": 0.35,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Plan",
+      "body": {
+        "kind": "cmp", "op": "ge",
+        "left": { "kind": "field", "owner": "self", "path": ["includedUnits"] },
+        "right": { "kind": "int", "value": 0 }
+      }
+    }
+  },
+  {
+    "id": "r5-overage-needs-allowance",
+    "name": "Overage_Implies_Real_Allowance",
+    "prior": 0.25,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Plan",
+      "body": {
+        "kind": "and",
+        "args": [
+          { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["includedUnits"] }, "right": { "kind": "int", "value": 0 } },
+          { "kind": "implies",
+            "left": { "kind": "cmp", "op": "eq", "left": { "kind": "field", "owner": "self", "path": ["pricingMode"] }, "right": { "kind": "enumval", "enum": "UsagePricing", "value": "overage" } },
+            "right": { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["includedUnits"] }, "right": { "kind": "int", "value": 1 } } }
+        ]
+      }
+    }
+  }
+]

@@ -1,0 +1,31 @@
+{
+  "id": "r1-alt-le-plus-paid-eq",
+  "name": "TotalDue_At_Most_Parts_And_Exact_Once_Paid",
+  "prior": 0.5,
+  "source": "alternative",
+  "candidate": {
+    "kind": "statePredicate",
+    "aggregate": "Invoice",
+    "body": {
+      "kind": "and",
+      "args": [
+        {
+          "kind": "cmp",
+          "op": "le",
+          "left": { "kind": "field", "owner": "self", "path": ["totalDue"] },
+          "right": { "kind": "plus", "left": { "kind": "field", "owner": "self", "path": ["licenseFeeAmount"] }, "right": { "kind": "field", "owner": "self", "path": ["usageAmount"] } }
+        },
+        {
+          "kind": "implies",
+          "left": { "kind": "inState", "owner": "self", "region": "settlement", "states": ["paid"] },
+          "right": {
+            "kind": "cmp",
+            "op": "eq",
+            "left": { "kind": "field", "owner": "self", "path": ["totalDue"] },
+            "right": { "kind": "plus", "left": { "kind": "field", "owner": "self", "path": ["licenseFeeAmount"] }, "right": { "kind": "field", "owner": "self", "path": ["usageAmount"] } }
+          }
+        }
+      ]
+    }
+  }
+}

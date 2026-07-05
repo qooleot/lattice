@@ -1,0 +1,1875 @@
+{
+  "model": {
+    "context": "Subscriptions",
+    "doc": "Subscriptions API: hybrid license-fee + usage-based billing",
+    "enums": [
+      {
+        "name": "BillingPeriod",
+        "values": [
+          "monthly",
+          "annual"
+        ]
+      },
+      {
+        "name": "UsagePricing",
+        "values": [
+          "overage",
+          "all_units"
+        ]
+      }
+    ],
+    "entities": [
+      {
+        "kind": "entity",
+        "name": "Plan",
+        "doc": "Pricing definition: per-seat license fee plus usage billing in one of two modes",
+        "fields": [
+          {
+            "name": "planId",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          },
+          {
+            "name": "licenseFee",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            }
+          },
+          {
+            "name": "usageRate",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            }
+          },
+          {
+            "name": "includedUnits",
+            "type": {
+              "kind": "prim",
+              "prim": "Int"
+            }
+          },
+          {
+            "name": "pricingMode",
+            "type": {
+              "kind": "enum",
+              "enum": "UsagePricing"
+            }
+          },
+          {
+            "name": "period",
+            "type": {
+              "kind": "enum",
+              "enum": "BillingPeriod"
+            }
+          }
+        ]
+      }
+    ],
+    "aggregates": [
+      {
+        "kind": "aggregate",
+        "name": "Subscription",
+        "doc": "A customer's subscription to a Plan; usage accrues per billing period and resets at rollover",
+        "fields": [
+          {
+            "name": "subId",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          },
+          {
+            "name": "plan",
+            "type": {
+              "kind": "ref",
+              "target": "Plan"
+            }
+          },
+          {
+            "name": "seats",
+            "type": {
+              "kind": "prim",
+              "prim": "Int"
+            }
+          },
+          {
+            "name": "periodStart",
+            "type": {
+              "kind": "prim",
+              "prim": "Date"
+            }
+          },
+          {
+            "name": "periodEnd",
+            "type": {
+              "kind": "prim",
+              "prim": "Date"
+            }
+          },
+          {
+            "name": "accruedUnits",
+            "type": {
+              "kind": "prim",
+              "prim": "Int"
+            }
+          }
+        ],
+        "machine": {
+          "regions": [
+            {
+              "name": "lifecycle",
+              "initial": "trialing",
+              "states": [
+                {
+                  "name": "trialing"
+                },
+                {
+                  "name": "active",
+                  "tags": [
+                    "active"
+                  ]
+                },
+                {
+                  "name": "past_due",
+                  "tags": [
+                    "active"
+                  ]
+                },
+                {
+                  "name": "canceled",
+                  "tags": [
+                    "terminal"
+                  ]
+                },
+                {
+                  "name": "expired",
+                  "tags": [
+                    "terminal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "transitions": [
+            {
+              "name": "activate",
+              "region": "lifecycle",
+              "from": "trialing",
+              "to": "active"
+            },
+            {
+              "name": "expire_trial",
+              "region": "lifecycle",
+              "from": "trialing",
+              "to": "expired"
+            },
+            {
+              "name": "payment_failed",
+              "region": "lifecycle",
+              "from": "active",
+              "to": "past_due"
+            },
+            {
+              "name": "recover",
+              "region": "lifecycle",
+              "from": "past_due",
+              "to": "active"
+            },
+            {
+              "name": "cancel_from_trial",
+              "region": "lifecycle",
+              "from": "trialing",
+              "to": "canceled"
+            },
+            {
+              "name": "cancel_from_active",
+              "region": "lifecycle",
+              "from": "active",
+              "to": "canceled"
+            },
+            {
+              "name": "cancel_from_past_due",
+              "region": "lifecycle",
+              "from": "past_due",
+              "to": "canceled"
+            },
+            {
+              "name": "dunning_exhausted",
+              "region": "lifecycle",
+              "from": "past_due",
+              "to": "canceled"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "aggregate",
+        "name": "Invoice",
+        "doc": "Period invoice: license-fee portion plus usage portion; partial payments accrue",
+        "fields": [
+          {
+            "name": "invoiceId",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "key": true
+          },
+          {
+            "name": "subscription",
+            "type": {
+              "kind": "ref",
+              "target": "Subscription"
+            }
+          },
+          {
+            "name": "licenseFeeAmount",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            },
+            "tags": [
+              "total"
+            ]
+          },
+          {
+            "name": "usageAmount",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            },
+            "tags": [
+              "total"
+            ]
+          },
+          {
+            "name": "totalDue",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            },
+            "tags": [
+              "total"
+            ]
+          },
+          {
+            "name": "amountPaid",
+            "type": {
+              "kind": "prim",
+              "prim": "Money"
+            },
+            "tags": [
+              "balance"
+            ]
+          }
+        ],
+        "machine": {
+          "regions": [
+            {
+              "name": "settlement",
+              "initial": "draft",
+              "states": [
+                {
+                  "name": "draft"
+                },
+                {
+                  "name": "open",
+                  "tags": [
+                    "active"
+                  ]
+                },
+                {
+                  "name": "paid",
+                  "tags": [
+                    "terminal"
+                  ]
+                },
+                {
+                  "name": "void",
+                  "tags": [
+                    "terminal"
+                  ]
+                },
+                {
+                  "name": "uncollectible",
+                  "tags": [
+                    "terminal"
+                  ]
+                }
+              ]
+            }
+          ],
+          "transitions": [
+            {
+              "name": "finalize",
+              "region": "settlement",
+              "from": "draft",
+              "to": "open"
+            },
+            {
+              "name": "settle",
+              "region": "settlement",
+              "from": "open",
+              "to": "paid"
+            },
+            {
+              "name": "void_draft",
+              "region": "settlement",
+              "from": "draft",
+              "to": "void"
+            },
+            {
+              "name": "void_open",
+              "region": "settlement",
+              "from": "open",
+              "to": "void"
+            },
+            {
+              "name": "write_off",
+              "region": "settlement",
+              "from": "open",
+              "to": "uncollectible"
+            }
+          ]
+        }
+      }
+    ],
+    "events": []
+  },
+  "candidates": [
+    {
+      "inv": {
+        "id": "tpl-9-Subscription",
+        "name": "NoOrphan_Subscription",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "refsResolve",
+          "aggregate": "Subscription"
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-3-Subscription-canceled",
+        "name": "Terminal_Subscription_canceled",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "terminal",
+          "aggregate": "Subscription",
+          "region": "lifecycle",
+          "state": "canceled"
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-3-Subscription-expired",
+        "name": "Terminal_Subscription_expired",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "terminal",
+          "aggregate": "Subscription",
+          "region": "lifecycle",
+          "state": "expired"
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-2-Invoice-licenseFeeAmount",
+        "name": "NonNegative_Invoice_licenseFeeAmount",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "cmp",
+            "op": "ge",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "licenseFeeAmount"
+              ]
+            },
+            "right": {
+              "kind": "int",
+              "value": 0
+            }
+          }
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-2-Invoice-usageAmount",
+        "name": "NonNegative_Invoice_usageAmount",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "cmp",
+            "op": "ge",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "usageAmount"
+              ]
+            },
+            "right": {
+              "kind": "int",
+              "value": 0
+            }
+          }
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-2-Invoice-totalDue",
+        "name": "NonNegative_Invoice_totalDue",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "cmp",
+            "op": "ge",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "totalDue"
+              ]
+            },
+            "right": {
+              "kind": "int",
+              "value": 0
+            }
+          }
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-2-Invoice-amountPaid",
+        "name": "NonNegative_Invoice_amountPaid",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "cmp",
+            "op": "ge",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "amountPaid"
+              ]
+            },
+            "right": {
+              "kind": "int",
+              "value": 0
+            }
+          }
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-9-Invoice",
+        "name": "NoOrphan_Invoice",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "refsResolve",
+          "aggregate": "Invoice"
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-3-Invoice-paid",
+        "name": "Terminal_Invoice_paid",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "terminal",
+          "aggregate": "Invoice",
+          "region": "settlement",
+          "state": "paid"
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-3-Invoice-void",
+        "name": "Terminal_Invoice_void",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "terminal",
+          "aggregate": "Invoice",
+          "region": "settlement",
+          "state": "void"
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-3-Invoice-uncollectible",
+        "name": "Terminal_Invoice_uncollectible",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "terminal",
+          "aggregate": "Invoice",
+          "region": "settlement",
+          "state": "uncollectible"
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-2-Plan-licenseFee",
+        "name": "NonNegative_Plan_licenseFee",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Plan",
+          "body": {
+            "kind": "cmp",
+            "op": "ge",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "licenseFee"
+              ]
+            },
+            "right": {
+              "kind": "int",
+              "value": 0
+            }
+          }
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "tpl-2-Plan-usageRate",
+        "name": "NonNegative_Plan_usageRate",
+        "prior": 0.9,
+        "source": "template",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Plan",
+          "body": {
+            "kind": "cmp",
+            "op": "ge",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "usageRate"
+              ]
+            },
+            "right": {
+              "kind": "int",
+              "value": 0
+            }
+          }
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "r1-conservation-strict",
+        "name": "TotalDue_Equals_Parts_Always",
+        "prior": 0.4,
+        "source": "seed",
+        "candidate": {
+          "kind": "conservation",
+          "aggregate": "Invoice",
+          "parts": [
+            [
+              "licenseFeeAmount"
+            ],
+            [
+              "usageAmount"
+            ]
+          ],
+          "total": [
+            "totalDue"
+          ]
+        }
+      },
+      "status": "pruned"
+    },
+    {
+      "inv": {
+        "id": "r1-conservation-finalized",
+        "name": "TotalDue_Equals_Parts_Once_Finalized",
+        "prior": 0.3,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "where": {
+            "kind": "inState",
+            "owner": "self",
+            "region": "settlement",
+            "states": [
+              "open",
+              "paid",
+              "uncollectible"
+            ]
+          },
+          "body": {
+            "kind": "cmp",
+            "op": "eq",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "totalDue"
+              ]
+            },
+            "right": {
+              "kind": "plus",
+              "left": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "licenseFeeAmount"
+                ]
+              },
+              "right": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "usageAmount"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "status": "pruned"
+    },
+    {
+      "inv": {
+        "id": "r1-discounts",
+        "name": "TotalDue_At_Most_Parts",
+        "prior": 0.15,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "cmp",
+            "op": "le",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "totalDue"
+              ]
+            },
+            "right": {
+              "kind": "plus",
+              "left": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "licenseFeeAmount"
+                ]
+              },
+              "right": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "usageAmount"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r1-alt-le-plus-finalized-eq"
+    },
+    {
+      "inv": {
+        "id": "r1-surcharges",
+        "name": "TotalDue_At_Least_Parts",
+        "prior": 0.15,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "cmp",
+            "op": "ge",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "totalDue"
+              ]
+            },
+            "right": {
+              "kind": "plus",
+              "left": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "licenseFeeAmount"
+                ]
+              },
+              "right": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "usageAmount"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "status": "pruned"
+    },
+    {
+      "inv": {
+        "id": "r1-alt-le-plus-finalized-eq",
+        "name": "TotalDue_At_Most_Parts_And_Exact_Once_Finalized",
+        "prior": 0.5,
+        "source": "alternative",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "le",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "totalDue"
+                  ]
+                },
+                "right": {
+                  "kind": "plus",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "licenseFeeAmount"
+                    ]
+                  },
+                  "right": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "usageAmount"
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "implies",
+                "left": {
+                  "kind": "inState",
+                  "owner": "self",
+                  "region": "settlement",
+                  "states": [
+                    "open",
+                    "paid",
+                    "uncollectible"
+                  ]
+                },
+                "right": {
+                  "kind": "cmp",
+                  "op": "eq",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "totalDue"
+                    ]
+                  },
+                  "right": {
+                    "kind": "plus",
+                    "left": {
+                      "kind": "field",
+                      "owner": "self",
+                      "path": [
+                        "licenseFeeAmount"
+                      ]
+                    },
+                    "right": {
+                      "kind": "field",
+                      "owner": "self",
+                      "path": [
+                        "usageAmount"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r1b-le-always"
+    },
+    {
+      "inv": {
+        "id": "r1-alt-le-plus-paid-eq",
+        "name": "TotalDue_At_Most_Parts_And_Exact_Once_Paid",
+        "prior": 0.5,
+        "source": "alternative",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "le",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "totalDue"
+                  ]
+                },
+                "right": {
+                  "kind": "plus",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "licenseFeeAmount"
+                    ]
+                  },
+                  "right": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "usageAmount"
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "implies",
+                "left": {
+                  "kind": "inState",
+                  "owner": "self",
+                  "region": "settlement",
+                  "states": [
+                    "paid"
+                  ]
+                },
+                "right": {
+                  "kind": "cmp",
+                  "op": "eq",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "totalDue"
+                    ]
+                  },
+                  "right": {
+                    "kind": "plus",
+                    "left": {
+                      "kind": "field",
+                      "owner": "self",
+                      "path": [
+                        "licenseFeeAmount"
+                      ]
+                    },
+                    "right": {
+                      "kind": "field",
+                      "owner": "self",
+                      "path": [
+                        "usageAmount"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r1-alt-le-plus-finalized-eq"
+    },
+    {
+      "inv": {
+        "id": "r1b-le-always",
+        "name": "TotalDue_At_Most_Parts",
+        "prior": 0.9,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "cmp",
+            "op": "le",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "totalDue"
+              ]
+            },
+            "right": {
+              "kind": "plus",
+              "left": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "licenseFeeAmount"
+                ]
+              },
+              "right": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "usageAmount"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "r2-paid-covered",
+        "name": "Paid_Implies_Covered",
+        "prior": 0.35,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "where": {
+            "kind": "inState",
+            "owner": "self",
+            "region": "settlement",
+            "states": [
+              "paid"
+            ]
+          },
+          "body": {
+            "kind": "cmp",
+            "op": "ge",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "amountPaid"
+              ]
+            },
+            "right": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "totalDue"
+              ]
+            }
+          }
+        }
+      },
+      "status": "pruned"
+    },
+    {
+      "inv": {
+        "id": "r2-paid-exact",
+        "name": "Paid_Implies_Exact_Payment",
+        "prior": 0.25,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "where": {
+            "kind": "inState",
+            "owner": "self",
+            "region": "settlement",
+            "states": [
+              "paid"
+            ]
+          },
+          "body": {
+            "kind": "cmp",
+            "op": "eq",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "amountPaid"
+              ]
+            },
+            "right": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "totalDue"
+              ]
+            }
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r2b-payment-rule"
+    },
+    {
+      "inv": {
+        "id": "r2-never-overpaid",
+        "name": "AmountPaid_Never_Exceeds_TotalDue",
+        "prior": 0.2,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "cmp",
+            "op": "le",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "amountPaid"
+              ]
+            },
+            "right": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "totalDue"
+              ]
+            }
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r2-paid-exact"
+    },
+    {
+      "inv": {
+        "id": "r2-open-owes",
+        "name": "Open_Invoice_Still_Owes",
+        "prior": 0.2,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "where": {
+            "kind": "inState",
+            "owner": "self",
+            "region": "settlement",
+            "states": [
+              "open"
+            ]
+          },
+          "body": {
+            "kind": "cmp",
+            "op": "lt",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "amountPaid"
+              ]
+            },
+            "right": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "totalDue"
+              ]
+            }
+          }
+        }
+      },
+      "status": "pruned"
+    },
+    {
+      "inv": {
+        "id": "r2b-payment-rule",
+        "name": "Never_Overpaid_And_Paid_Exact",
+        "prior": 0.9,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "le",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "amountPaid"
+                  ]
+                },
+                "right": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "totalDue"
+                  ]
+                }
+              },
+              {
+                "kind": "implies",
+                "left": {
+                  "kind": "inState",
+                  "owner": "self",
+                  "region": "settlement",
+                  "states": [
+                    "paid"
+                  ]
+                },
+                "right": {
+                  "kind": "cmp",
+                  "op": "eq",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "amountPaid"
+                    ]
+                  },
+                  "right": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "totalDue"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "r3-unique-open",
+        "name": "One_Open_Invoice_Per_Subscription",
+        "prior": 0.45,
+        "source": "seed",
+        "candidate": {
+          "kind": "unique",
+          "aggregate": "Invoice",
+          "whileStates": {
+            "region": "settlement",
+            "states": [
+              "open"
+            ]
+          },
+          "by": [
+            [
+              "subscription"
+            ]
+          ]
+        }
+      },
+      "status": "pruned"
+    },
+    {
+      "inv": {
+        "id": "r3-unique-draft-open",
+        "name": "One_Unsettled_Invoice_Per_Subscription",
+        "prior": 0.3,
+        "source": "seed",
+        "candidate": {
+          "kind": "unique",
+          "aggregate": "Invoice",
+          "whileStates": {
+            "region": "settlement",
+            "states": [
+              "draft",
+              "open"
+            ]
+          },
+          "by": [
+            [
+              "subscription"
+            ]
+          ]
+        }
+      },
+      "status": "pruned"
+    },
+    {
+      "inv": {
+        "id": "r3-unique-draft",
+        "name": "One_Draft_Invoice_Per_Subscription",
+        "prior": 0.25,
+        "source": "seed",
+        "candidate": {
+          "kind": "unique",
+          "aggregate": "Invoice",
+          "whileStates": {
+            "region": "settlement",
+            "states": [
+              "draft"
+            ]
+          },
+          "by": [
+            [
+              "subscription"
+            ]
+          ]
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "r4-seats-when-live",
+        "name": "Sanity_Seats_When_Live",
+        "prior": 0.35,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Subscription",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "le",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodStart"
+                  ]
+                },
+                "right": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodEnd"
+                  ]
+                }
+              },
+              {
+                "kind": "cmp",
+                "op": "ge",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "accruedUnits"
+                  ]
+                },
+                "right": {
+                  "kind": "int",
+                  "value": 0
+                }
+              },
+              {
+                "kind": "implies",
+                "left": {
+                  "kind": "inState",
+                  "owner": "self",
+                  "region": "lifecycle",
+                  "states": [
+                    "active",
+                    "past_due"
+                  ]
+                },
+                "right": {
+                  "kind": "cmp",
+                  "op": "ge",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "seats"
+                    ]
+                  },
+                  "right": {
+                    "kind": "int",
+                    "value": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r4b-subscription-sanity"
+    },
+    {
+      "inv": {
+        "id": "r4-seats-always",
+        "name": "Sanity_Seats_Always",
+        "prior": 0.3,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Subscription",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "le",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodStart"
+                  ]
+                },
+                "right": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodEnd"
+                  ]
+                }
+              },
+              {
+                "kind": "cmp",
+                "op": "ge",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "accruedUnits"
+                  ]
+                },
+                "right": {
+                  "kind": "int",
+                  "value": 0
+                }
+              },
+              {
+                "kind": "cmp",
+                "op": "ge",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "seats"
+                  ]
+                },
+                "right": {
+                  "kind": "int",
+                  "value": 1
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r4-seats-when-live"
+    },
+    {
+      "inv": {
+        "id": "r4-no-seat-rule",
+        "name": "Sanity_No_Seat_Rule",
+        "prior": 0.2,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Subscription",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "le",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodStart"
+                  ]
+                },
+                "right": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodEnd"
+                  ]
+                }
+              },
+              {
+                "kind": "cmp",
+                "op": "ge",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "accruedUnits"
+                  ]
+                },
+                "right": {
+                  "kind": "int",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r4-seats-when-live"
+    },
+    {
+      "inv": {
+        "id": "r4-strict-period",
+        "name": "Sanity_Strict_Period",
+        "prior": 0.15,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Subscription",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "lt",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodStart"
+                  ]
+                },
+                "right": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodEnd"
+                  ]
+                }
+              },
+              {
+                "kind": "cmp",
+                "op": "ge",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "accruedUnits"
+                  ]
+                },
+                "right": {
+                  "kind": "int",
+                  "value": 0
+                }
+              },
+              {
+                "kind": "implies",
+                "left": {
+                  "kind": "inState",
+                  "owner": "self",
+                  "region": "lifecycle",
+                  "states": [
+                    "active",
+                    "past_due"
+                  ]
+                },
+                "right": {
+                  "kind": "cmp",
+                  "op": "ge",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "seats"
+                    ]
+                  },
+                  "right": {
+                    "kind": "int",
+                    "value": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r4-seats-when-live"
+    },
+    {
+      "inv": {
+        "id": "r4b-subscription-sanity",
+        "name": "Positive_Period_NonNegative_Usage",
+        "prior": 0.9,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Subscription",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "lt",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodStart"
+                  ]
+                },
+                "right": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodEnd"
+                  ]
+                }
+              },
+              {
+                "kind": "cmp",
+                "op": "ge",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "accruedUnits"
+                  ]
+                },
+                "right": {
+                  "kind": "int",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "r5-allowance-overage-only",
+        "name": "Allowance_Only_In_Overage_Mode",
+        "prior": 0.4,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Plan",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "ge",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "includedUnits"
+                  ]
+                },
+                "right": {
+                  "kind": "int",
+                  "value": 0
+                }
+              },
+              {
+                "kind": "implies",
+                "left": {
+                  "kind": "cmp",
+                  "op": "eq",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "pricingMode"
+                    ]
+                  },
+                  "right": {
+                    "kind": "enumval",
+                    "enum": "UsagePricing",
+                    "value": "all_units"
+                  }
+                },
+                "right": {
+                  "kind": "cmp",
+                  "op": "eq",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "includedUnits"
+                    ]
+                  },
+                  "right": {
+                    "kind": "int",
+                    "value": 0
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r5b-nonneg-only"
+    },
+    {
+      "inv": {
+        "id": "r5-nonneg-only",
+        "name": "Allowance_NonNegative_Only",
+        "prior": 0.35,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Plan",
+          "body": {
+            "kind": "cmp",
+            "op": "ge",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "includedUnits"
+              ]
+            },
+            "right": {
+              "kind": "int",
+              "value": 0
+            }
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r5-allowance-overage-only"
+    },
+    {
+      "inv": {
+        "id": "r5-overage-needs-allowance",
+        "name": "Overage_Implies_Real_Allowance",
+        "prior": 0.25,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Plan",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "ge",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "includedUnits"
+                  ]
+                },
+                "right": {
+                  "kind": "int",
+                  "value": 0
+                }
+              },
+              {
+                "kind": "implies",
+                "left": {
+                  "kind": "cmp",
+                  "op": "eq",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "pricingMode"
+                    ]
+                  },
+                  "right": {
+                    "kind": "enumval",
+                    "enum": "UsagePricing",
+                    "value": "overage"
+                  }
+                },
+                "right": {
+                  "kind": "cmp",
+                  "op": "ge",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "includedUnits"
+                    ]
+                  },
+                  "right": {
+                    "kind": "int",
+                    "value": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r5c-overage-needs-allowance"
+    },
+    {
+      "inv": {
+        "id": "r5b-nonneg-only",
+        "name": "Allowance_NonNegative_Only",
+        "prior": 0.9,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Plan",
+          "body": {
+            "kind": "cmp",
+            "op": "ge",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "includedUnits"
+              ]
+            },
+            "right": {
+              "kind": "int",
+              "value": 0
+            }
+          }
+        }
+      },
+      "status": "merged",
+      "mergedInto": "r5c-overage-needs-allowance"
+    },
+    {
+      "inv": {
+        "id": "r5c-overage-needs-allowance",
+        "name": "Overage_Implies_Real_Allowance",
+        "prior": 0.95,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Plan",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "ge",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "includedUnits"
+                  ]
+                },
+                "right": {
+                  "kind": "int",
+                  "value": 0
+                }
+              },
+              {
+                "kind": "implies",
+                "left": {
+                  "kind": "cmp",
+                  "op": "eq",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "pricingMode"
+                    ]
+                  },
+                  "right": {
+                    "kind": "enumval",
+                    "enum": "UsagePricing",
+                    "value": "overage"
+                  }
+                },
+                "right": {
+                  "kind": "cmp",
+                  "op": "ge",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "includedUnits"
+                    ]
+                  },
+                  "right": {
+                    "kind": "int",
+                    "value": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "status": "adopted"
+    }
+  ],
+  "phase": "converged",
+  "regenAttempts": 0,
+  "alternativeAttempts": 2,
+  "probesAsked": {
+    "forbid": true,
+    "permit": true
+  },
+  "pendingWitnesses": {},
+  "witnessSeq": 9
+}

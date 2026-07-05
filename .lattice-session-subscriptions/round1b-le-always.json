@@ -1,0 +1,18 @@
+[
+  {
+    "id": "r1b-le-always",
+    "name": "TotalDue_At_Most_Parts",
+    "prior": 0.9,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Invoice",
+      "body": {
+        "kind": "cmp",
+        "op": "le",
+        "left": { "kind": "field", "owner": "self", "path": ["totalDue"] },
+        "right": { "kind": "plus", "left": { "kind": "field", "owner": "self", "path": ["licenseFeeAmount"] }, "right": { "kind": "field", "owner": "self", "path": ["usageAmount"] } }
+      }
+    }
+  }
+]

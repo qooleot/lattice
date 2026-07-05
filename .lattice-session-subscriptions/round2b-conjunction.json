@@ -1,0 +1,33 @@
+[
+  {
+    "id": "r2b-payment-rule",
+    "name": "Never_Overpaid_And_Paid_Exact",
+    "prior": 0.9,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Invoice",
+      "body": {
+        "kind": "and",
+        "args": [
+          {
+            "kind": "cmp",
+            "op": "le",
+            "left": { "kind": "field", "owner": "self", "path": ["amountPaid"] },
+            "right": { "kind": "field", "owner": "self", "path": ["totalDue"] }
+          },
+          {
+            "kind": "implies",
+            "left": { "kind": "inState", "owner": "self", "region": "settlement", "states": ["paid"] },
+            "right": {
+              "kind": "cmp",
+              "op": "eq",
+              "left": { "kind": "field", "owner": "self", "path": ["amountPaid"] },
+              "right": { "kind": "field", "owner": "self", "path": ["totalDue"] }
+            }
+          }
+        ]
+      }
+    }
+  }
+]

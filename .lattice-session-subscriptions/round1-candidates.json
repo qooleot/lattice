@@ -1,0 +1,63 @@
+[
+  {
+    "id": "r1-conservation-strict",
+    "name": "TotalDue_Equals_Parts_Always",
+    "prior": 0.4,
+    "source": "seed",
+    "candidate": {
+      "kind": "conservation",
+      "aggregate": "Invoice",
+      "parts": [["licenseFeeAmount"], ["usageAmount"]],
+      "total": ["totalDue"]
+    }
+  },
+  {
+    "id": "r1-conservation-finalized",
+    "name": "TotalDue_Equals_Parts_Once_Finalized",
+    "prior": 0.3,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Invoice",
+      "where": { "kind": "inState", "owner": "self", "region": "settlement", "states": ["open", "paid", "uncollectible"] },
+      "body": {
+        "kind": "cmp",
+        "op": "eq",
+        "left": { "kind": "field", "owner": "self", "path": ["totalDue"] },
+        "right": { "kind": "plus", "left": { "kind": "field", "owner": "self", "path": ["licenseFeeAmount"] }, "right": { "kind": "field", "owner": "self", "path": ["usageAmount"] } }
+      }
+    }
+  },
+  {
+    "id": "r1-discounts",
+    "name": "TotalDue_At_Most_Parts",
+    "prior": 0.15,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Invoice",
+      "body": {
+        "kind": "cmp",
+        "op": "le",
+        "left": { "kind": "field", "owner": "self", "path": ["totalDue"] },
+        "right": { "kind": "plus", "left": { "kind": "field", "owner": "self", "path": ["licenseFeeAmount"] }, "right": { "kind": "field", "owner": "self", "path": ["usageAmount"] } }
+      }
+    }
+  },
+  {
+    "id": "r1-surcharges",
+    "name": "TotalDue_At_Least_Parts",
+    "prior": 0.15,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Invoice",
+      "body": {
+        "kind": "cmp",
+        "op": "ge",
+        "left": { "kind": "field", "owner": "self", "path": ["totalDue"] },
+        "right": { "kind": "plus", "left": { "kind": "field", "owner": "self", "path": ["licenseFeeAmount"] }, "right": { "kind": "field", "owner": "self", "path": ["usageAmount"] } }
+      }
+    }
+  }
+]

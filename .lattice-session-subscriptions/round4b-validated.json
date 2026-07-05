@@ -1,0 +1,19 @@
+[
+  {
+    "id": "r4b-subscription-sanity",
+    "name": "Positive_Period_NonNegative_Usage",
+    "prior": 0.9,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Subscription",
+      "body": {
+        "kind": "and",
+        "args": [
+          { "kind": "cmp", "op": "lt", "left": { "kind": "field", "owner": "self", "path": ["periodStart"] }, "right": { "kind": "field", "owner": "self", "path": ["periodEnd"] } },
+          { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["accruedUnits"] }, "right": { "kind": "int", "value": 0 } }
+        ]
+      }
+    }
+  }
+]

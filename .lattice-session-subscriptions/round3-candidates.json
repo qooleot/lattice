@@ -1,0 +1,38 @@
+[
+  {
+    "id": "r3-unique-open",
+    "name": "One_Open_Invoice_Per_Subscription",
+    "prior": 0.45,
+    "source": "seed",
+    "candidate": {
+      "kind": "unique",
+      "aggregate": "Invoice",
+      "whileStates": { "region": "settlement", "states": ["open"] },
+      "by": [["subscription"]]
+    }
+  },
+  {
+    "id": "r3-unique-draft-open",
+    "name": "One_Unsettled_Invoice_Per_Subscription",
+    "prior": 0.3,
+    "source": "seed",
+    "candidate": {
+      "kind": "unique",
+      "aggregate": "Invoice",
+      "whileStates": { "region": "settlement", "states": ["draft", "open"] },
+      "by": [["subscription"]]
+    }
+  },
+  {
+    "id": "r3-unique-draft",
+    "name": "One_Draft_Invoice_Per_Subscription",
+    "prior": 0.25,
+    "source": "seed",
+    "candidate": {
+      "kind": "unique",
+      "aggregate": "Invoice",
+      "whileStates": { "region": "settlement", "states": ["draft"] },
+      "by": [["subscription"]]
+    }
+  }
+]

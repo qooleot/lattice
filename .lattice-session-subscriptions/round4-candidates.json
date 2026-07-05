@@ -1,0 +1,77 @@
+[
+  {
+    "id": "r4-seats-when-live",
+    "name": "Sanity_Seats_When_Live",
+    "prior": 0.35,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Subscription",
+      "body": {
+        "kind": "and",
+        "args": [
+          { "kind": "cmp", "op": "le", "left": { "kind": "field", "owner": "self", "path": ["periodStart"] }, "right": { "kind": "field", "owner": "self", "path": ["periodEnd"] } },
+          { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["accruedUnits"] }, "right": { "kind": "int", "value": 0 } },
+          { "kind": "implies",
+            "left": { "kind": "inState", "owner": "self", "region": "lifecycle", "states": ["active", "past_due"] },
+            "right": { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["seats"] }, "right": { "kind": "int", "value": 1 } } }
+        ]
+      }
+    }
+  },
+  {
+    "id": "r4-seats-always",
+    "name": "Sanity_Seats_Always",
+    "prior": 0.3,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Subscription",
+      "body": {
+        "kind": "and",
+        "args": [
+          { "kind": "cmp", "op": "le", "left": { "kind": "field", "owner": "self", "path": ["periodStart"] }, "right": { "kind": "field", "owner": "self", "path": ["periodEnd"] } },
+          { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["accruedUnits"] }, "right": { "kind": "int", "value": 0 } },
+          { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["seats"] }, "right": { "kind": "int", "value": 1 } }
+        ]
+      }
+    }
+  },
+  {
+    "id": "r4-no-seat-rule",
+    "name": "Sanity_No_Seat_Rule",
+    "prior": 0.2,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Subscription",
+      "body": {
+        "kind": "and",
+        "args": [
+          { "kind": "cmp", "op": "le", "left": { "kind": "field", "owner": "self", "path": ["periodStart"] }, "right": { "kind": "field", "owner": "self", "path": ["periodEnd"] } },
+          { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["accruedUnits"] }, "right": { "kind": "int", "value": 0 } }
+        ]
+      }
+    }
+  },
+  {
+    "id": "r4-strict-period",
+    "name": "Sanity_Strict_Period",
+    "prior": 0.15,
+    "source": "seed",
+    "candidate": {
+      "kind": "statePredicate",
+      "aggregate": "Subscription",
+      "body": {
+        "kind": "and",
+        "args": [
+          { "kind": "cmp", "op": "lt", "left": { "kind": "field", "owner": "self", "path": ["periodStart"] }, "right": { "kind": "field", "owner": "self", "path": ["periodEnd"] } },
+          { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["accruedUnits"] }, "right": { "kind": "int", "value": 0 } },
+          { "kind": "implies",
+            "left": { "kind": "inState", "owner": "self", "region": "lifecycle", "states": ["active", "past_due"] },
+            "right": { "kind": "cmp", "op": "ge", "left": { "kind": "field", "owner": "self", "path": ["seats"] }, "right": { "kind": "int", "value": 1 } } }
+        ]
+      }
+    }
+  }
+]
