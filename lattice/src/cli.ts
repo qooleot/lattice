@@ -8,7 +8,7 @@ import type { CandidateInvariant } from './ast/invariant.js';
 import { loadState, saveState, appendLedger, readLedger, type SessionState } from './engine/session.js';
 import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
-import { nextQuestion, checkDistinct, type SolverDeps } from './engine/planner.js';
+import { nextQuestion, checkDistinct, adoptedConstraints, type SolverDeps } from './engine/planner.js';
 import { renderWitnessTable } from './engine/salient.js';
 import { astToAlloy } from './emit/alloy.js';
 import { astToQuint } from './emit/quint.js';
@@ -151,7 +151,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         const inv: CandidateInvariant = { ...raw, source };
         if (source === 'alternative') {
           const survivor = s.candidates.find(c => c.status === 'active');
-          if (survivor && !(await checkDistinct(survivor.inv.candidate, inv.candidate, model(), deps))) {
+          if (survivor && !(await checkDistinct(survivor.inv.candidate, inv.candidate, model(), deps, adoptedConstraints(s)))) {
             s.alternativeAttempts++;
             return done({ ok: false, reason: 'equivalent to survivor over scope', attemptsLeft: 2 - s.alternativeAttempts });
           }

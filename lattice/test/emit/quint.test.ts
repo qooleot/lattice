@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { astToQuint } from '../../src/emit/quint.js';
-import { traceBModel, graceCandidate } from '../fixtures.js';
+import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap } from '../fixtures.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 
 describe('astToQuint', () => {
@@ -52,5 +52,28 @@ describe('astToQuint', () => {
     ]], maxSteps: 8 });
     expect(p.source).toContain('val q_inv = Hi or shape0');
     expect(p.source).toContain('x.Access_state == "Active"');
+  });
+
+  // Regression (live session .lattice-session-subscriptions): quint-routed queries must constrain
+  // witnesses to states that satisfy already-ADOPTED invariants, even alloy-routed kinds like
+  // `unique` — otherwise the solver can present a composite-invalid witness (two Draft invoices
+  // for one subscription) that forces the human into a corrupting verdict: a faithful `forbid`
+  // prunes a live candidate whose subject matter is unrelated, `permit` contradicts the earlier
+  // adoption. The adopted constraint is conjoined as `adoptedAll implies q_inv`, so a violation
+  // (= a witness) must additionally satisfy every adopted invariant.
+  it('conjoins adopted invariants — a violation must satisfy an adopted alloy-routed unique', () => {
+    const p = astToQuint(invoicingModel, { kind: 'distinguish', hi: graceCap(72), hj: graceCap(24),
+      exclusions: [], adopted: [draftInvoiceUnique], maxSteps: 8 });
+    expect(p.source).toContain('val adopted0 = invoices.keys().forall(k1 => invoices.keys().forall(k2 =>');
+    expect(p.source).toContain('invoices.get(k1).Lifecycle_state == "Draft"');
+    expect(p.source).toContain('invoices.get(k1).subscription == invoices.get(k2).subscription');
+    expect(p.source).toContain('val q_inv = (adopted0) implies (iff(Hi, Hj))');
+  });
+  it('adopted invariants also wrap probe queries; no adopted ⇒ q_inv unchanged', () => {
+    const p = astToQuint(invoicingModel, { kind: 'probe-forbid', hi: graceCap(72),
+      exclusions: [], adopted: [draftInvoiceUnique], maxSteps: 8 });
+    expect(p.source).toContain('val q_inv = (adopted0) implies (Hi)');
+    const bare = astToQuint(invoicingModel, { kind: 'probe-forbid', hi: graceCap(72), exclusions: [], maxSteps: 8 });
+    expect(bare.source).toContain('val q_inv = Hi');
   });
 });

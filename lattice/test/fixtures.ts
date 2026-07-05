@@ -54,6 +54,40 @@ export const graceCandidate = (withGrace: boolean): Candidate => ({
         : { kind: 'field', owner: 'self', path: ['invoice', 'dueDate'] } } }
 });
 
+// Mirrors the live `.lattice-session-subscriptions` shape that exposed the adopted-invariant
+// leak: Invoice drafts reference a Subscription, and an adopted `unique` invariant forbids two
+// Draft invoices for the same subscription — while the elicitation loop is still distinguishing
+// unrelated Subscription statePredicate candidates on the quint route.
+export const invoicingModel: DomainModel = {
+  context: 'Invoicing', ticksPerDay: 24,
+  enums: [],
+  entities: [],
+  aggregates: [
+    { kind: 'aggregate', name: 'Subscription', fields: [
+      { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'grace', type: { kind: 'prim', prim: 'Duration' } }],
+      machine: { regions: [{ name: 'Access', initial: 'Trialing', states: [
+        { name: 'Trialing' }, { name: 'Active', tags: ['active'] }, { name: 'Ended', tags: ['terminal'] }] }], transitions: [] } },
+    { kind: 'aggregate', name: 'Invoice', fields: [
+      { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'subscription', type: { kind: 'ref', target: 'Subscription' } }],
+      machine: { regions: [{ name: 'Lifecycle', initial: 'Draft', states: [
+        { name: 'Draft' }, { name: 'Finalized', tags: ['terminal'] }] }], transitions: [] } }
+  ],
+  events: []
+};
+
+export const draftInvoiceUnique: Candidate = { kind: 'unique', aggregate: 'Invoice',
+  whileStates: { region: 'Lifecycle', states: ['Draft'] }, by: [['subscription']] };
+
+// Two quint-routed (arith cmp) Subscription candidates whose subject matter is unrelated to
+// Invoice uniqueness — distinguishable at grace = 72 (le 72 holds, le 24 fails).
+export const graceCap = (hours: number): Candidate => ({
+  kind: 'statePredicate', aggregate: 'Subscription',
+  where: { kind: 'inState', owner: 'self', region: 'Access', states: ['Active'] },
+  body: { kind: 'cmp', op: 'le', left: { kind: 'field', owner: 'self', path: ['grace'] }, right: { kind: 'int', value: hours } }
+});
+
 export const revrecModel: DomainModel = {
   context: 'RevRec', ticksPerDay: 24,
   enums: [{ name: 'EntryKind', values: ['Recognition', 'Correction'] }, { name: 'PeriodState', values: ['Open', 'Closed'] }],

@@ -3,7 +3,7 @@ import { nextQuestion, checkDistinct } from '../../src/engine/planner.js';
 import { registerCandidates, pruneOnVerdict, admit } from '../../src/engine/hypothesis.js';
 import { newSession, type LedgerEntry, type SessionState } from '../../src/engine/session.js';
 import { extractSalient } from '../../src/engine/salient.js';
-import { traceAModel, traceBModel, graceCandidate } from '../fixtures.js';
+import { traceAModel, traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap } from '../fixtures.js';
 import type { CandidateInvariant } from '../../src/ast/invariant.js';
 import type { CaseState } from '../../src/engine/evaluate.js';
 
@@ -224,6 +224,51 @@ describe('planner — trace A logic with fake solvers', () => {
     expect(capturedExclusions.length).toBeGreaterThan(0);
     const dims = capturedExclusions.flatMap((facts: any[]) => facts.map(f => f.dim));
     expect(dims).toContain('Access.state = Active');
+  });
+
+  // Regression coverage (live session .lattice-session-subscriptions): every solver query must
+  // carry the session's adopted invariants so witnesses can't land in states the human already
+  // ruled out — filtered per engine to the kinds that engine's emitter can express as a state
+  // constraint. Trace-history kinds (terminal/monotonic/leadsTo) and refsResolve are state-
+  // inexpressible and must be filtered out, not crash the emitter.
+  it('passes adopted invariants to quint queries, filtering state-inexpressible kinds', async () => {
+    const s = newSession(); s.phase = 'distinguish';
+    s.candidates.push(
+      { inv: { id: 'A0', name: 'A0', prior: 1, source: 'template', candidate: draftInvoiceUnique }, status: 'adopted' },
+      { inv: { id: 'A1', name: 'A1', prior: 1, source: 'template',
+        candidate: { kind: 'terminal', aggregate: 'Subscription', region: 'Access', state: 'Ended' } }, status: 'adopted' });
+    registerCandidates(s, [
+      { id: 'G72', name: 'G72', prior: 0.6, source: 'seed', candidate: graceCap(72) },
+      { id: 'G24', name: 'G24', prior: 0.5, source: 'seed', candidate: graceCap(24) }]);
+    let captured: any;
+    const deps: any = {
+      alloy: async () => { throw new Error('arith statePredicates route to quint'); },
+      quint: async (_m: unknown, q: any) => { captured = q.adopted; return { violated: false, ms: 1 }; }
+    };
+    await nextQuestion(s, [], invoicingModel, deps);
+    expect(captured).toEqual([draftInvoiceUnique]);
+  });
+  it('passes adopted invariants to alloy queries, filtering only what alloy cannot express (`now`)', async () => {
+    const s = newSession(); s.phase = 'distinguish';
+    // Non-negative Money template: arith routes it to QUINT for solving, but Alloy can still
+    // EXPRESS it as a constraint (`termToAlloy` handles int/plus; only `now` throws) — so it must
+    // be conjoined, or alloy witnesses could show negative balances the human already ruled out.
+    const nonNeg: CandidateInvariant = { id: 'A0', name: 'A0', prior: 1, source: 'template',
+      candidate: { kind: 'statePredicate', aggregate: 'Subscription',
+        body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['grace'] }, right: { kind: 'int', value: 0 } } } };
+    const deadline: CandidateInvariant = { id: 'A2', name: 'A2', prior: 1, source: 'template',
+      candidate: { kind: 'statePredicate', aggregate: 'Subscription',
+        body: { kind: 'cmp', op: 'le', left: { kind: 'now' }, right: { kind: 'field', owner: 'self', path: ['grace'] } } } };
+    s.candidates.push({ inv: nonNeg, status: 'adopted' }, { inv: deadline, status: 'adopted' },
+      { inv: mkU('A1', [['plan']], 1), status: 'adopted' });
+    registerCandidates(s, [H1, H2]);
+    let captured: any;
+    const deps: any = {
+      alloy: async (_m: unknown, q: any) => { captured = q.adopted; return { sat: true, instances: [dpsf], ms: 1 }; },
+      quint: async () => { throw new Error('unique pairs route to alloy'); }
+    };
+    await nextQuestion(s, [], traceAModel, deps);
+    expect(captured).toEqual([nonNeg.candidate, mkU('A1', [['plan']], 1).candidate]);
   });
 
   // Regression coverage: Alloy's own enumeration order is first-SAT-found, not "most minimal" —

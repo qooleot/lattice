@@ -1,4 +1,4 @@
-import type { Candidate } from '../ast/invariant.js';
+import type { Candidate, Predicate, Term } from '../ast/invariant.js';
 import type { DomainModel } from '../ast/domain.js';
 import { routeCandidate } from '../ast/grammar.js';
 import type { AlloyQuery } from '../emit/alloy.js';
@@ -54,10 +54,43 @@ function byMinimalSize(witnesses: CaseState[]): CaseState[] {
   return [...witnesses].sort((a, b) => a.entities.length - b.entities.length);
 }
 
+// Every query must carry the session's already-ADOPTED invariants so the solver can't present a
+// witness in a state the human has already ruled out (live bug: after adopting a `unique` on
+// Invoice drafts, a quint distinguish for unrelated Subscription candidates returned two Draft
+// invoices for one subscription — a faithful `forbid` would prune a correct live candidate,
+// `permit` would contradict the adoption). Filtered per engine to what its emitter can express
+// as a state constraint:
+//  - quint: statePredicate/conservation/cardinality/unique. Trace-history kinds (terminal,
+//    monotonic, leadsTo) are path properties a single-state constraint can't encode; refsResolve
+//    mis-evaluates on quint's pool-drawn refs (see UNELICITABLE_KINDS in cli.ts).
+//  - alloy: unique/cardinality, and statePredicates not mentioning `now` (termToAlloy's only hard
+//    inexpressible). Note this is EXPRESSIBILITY, not routeCandidate's solving preference: an
+//    arith `ge 0` statePredicate routes to quint as a query subject but is still a fine alloy
+//    constraint. conservation stays quint-only (candidateToPred has no rendering for it).
+export function expressibleAdopted(engine: 'alloy' | 'quint', adopted: Candidate[]): Candidate[] {
+  const termHasNow = (t: Term): boolean => t.kind === 'now' || (t.kind === 'plus' && (termHasNow(t.left) || termHasNow(t.right)));
+  const predHasNow = (p: Predicate): boolean => {
+    switch (p.kind) {
+      case 'cmp': return termHasNow(p.left) || termHasNow(p.right);
+      case 'inState': return false;
+      case 'and': case 'or': return p.args.some(predHasNow);
+      case 'not': return predHasNow(p.arg);
+      case 'implies': return predHasNow(p.left) || predHasNow(p.right);
+    }
+  };
+  if (engine === 'quint') return adopted.filter(c => ['statePredicate', 'conservation', 'cardinality', 'unique'].includes(c.kind));
+  return adopted.filter(c => c.kind === 'unique' || c.kind === 'cardinality' ||
+    (c.kind === 'statePredicate' && !(c.where ? predHasNow(c.where) : false) && !predHasNow(c.body)));
+}
+export const adoptedConstraints = (s: SessionState): Candidate[] =>
+  s.candidates.filter(c => c.status === 'adopted').map(c => c.inv.candidate);
+
 async function solve(m: DomainModel, hi: Candidate, hj: Candidate | undefined,
-  kind: 'distinguish' | 'probe-forbid' | 'probe-permit', exclusions: SalientFact[][], deps: SolverDeps, max: number,
+  kind: 'distinguish' | 'probe-forbid' | 'probe-permit', exclusions: SalientFact[][],
+  allAdopted: Candidate[], deps: SolverDeps, max: number,
 ): Promise<{ witnesses: CaseState[]; ms: number }> {
   const engine = hj && routeCandidate(hj) === 'quint' ? 'quint' : routeCandidate(hi);
+  const adopted = expressibleAdopted(engine, allAdopted);
   if (engine === 'alloy') {
     // Boundary probes first ask for a witness that also varies a domain field the candidate
     // itself ignores (see AlloyQuery.varyUnreferenced) — more thorough, but that extra
@@ -66,25 +99,26 @@ async function solve(m: DomainModel, hi: Candidate, hj: Candidate | undefined,
     // nudge is a best-effort quality improvement, never a correctness requirement.
     const isProbe = kind === 'probe-forbid' || kind === 'probe-permit';
     if (isProbe) {
-      const r1 = await deps.alloy(m, { kind, hi, hj, exclusions, scope: 4, varyUnreferenced: true }, max);
+      const r1 = await deps.alloy(m, { kind, hi, hj, exclusions, adopted, scope: 4, varyUnreferenced: true }, max);
       if (r1.sat) return { witnesses: byMinimalSize(r1.instances), ms: r1.ms };
-      const r = await deps.alloy(m, { kind, hi, hj, exclusions, scope: 4 }, max);
+      const r = await deps.alloy(m, { kind, hi, hj, exclusions, adopted, scope: 4 }, max);
       return { witnesses: r.sat ? byMinimalSize(r.instances) : [], ms: r1.ms + r.ms };
     }
-    const r = await deps.alloy(m, { kind, hi, hj, exclusions, scope: 4 }, max);
+    const r = await deps.alloy(m, { kind, hi, hj, exclusions, adopted, scope: 4 }, max);
     return { witnesses: r.sat ? byMinimalSize(r.instances) : [], ms: r.ms };
   }
-  const r = await deps.quint(m, { kind, hi, hj, exclusions, maxSteps: 10 });
+  const r = await deps.quint(m, { kind, hi, hj, exclusions, adopted, maxSteps: 10 });
   return { witnesses: r.violated && r.witness ? [r.witness] : [], ms: r.ms };
 }
 
-export async function checkDistinct(survivor: Candidate, alt: Candidate, m: DomainModel, deps: SolverDeps): Promise<boolean> {
-  const { witnesses } = await solve(m, survivor, alt, 'distinguish', [], deps, 1);
+export async function checkDistinct(survivor: Candidate, alt: Candidate, m: DomainModel, deps: SolverDeps, adopted: Candidate[] = []): Promise<boolean> {
+  const { witnesses } = await solve(m, survivor, alt, 'distinguish', [], adopted, deps, 1);
   return witnesses.length > 0;
 }
 
 export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: DomainModel, deps: SolverDeps): Promise<PlannerOutput> {
   const active = () => activeCandidates(s);
+  const adopted = adoptedConstraints(s);
 
   // 1. Distinguish highest-combined-prior separable pair
   while (active().length >= 2) {
@@ -93,7 +127,7 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
     for (let i = 0; i < sorted.length && !advanced; i++) for (let j = i + 1; j < sorted.length; j++) {
       const [a, b] = [sorted[i]!, sorted[j]!];
       const exclusions = exclusionsFrom(ledger, [a.inv.candidate, b.inv.candidate]);
-      const { witnesses, ms } = await solve(m, a.inv.candidate, b.inv.candidate, 'distinguish', exclusions, deps, 5);
+      const { witnesses, ms } = await solve(m, a.inv.candidate, b.inv.candidate, 'distinguish', exclusions, adopted, deps, 5);
       if (witnesses.length === 0) {                          // equivalent over scope ⇒ merge, never ask
         const [win, lose] = a.inv.prior >= b.inv.prior ? [a, b] : [b, a];
         lose.status = 'merged'; lose.mergedInto = win.inv.id;
@@ -138,7 +172,7 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
   const probeExclusionsSafe = H.inv.candidate.kind === 'statePredicate' || H.inv.candidate.kind === 'conservation';
   if (apriori && !s.probesAsked.forbid) {
     const exclusions = probeExclusionsSafe ? exclusionsFrom(ledger, [H.inv.candidate]) : [];
-    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-forbid', exclusions, deps, 3);
+    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-forbid', exclusions, adopted, deps, 3);
     s.probesAsked.forbid = true;
     if (witnesses.length > 0) {
       s.phase = 'probe-forbid';
@@ -154,7 +188,7 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
   const hasPermitEvidence = verdicts(ledger).some(v => v.judge === 'permit' && evaluateCandidate(H.inv.candidate, v.witness) === 'permit');
   if (apriori && !s.probesAsked.permit && !hasPermitEvidence) {
     const exclusions = probeExclusionsSafe ? exclusionsFrom(ledger, [H.inv.candidate]) : [];
-    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-permit', exclusions, deps, 3);
+    const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-permit', exclusions, adopted, deps, 3);
     s.probesAsked.permit = true;
     if (witnesses.length > 0) {
       s.phase = 'probe-permit';

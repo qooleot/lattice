@@ -77,4 +77,24 @@ describe('astToAlloy', () => {
     expect(als).toContain('a.Access_state = Subscription_Access_Active');
     expect(als).not.toContain('a.Access.state');
   });
+
+  // Regression (live session .lattice-session-subscriptions, quint side; Alloy had the same
+  // hole): solver queries must constrain witnesses to satisfy already-adopted invariants, or the
+  // human is shown composite-invalid states they already ruled out. Adopted candidates arrive on
+  // the query and are conjoined as extra preds in the run body.
+  it('conjoins adopted invariant preds into the run body', () => {
+    const als = astToAlloy(traceAModel, { kind: 'distinguish', hi: h1, hj: h2, exclusions: [], scope: 4, adopted: [h2] });
+    expect(als).toContain('pred Adopted0');
+    expect(als).toContain('run q { ((Hi and not Hj) or (not Hi and Hj)) and Adopted0 } for 4 but 5 Int');
+  });
+  // Alloy's `and` binds tighter than `or`: conjoining exclusions onto the distinguish disjunction
+  // without parenthesizing it scoped them to the second disjunct only — `A or B and C` is
+  // `A or (B and C)`, so a witness matching an excluded shape could still be returned via the
+  // `(Hi and not Hj)` side. The disjunctive body must be wrapped before conjoining.
+  it('distinguish exclusions apply to both disjuncts, not just the second (and/or precedence)', () => {
+    const als = astToAlloy(traceAModel, { kind: 'distinguish', hi: h1, hj: h2, exclusions: [[
+      { dim: 'customer equal', value: true }
+    ]], scope: 4 });
+    expect(als).toContain('run q { ((Hi and not Hj) or (not Hi and Hj)) and (not shape0) } for 4 but 5 Int');
+  });
 });

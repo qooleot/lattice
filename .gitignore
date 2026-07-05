@@ -3,7 +3,7 @@ lattice/node_modules/
 lattice/dist/
 lattice/vendor/*.jar
 lattice/vendor/*.class
-lattice/vendor/jdk/
+lattice/vendor/jdk
 lattice/.lattice-session*/
 lattice/_apalache-out/
 .superpowers/

@@ -2,7 +2,19 @@ import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.
 import type { Candidate, Cmp, Path, Predicate, Term } from '../ast/invariant.js';
 import type { SalientFact } from '../engine/session.js';
 
-export interface QuintQuery { kind: 'distinguish' | 'probe-forbid' | 'probe-permit'; hi: Candidate; hj?: Candidate; exclusions: SalientFact[][]; maxSteps: number }
+export interface QuintQuery {
+  kind: 'distinguish' | 'probe-forbid' | 'probe-permit';
+  hi: Candidate; hj?: Candidate;
+  exclusions: SalientFact[][];
+  // Already-ADOPTED invariants (any kind the emitter can express as a state constraint — the
+  // planner filters; see expressibleAdopted). Conjoined as `adoptedAll implies q_inv`, so every
+  // witness (= violation of q_inv) additionally satisfies the adopted spec. Without this, the
+  // solver can surface a composite-invalid state (e.g. two Draft invoices for one subscription
+  // after a `unique` adoption) and force the human into a corrupting verdict: a faithful `forbid`
+  // prunes a live candidate whose subject matter is unrelated, `permit` contradicts the adoption.
+  adopted?: Candidate[];
+  maxSteps: number;
+}
 export interface QuintEmission { source: string; invariantName: string; varTypes: Record<string, string> }
 
 const varName = (n: string) => n.charAt(0).toLowerCase() + n.slice(1) + 's';
@@ -133,6 +145,20 @@ function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
     const guard = c.where ? predToQuint(m, c.where, 'x', c.aggregate) : 'true';
     return `val ${name} = ${v}.keys().filter(k => { val x = ${v}.get(k) x.exists and (${guard}) }).size() <= ${c.atMost}`;
   }
+  if (c.kind === 'unique') {
+    // Alloy-routed as a query subject, but needed here as an ADOPTED constraint (QuintQuery.
+    // adopted) so quint witnesses can't violate an adoption like One_Draft_Invoice_Per_
+    // Subscription. Pairwise over map keys, inlined `get()`s (no block-vals — one line per pred).
+    // Ref-hop existence gates the by-key comparison the same way predToQuint's cmp case gates
+    // reads through refs: a key read through a never-created record is not a real fact and must
+    // not convict the pair.
+    const rec = (k: string) => `${v}.get(${k})`;
+    const inS = (k: string) => '(' + c.whileStates.states.map(st => `${rec(k)}.${c.whileStates.region}_state == "${st}"`).join(' or ') + ')';
+    const hops = [...new Set(c.by.flatMap(p => [...refHopsIn(m, p, rec('k1'), c.aggregate), ...refHopsIn(m, p, rec('k2'), c.aggregate)]))];
+    const eqs = c.by.map(p => `(${pathToQuint(m, p, rec('k1'), c.aggregate)} == ${pathToQuint(m, p, rec('k2'), c.aggregate)})`);
+    const collides = [`${rec('k1')}.exists`, `${rec('k2')}.exists`, inS('k1'), inS('k2'), ...hops.map(h => `${h}.exists`), ...eqs].join(' and ');
+    return `val ${name} = ${v}.keys().forall(k1 => ${v}.keys().forall(k2 => k1 == k2 or not(${collides})))`;
+  }
   throw new Error(`${c.kind} is never solver-queried on quint in slice-1 (template auto-adopt only)`);
 }
 
@@ -222,10 +248,17 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
   const preds: string[] = [candidateToQuint(m, q.hi, 'Hi')];
   if (q.hj) preds.push(candidateToQuint(m, q.hj, 'Hj'));
   q.exclusions.forEach((facts, i) => preds.push(shapeToQuint(m, facts, [q.hi, ...(q.hj ? [q.hj] : [])], `shape${i}`)));
+  const adopted = q.adopted ?? [];
+  adopted.forEach((c, i) => preds.push(candidateToQuint(m, c, `adopted${i}`)));
   const shapes = q.exclusions.map((_, i) => `shape${i}`);
-  const inv = q.kind === 'distinguish' ? ['iff(Hi, Hj)', ...shapes].join(' or ')
+  const bare = q.kind === 'distinguish' ? ['iff(Hi, Hj)', ...shapes].join(' or ')
     : q.kind === 'probe-forbid' ? ['Hi', ...shapes].join(' or ')
     : `not(${['Hi', ...shapes.map(s => `not(${s})`)].join(' and ')})`;
+  // A violation of `adoptedAll implies bare` is a state satisfying every adopted invariant AND
+  // violating the bare query — witnesses stay inside the spec the human has already committed to
+  // (see QuintQuery.adopted). Only the violating (last, presented) state is so constrained;
+  // intermediate trace states are not, which is all the elicitation UI shows.
+  const inv = adopted.length ? `(${adopted.map((_, i) => `adopted${i}`).join(' and ')}) implies (${bare})` : bare;
   preds.push(`val q_inv = ${inv}`);
 
   const actionNames = actions.map(a => a.split(' ')[1]!);

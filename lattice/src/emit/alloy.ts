@@ -6,6 +6,10 @@ export interface AlloyQuery {
   kind: 'distinguish' | 'probe-forbid' | 'probe-permit';
   hi: Candidate; hj?: Candidate;
   exclusions: SalientFact[][];
+  // Already-ADOPTED invariants, conjoined into every run body so witnesses can't land in states
+  // the adopted spec forbids (the planner filters to kinds this emitter can express — see
+  // expressibleAdopted in planner.ts, and QuintQuery.adopted for the corrupting-verdict rationale).
+  adopted?: Candidate[];
   scope: number;
   // Boundary probes ask the solver for "any" witness to a single candidate's own predicate;
   // when the candidate ignores a domain field entirely (e.g. a uniqueness key that doesn't
@@ -189,8 +193,13 @@ export function astToAlloy(m: DomainModel, q: AlloyQuery): string {
   parts.push(candidateToPred(q.hi, 'Hi'));
   if (q.hj) parts.push(candidateToPred(q.hj, 'Hj'));
   q.exclusions.forEach((facts, i) => parts.push(shapeToPred(facts, q.hi, `shape${i}`)));
-  const notShapes = q.exclusions.map((_, i) => `(not shape${i})`).join(' and ');
-  const withShapes = (body: string) => notShapes ? `${body} and ${notShapes}` : body;
+  (q.adopted ?? []).forEach((c, i) => parts.push(candidateToPred(c, `Adopted${i}`)));
+  // Alloy's `and` binds tighter than `or`, so a disjunctive body (the distinguish query) must be
+  // parenthesized before conjoining extras — `A or B and C` scopes C to B only, which silently
+  // limited exclusions to the `(not Hi and Hj)` disjunct.
+  const guard = (body: string) => body.includes(' or ') ? `(${body})` : body;
+  const extras = [...q.exclusions.map((_, i) => `(not shape${i})`), ...(q.adopted ?? []).map((_, i) => `Adopted${i}`)];
+  const constrain = (body: string) => extras.length ? [guard(body), ...extras].join(' and ') : body;
 
   // See AlloyQuery.varyUnreferenced: nudge probes toward a witness that also varies a domain
   // field the candidate itself doesn't look at, so the human sees a maximally informative case
@@ -204,8 +213,8 @@ export function astToAlloy(m: DomainModel, q: AlloyQuery): string {
 
   const wrapVary = (body: string) => varyClause ? `some disj a, b: ${(q.hi as { aggregate: string }).aggregate} | ${body}${varyClause}` : body;
 
-  if (q.kind === 'distinguish') parts.push(`run q { ${withShapes('(Hi and not Hj) or (not Hi and Hj)')} } for ${q.scope} but 5 Int`);
-  else if (q.kind === 'probe-forbid') parts.push(`run q { ${wrapVary(withShapes('(not Hi)'))} } for ${q.scope} but 5 Int`);
-  else { parts.push(nonVacuousPred(q.hi)); parts.push(`run q { ${wrapVary(withShapes('Hi and nonVacuous'))} } for ${q.scope} but 5 Int`); }
+  if (q.kind === 'distinguish') parts.push(`run q { ${constrain('(Hi and not Hj) or (not Hi and Hj)')} } for ${q.scope} but 5 Int`);
+  else if (q.kind === 'probe-forbid') parts.push(`run q { ${wrapVary(constrain('(not Hi)'))} } for ${q.scope} but 5 Int`);
+  else { parts.push(nonVacuousPred(q.hi)); parts.push(`run q { ${wrapVary(constrain('Hi and nonVacuous'))} } for ${q.scope} but 5 Int`); }
   return parts.join('\n\n') + '\n';
 }
