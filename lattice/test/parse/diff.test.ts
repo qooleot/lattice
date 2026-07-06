@@ -1,0 +1,79 @@
+import { describe, it, expect } from 'vitest';
+import { diffModels, ledgerReferences } from '../../src/parse/diff.js';
+import type { DomainModel } from '../../src/ast/domain.js';
+import type { CandidateInvariant } from '../../src/ast/invariant.js';
+import type { LedgerEntry } from '../../src/engine/session.js';
+
+const mk = (name: string, field: string): DomainModel => ({
+  context: 'C', enums: [], events: [], entities: [],
+  aggregates: [{ kind: 'aggregate', name, fields: [
+    { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+    { name: field, type: { kind: 'prim', prim: 'Int' } }],
+    machine: { regions: [{ name: 'r', initial: 's1', states: [{ name: 's1' }, { name: 's2', tags: ['terminal'] }] }], transitions: [] } }],
+});
+const inv = (name: string, field: string): CandidateInvariant => ({
+  id: `hand-${name}`, name, prior: 1, source: 'template',
+  candidate: { kind: 'statePredicate', aggregate: 'Job',
+    body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [field] }, right: { kind: 'int', value: 0 } } } });
+
+const ledger: LedgerEntry[] = [
+  { kind: 'verdict', at: '2026-07-05T00:00:00Z', witnessId: 'w1', judge: 'permit', question: '',
+    witness: { entities: [{ type: 'Job', id: 'j1', fields: { units: 3, 'r.state': 's1' } }] }, salient: [] },
+  { kind: 'adopted', at: '2026-07-05T00:00:00Z', invariant: inv('unitsSane', 'units'), provenance: 'elicited (w1)' },
+];
+
+describe('ledgerReferences', () => {
+  const stored = mk('Job', 'units');
+  it('finds field references in witnesses', () => {
+    expect(ledgerReferences({ scope: 'field', path: 'Job.units', from: 'units', to: 'n' }, ledger)).toEqual(['w1']);
+    expect(ledgerReferences({ scope: 'field', path: 'Job.other', from: 'other', to: 'n' }, ledger)).toEqual([]);
+  });
+  it('finds state and type and invariant references', () => {
+    expect(ledgerReferences({ scope: 'state', path: 'Job.r.s1', from: 's1', to: 'x' }, ledger)).toEqual(['w1']);
+    expect(ledgerReferences({ scope: 'aggregate', path: 'Job', from: 'Job', to: 'Task' }, ledger)).toEqual(['w1']);
+    expect(ledgerReferences({ scope: 'invariant', path: 'unitsSane', from: 'unitsSane', to: 'x' }, ledger))
+      .toEqual(['adopted:unitsSane']);
+    expect(ledgerReferences({ scope: 'transition', path: 'Job.t', from: 't', to: 'x' }, ledger)).toEqual([]);
+  });
+});
+
+describe('diffModels', () => {
+  const before = { model: mk('Job', 'units'), canonical: [inv('unitsSane', 'units')] };
+
+  it('detects ledger-referenced field rename as a proposal, not delete+add', () => {
+    const d = diffModels(before, { model: mk('Job', 'usedUnits'), canonical: [inv('unitsSane', 'usedUnits')] }, ledger, before.model);
+    expect(d.renameProposals).toEqual([{ scope: 'field', path: 'Job.units', from: 'units', to: 'usedUnits' }]);
+    // the invariant body changed only via the renamed path — after rename confirmation reconcile
+    // re-diffs; at this layer it still reports the body change:
+    expect(d.changedInvariants.map(c => c.name)).toEqual(['unitsSane']);
+  });
+
+  it('unreferenced delete+add stays structural', () => {
+    const quiet: LedgerEntry[] = [];
+    const d = diffModels(before, { model: mk('Job', 'usedUnits'), canonical: [inv('unitsSane', 'usedUnits')] }, quiet, before.model);
+    expect(d.renameProposals).toEqual([]);
+    expect(d.structuralNotes.join(' ')).toContain('usedUnits');
+  });
+
+  it('detects invariant rename by identical candidate', () => {
+    const d = diffModels(before, { model: before.model, canonical: [inv('unitsStaySane', 'units')] }, ledger, before.model);
+    expect(d.renameProposals).toEqual([{ scope: 'invariant', path: 'unitsSane', from: 'unitsSane', to: 'unitsStaySane' }]);
+    expect(d.addedInvariants).toEqual([]);
+    expect(d.removedInvariants).toEqual([]);
+  });
+
+  it('reports added/changed/removed invariants by name', () => {
+    const extra = inv('another', 'units');
+    const changed = { ...inv('unitsSane', 'units'), candidate: { kind: 'refsResolve' as const, aggregate: 'Job' } };
+    const d = diffModels(before, { model: before.model, canonical: [changed, extra] }, [], before.model);
+    expect(d.addedInvariants.map(i => i.name)).toEqual(['another']);
+    expect(d.changedInvariants.map(c => c.name)).toEqual(['unitsSane']);
+  });
+
+  it('doc-only change is not a changedInvariant', () => {
+    const docd = { ...inv('unitsSane', 'units'), doc: 'now documented' };
+    const d = diffModels(before, { model: before.model, canonical: [docd] }, [], before.model);
+    expect(d.changedInvariants).toEqual([]);
+    expect(d.addedInvariants).toEqual([]);
+  });
+});
