@@ -64,8 +64,11 @@ const cmpOps: Cmp[] = ['eq', 'ne', 'lt', 'le', 'gt', 'ge'];
 function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[], depth: number): fc.Arbitrary<Predicate> {
   const numFields = agg.fields.filter(f => f.type.kind === 'prim' && ['Int', 'Money', 'Date', 'Duration'].includes((f.type as any).prim));
   const enumFields = agg.fields.filter(f => f.type.kind === 'enum');
+  // No fallback to agg.fields when there are no numeric fields: the remaining fields are key /
+  // Text/Id (out-of-grammar as paths — see `representable`) or enums (covered by cmpEnum below),
+  // so field terms are simply omitted and cmpNum draws from int/now terms only.
   const term: fc.Arbitrary<Term> = fc.oneof(
-    fc.constantFrom(...(numFields.length ? numFields : agg.fields)).map(f => ({ kind: 'field' as const, owner: 'self', path: [f.name] })),
+    ...(numFields.length ? [fc.constantFrom(...numFields).map(f => ({ kind: 'field' as const, owner: 'self' as const, path: [f.name] }))] : []),
     fc.integer({ min: 0, max: 999 }).map(value => ({ kind: 'int' as const, value })),
     fc.constant({ kind: 'now' as const }));
   const sum: fc.Arbitrary<Term> = fc.oneof({ weight: 4, arbitrary: term },
@@ -93,8 +96,15 @@ function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[],
     { weight: 1, arbitrary: fc.tuple(sub, sub).map(([left, right]) => ({ kind: 'implies' as const, left, right })) });
 }
 
+// validateCandidate rejects paths terminating in solver-dropped fields (`key-path` /
+// `unrepresentable-path` — keys and Text/Id prims are absent from the solver-facing model), and
+// loadLatText treats those diagnostics as parse failures. Generated invariants must only draw
+// paths from representable fields or the round-trip property generates unparseable specs.
+const representable = (f: Field) =>
+  !f.key && !(f.type.kind === 'prim' && ['Text', 'Id'].includes((f.type as any).prim));
+
 function candidateArb(agg: AggregateDef, enums: { name: string; values: string[] }[]): fc.Arbitrary<Candidate> {
-  const paths = agg.fields.map(f => [f.name]);
+  const paths = agg.fields.filter(representable).map(f => [f.name]);
   const arbs: fc.Arbitrary<Candidate>[] = [
     fc.tuple(predArb(agg, enums, 2), fc.option(predArb(agg, enums, 1), { nil: undefined }))
       .map(([body, where]) => {
@@ -104,18 +114,19 @@ function candidateArb(agg: AggregateDef, enums: { name: string; values: string[]
       }),
     fc.tuple(fc.option(predArb(agg, enums, 1), { nil: null }), fc.integer({ min: 0, max: 9 }))
       .map(([where, atMost]) => ({ kind: 'cardinality' as const, aggregate: agg.name, where, atMost })),
-    fc.constantFrom(...paths).map(field => ({ kind: 'monotonic' as const, aggregate: agg.name, field })),
     // refsResolve is round-trippable as an EXPLICIT invariant only when the aggregate has no ref
     // fields (fieldArb never generates 'ref' types, so every aggregate qualifies today); otherwise
     // loadLatText would drop it as structure-implied (implied.ts) and the round-trip helper would
     // compare against a filtered-out invariant.
     fc.constant({ kind: 'refsResolve' as const, aggregate: agg.name }),
   ];
+  if (paths.length) arbs.push(
+    fc.constantFrom(...paths).map(field => ({ kind: 'monotonic' as const, aggregate: agg.name, field })));
   if (paths.length >= 3) arbs.push(fc.constant({ kind: 'conservation' as const, aggregate: agg.name,
     parts: [paths[0]!, paths[1]!], total: paths[2]! }));
   if (agg.machine) {
     const r = agg.machine.regions[0]!;
-    arbs.push(fc.uniqueArray(fc.constantFrom(...r.states.map(s => s.name)), { minLength: 1, maxLength: 2 })
+    if (paths.length) arbs.push(fc.uniqueArray(fc.constantFrom(...r.states.map(s => s.name)), { minLength: 1, maxLength: 2 })
       .chain(states => fc.uniqueArray(fc.constantFrom(...paths.map(p => p.join('.'))), { minLength: 1, maxLength: 2 })
         .map(by => ({ kind: 'unique' as const, aggregate: agg.name,
           whileStates: { region: r.name, states }, by: by.map(s => s.split('.')) }))));
