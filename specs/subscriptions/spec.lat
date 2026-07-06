@@ -1,9 +1,10 @@
-// Subscriptions API: hybrid license-fee + usage-based billing
+/// Subscriptions API: hybrid license-fee + usage-based billing
 context Subscriptions {
 
   enum BillingPeriod { monthly, annual }
-  enum UsagePricing { overage, all_units }
+  enum UsagePricing { overage, allUnits }
 
+  /// Pricing definition: per-seat license fee plus usage billing in one of two modes
   entity Plan {
     planId        : Id key
     licenseFee    : Money
@@ -13,6 +14,7 @@ context Subscriptions {
     period        : BillingPeriod
   }
 
+  /// A customer's subscription to a Plan; usage accrues per billing period and resets at rollover
   aggregate Subscription {
     subId        : Id key
     plan         : ref Plan
@@ -20,52 +22,51 @@ context Subscriptions {
     periodStart  : Date
     periodEnd    : Date
     accruedUnits : Int
+
     machine {
-      region lifecycle { states { trialing, active @active, past_due @active, canceled @terminal, expired @terminal } }
+      region lifecycle { states { trialing @initial, active @active, pastDue @active, canceled @terminal, expired @terminal } }
       transition activate { region lifecycle; from trialing to active }
-      transition expire_trial { region lifecycle; from trialing to expired }
-      transition payment_failed { region lifecycle; from active to past_due }
-      transition recover { region lifecycle; from past_due to active }
-      transition cancel_from_trial { region lifecycle; from trialing to canceled }
-      transition cancel_from_active { region lifecycle; from active to canceled }
-      transition cancel_from_past_due { region lifecycle; from past_due to canceled }
-      transition dunning_exhausted { region lifecycle; from past_due to canceled }
+      transition expireTrial { region lifecycle; from trialing to expired }
+      transition paymentFailed { region lifecycle; from active to pastDue }
+      transition recover { region lifecycle; from pastDue to active }
+      transition cancelFromTrial { region lifecycle; from trialing to canceled }
+      transition cancelFromActive { region lifecycle; from active to canceled }
+      transition cancelFromPastDue { region lifecycle; from pastDue to canceled }
+      transition dunningExhausted { region lifecycle; from pastDue to canceled }
     }
-    invariant NoOrphan_Subscription {}  // Every reference on Subscription resolves to an existing record.  // ⚓ template tpl-9-Subscription
-    invariant Terminal_Subscription_canceled {}  // Once Subscription is canceled, it stays canceled.  // ⚓ template tpl-3-Subscription-canceled
-    invariant Terminal_Subscription_expired {}  // Once Subscription is expired, it stays expired.  // ⚓ template tpl-3-Subscription-expired
-    invariant Positive_Period_NonNegative_Usage {}  // On every Subscription: periodStart < periodEnd and accruedUnits ≥ 0.  // ⚓ elicited (w1, w2, w3, w4, w5)
+
+    /// A billing period is well-ordered and accrued usage never goes negative.
+    invariant positivePeriodNonNegativeUsage { periodStart < periodEnd && accruedUnits >= 0 }
   }
 
+  /// Period invoice: license-fee portion plus usage portion; partial payments accrue
   aggregate Invoice {
     invoiceId        : Id key
     subscription     : ref Subscription
-    licenseFeeAmount : Money  @total
-    usageAmount      : Money  @total
-    totalDue         : Money  @total
-    amountPaid       : Money  @balance
+    licenseFeeAmount : Money @total
+    usageAmount      : Money @total
+    totalDue         : Money @total
+    amountPaid       : Money @balance
+
     machine {
-      region settlement { states { draft, open @active, paid @terminal, void @terminal, uncollectible @terminal } }
+      region settlement { states { draft @initial, open @active, paid @terminal, void @terminal, uncollectible @terminal } }
       transition finalize { region settlement; from draft to open }
       transition settle { region settlement; from open to paid }
-      transition void_draft { region settlement; from draft to void }
-      transition void_open { region settlement; from open to void }
-      transition write_off { region settlement; from open to uncollectible }
+      transition voidDraft { region settlement; from draft to void }
+      transition voidOpen { region settlement; from open to void }
+      transition writeOff { region settlement; from open to uncollectible }
     }
-    invariant NonNegative_Invoice_licenseFeeAmount {}  // On every Invoice: licenseFeeAmount ≥ 0.  // ⚓ template tpl-2-Invoice-licenseFeeAmount
-    invariant NonNegative_Invoice_usageAmount {}  // On every Invoice: usageAmount ≥ 0.  // ⚓ template tpl-2-Invoice-usageAmount
-    invariant NonNegative_Invoice_totalDue {}  // On every Invoice: totalDue ≥ 0.  // ⚓ template tpl-2-Invoice-totalDue
-    invariant NonNegative_Invoice_amountPaid {}  // On every Invoice: amountPaid ≥ 0.  // ⚓ template tpl-2-Invoice-amountPaid
-    invariant NoOrphan_Invoice {}  // Every reference on Invoice resolves to an existing record.  // ⚓ template tpl-9-Invoice
-    invariant Terminal_Invoice_paid {}  // Once Invoice is paid, it stays paid.  // ⚓ template tpl-3-Invoice-paid
-    invariant Terminal_Invoice_void {}  // Once Invoice is void, it stays void.  // ⚓ template tpl-3-Invoice-void
-    invariant Terminal_Invoice_uncollectible {}  // Once Invoice is uncollectible, it stays uncollectible.  // ⚓ template tpl-3-Invoice-uncollectible
-    invariant TotalDue_At_Most_Parts {}  // On every Invoice: totalDue ≤ licenseFeeAmount + usageAmount.  // ⚓ elicited (w1, w2)
-    invariant Never_Overpaid_And_Paid_Exact {}  // On every Invoice: amountPaid ≤ totalDue and if it is paid, then amountPaid is totalDue.  // ⚓ elicited (w1, w2, w3)
-    unique while draft by (subscription)  // ⚓ elicited (w1, w2, w3, w4, w5)
+
+    /// An invoice never bills more than the sum of its parts.
+    invariant totalDueAtMostParts { totalDue <= licenseFeeAmount + usageAmount }
+
+    /// An invoice is never overpaid, and a paid invoice is paid exactly.
+    invariant neverOverpaidAndPaidExact { amountPaid <= totalDue && (state settlement in {paid} => amountPaid == totalDue) }
+
+    /// At most one draft invoice exists per subscription at any time.
+    invariant oneDraftInvoicePerSubscription { unique while settlement in {draft} by (subscription) }
   }
 
-  invariant NonNegative_Plan_licenseFee {}  // On every Plan: licenseFee ≥ 0.  // ⚓ template tpl-2-Plan-licenseFee
-  invariant NonNegative_Plan_usageRate {}  // On every Plan: usageRate ≥ 0.  // ⚓ template tpl-2-Plan-usageRate
-  invariant Overage_Implies_Real_Allowance {}  // On every Plan: includedUnits ≥ 0 and if pricingMode is overage, then includedUnits ≥ 1.  // ⚓ elicited (w1, w2, w3, w4, w5)
+  /// Overage pricing only makes sense with a real included-units allowance.
+  invariant overageImpliesRealAllowance on Plan { includedUnits >= 0 && (pricingMode == UsagePricing.overage => includedUnits >= 1) }
 }

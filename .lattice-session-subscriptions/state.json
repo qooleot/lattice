@@ -1,7 +1,6 @@
 {
   "model": {
     "context": "Subscriptions",
-    "doc": "Subscriptions API: hybrid license-fee + usage-based billing",
     "enums": [
       {
         "name": "BillingPeriod",
@@ -14,7 +13,7 @@
         "name": "UsagePricing",
         "values": [
           "overage",
-          "all_units"
+          "allUnits"
         ]
       }
     ],
@@ -22,7 +21,6 @@
       {
         "kind": "entity",
         "name": "Plan",
-        "doc": "Pricing definition: per-seat license fee plus usage billing in one of two modes",
         "fields": [
           {
             "name": "planId",
@@ -67,14 +65,14 @@
               "enum": "BillingPeriod"
             }
           }
-        ]
+        ],
+        "doc": "Pricing definition: per-seat license fee plus usage billing in one of two modes"
       }
     ],
     "aggregates": [
       {
         "kind": "aggregate",
         "name": "Subscription",
-        "doc": "A customer's subscription to a Plan; usage accrues per billing period and resets at rollover",
         "fields": [
           {
             "name": "subId",
@@ -136,7 +134,7 @@
                   ]
                 },
                 {
-                  "name": "past_due",
+                  "name": "pastDue",
                   "tags": [
                     "active"
                   ]
@@ -164,54 +162,54 @@
               "to": "active"
             },
             {
-              "name": "expire_trial",
+              "name": "expireTrial",
               "region": "lifecycle",
               "from": "trialing",
               "to": "expired"
             },
             {
-              "name": "payment_failed",
+              "name": "paymentFailed",
               "region": "lifecycle",
               "from": "active",
-              "to": "past_due"
+              "to": "pastDue"
             },
             {
               "name": "recover",
               "region": "lifecycle",
-              "from": "past_due",
+              "from": "pastDue",
               "to": "active"
             },
             {
-              "name": "cancel_from_trial",
+              "name": "cancelFromTrial",
               "region": "lifecycle",
               "from": "trialing",
               "to": "canceled"
             },
             {
-              "name": "cancel_from_active",
+              "name": "cancelFromActive",
               "region": "lifecycle",
               "from": "active",
               "to": "canceled"
             },
             {
-              "name": "cancel_from_past_due",
+              "name": "cancelFromPastDue",
               "region": "lifecycle",
-              "from": "past_due",
+              "from": "pastDue",
               "to": "canceled"
             },
             {
-              "name": "dunning_exhausted",
+              "name": "dunningExhausted",
               "region": "lifecycle",
-              "from": "past_due",
+              "from": "pastDue",
               "to": "canceled"
             }
           ]
-        }
+        },
+        "doc": "A customer's subscription to a Plan; usage accrues per billing period and resets at rollover"
       },
       {
         "kind": "aggregate",
         "name": "Invoice",
-        "doc": "Period invoice: license-fee portion plus usage portion; partial payments accrue",
         "fields": [
           {
             "name": "invoiceId",
@@ -319,299 +317,32 @@
               "to": "paid"
             },
             {
-              "name": "void_draft",
+              "name": "voidDraft",
               "region": "settlement",
               "from": "draft",
               "to": "void"
             },
             {
-              "name": "void_open",
+              "name": "voidOpen",
               "region": "settlement",
               "from": "open",
               "to": "void"
             },
             {
-              "name": "write_off",
+              "name": "writeOff",
               "region": "settlement",
               "from": "open",
               "to": "uncollectible"
             }
           ]
-        }
+        },
+        "doc": "Period invoice: license-fee portion plus usage portion; partial payments accrue"
       }
     ],
-    "events": []
+    "events": [],
+    "doc": "Subscriptions API: hybrid license-fee + usage-based billing"
   },
   "candidates": [
-    {
-      "inv": {
-        "id": "tpl-9-Subscription",
-        "name": "NoOrphan_Subscription",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "refsResolve",
-          "aggregate": "Subscription"
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-3-Subscription-canceled",
-        "name": "Terminal_Subscription_canceled",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "terminal",
-          "aggregate": "Subscription",
-          "region": "lifecycle",
-          "state": "canceled"
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-3-Subscription-expired",
-        "name": "Terminal_Subscription_expired",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "terminal",
-          "aggregate": "Subscription",
-          "region": "lifecycle",
-          "state": "expired"
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-2-Invoice-licenseFeeAmount",
-        "name": "NonNegative_Invoice_licenseFeeAmount",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "statePredicate",
-          "aggregate": "Invoice",
-          "body": {
-            "kind": "cmp",
-            "op": "ge",
-            "left": {
-              "kind": "field",
-              "owner": "self",
-              "path": [
-                "licenseFeeAmount"
-              ]
-            },
-            "right": {
-              "kind": "int",
-              "value": 0
-            }
-          }
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-2-Invoice-usageAmount",
-        "name": "NonNegative_Invoice_usageAmount",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "statePredicate",
-          "aggregate": "Invoice",
-          "body": {
-            "kind": "cmp",
-            "op": "ge",
-            "left": {
-              "kind": "field",
-              "owner": "self",
-              "path": [
-                "usageAmount"
-              ]
-            },
-            "right": {
-              "kind": "int",
-              "value": 0
-            }
-          }
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-2-Invoice-totalDue",
-        "name": "NonNegative_Invoice_totalDue",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "statePredicate",
-          "aggregate": "Invoice",
-          "body": {
-            "kind": "cmp",
-            "op": "ge",
-            "left": {
-              "kind": "field",
-              "owner": "self",
-              "path": [
-                "totalDue"
-              ]
-            },
-            "right": {
-              "kind": "int",
-              "value": 0
-            }
-          }
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-2-Invoice-amountPaid",
-        "name": "NonNegative_Invoice_amountPaid",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "statePredicate",
-          "aggregate": "Invoice",
-          "body": {
-            "kind": "cmp",
-            "op": "ge",
-            "left": {
-              "kind": "field",
-              "owner": "self",
-              "path": [
-                "amountPaid"
-              ]
-            },
-            "right": {
-              "kind": "int",
-              "value": 0
-            }
-          }
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-9-Invoice",
-        "name": "NoOrphan_Invoice",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "refsResolve",
-          "aggregate": "Invoice"
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-3-Invoice-paid",
-        "name": "Terminal_Invoice_paid",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "terminal",
-          "aggregate": "Invoice",
-          "region": "settlement",
-          "state": "paid"
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-3-Invoice-void",
-        "name": "Terminal_Invoice_void",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "terminal",
-          "aggregate": "Invoice",
-          "region": "settlement",
-          "state": "void"
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-3-Invoice-uncollectible",
-        "name": "Terminal_Invoice_uncollectible",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "terminal",
-          "aggregate": "Invoice",
-          "region": "settlement",
-          "state": "uncollectible"
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-2-Plan-licenseFee",
-        "name": "NonNegative_Plan_licenseFee",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "statePredicate",
-          "aggregate": "Plan",
-          "body": {
-            "kind": "cmp",
-            "op": "ge",
-            "left": {
-              "kind": "field",
-              "owner": "self",
-              "path": [
-                "licenseFee"
-              ]
-            },
-            "right": {
-              "kind": "int",
-              "value": 0
-            }
-          }
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
-        "id": "tpl-2-Plan-usageRate",
-        "name": "NonNegative_Plan_usageRate",
-        "prior": 0.9,
-        "source": "template",
-        "candidate": {
-          "kind": "statePredicate",
-          "aggregate": "Plan",
-          "body": {
-            "kind": "cmp",
-            "op": "ge",
-            "left": {
-              "kind": "field",
-              "owner": "self",
-              "path": [
-                "usageRate"
-              ]
-            },
-            "right": {
-              "kind": "int",
-              "value": 0
-            }
-          }
-        }
-      },
-      "status": "adopted"
-    },
     {
       "inv": {
         "id": "r1-conservation-strict",
@@ -946,47 +677,6 @@
     },
     {
       "inv": {
-        "id": "r1b-le-always",
-        "name": "TotalDue_At_Most_Parts",
-        "prior": 0.9,
-        "source": "seed",
-        "candidate": {
-          "kind": "statePredicate",
-          "aggregate": "Invoice",
-          "body": {
-            "kind": "cmp",
-            "op": "le",
-            "left": {
-              "kind": "field",
-              "owner": "self",
-              "path": [
-                "totalDue"
-              ]
-            },
-            "right": {
-              "kind": "plus",
-              "left": {
-                "kind": "field",
-                "owner": "self",
-                "path": [
-                  "licenseFeeAmount"
-                ]
-              },
-              "right": {
-                "kind": "field",
-                "owner": "self",
-                "path": [
-                  "usageAmount"
-                ]
-              }
-            }
-          }
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
         "id": "r2-paid-covered",
         "name": "Paid_Implies_Covered",
         "prior": 0.35,
@@ -1137,71 +827,6 @@
     },
     {
       "inv": {
-        "id": "r2b-payment-rule",
-        "name": "Never_Overpaid_And_Paid_Exact",
-        "prior": 0.9,
-        "source": "seed",
-        "candidate": {
-          "kind": "statePredicate",
-          "aggregate": "Invoice",
-          "body": {
-            "kind": "and",
-            "args": [
-              {
-                "kind": "cmp",
-                "op": "le",
-                "left": {
-                  "kind": "field",
-                  "owner": "self",
-                  "path": [
-                    "amountPaid"
-                  ]
-                },
-                "right": {
-                  "kind": "field",
-                  "owner": "self",
-                  "path": [
-                    "totalDue"
-                  ]
-                }
-              },
-              {
-                "kind": "implies",
-                "left": {
-                  "kind": "inState",
-                  "owner": "self",
-                  "region": "settlement",
-                  "states": [
-                    "paid"
-                  ]
-                },
-                "right": {
-                  "kind": "cmp",
-                  "op": "eq",
-                  "left": {
-                    "kind": "field",
-                    "owner": "self",
-                    "path": [
-                      "amountPaid"
-                    ]
-                  },
-                  "right": {
-                    "kind": "field",
-                    "owner": "self",
-                    "path": [
-                      "totalDue"
-                    ]
-                  }
-                }
-              }
-            ]
-          }
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
         "id": "r3-unique-open",
         "name": "One_Open_Invoice_Per_Subscription",
         "prior": 0.45,
@@ -1248,30 +873,6 @@
         }
       },
       "status": "pruned"
-    },
-    {
-      "inv": {
-        "id": "r3-unique-draft",
-        "name": "One_Draft_Invoice_Per_Subscription",
-        "prior": 0.25,
-        "source": "seed",
-        "candidate": {
-          "kind": "unique",
-          "aggregate": "Invoice",
-          "whileStates": {
-            "region": "settlement",
-            "states": [
-              "draft"
-            ]
-          },
-          "by": [
-            [
-              "subscription"
-            ]
-          ]
-        }
-      },
-      "status": "adopted"
     },
     {
       "inv": {
@@ -1552,57 +1153,6 @@
     },
     {
       "inv": {
-        "id": "r4b-subscription-sanity",
-        "name": "Positive_Period_NonNegative_Usage",
-        "prior": 0.9,
-        "source": "seed",
-        "candidate": {
-          "kind": "statePredicate",
-          "aggregate": "Subscription",
-          "body": {
-            "kind": "and",
-            "args": [
-              {
-                "kind": "cmp",
-                "op": "lt",
-                "left": {
-                  "kind": "field",
-                  "owner": "self",
-                  "path": [
-                    "periodStart"
-                  ]
-                },
-                "right": {
-                  "kind": "field",
-                  "owner": "self",
-                  "path": [
-                    "periodEnd"
-                  ]
-                }
-              },
-              {
-                "kind": "cmp",
-                "op": "ge",
-                "left": {
-                  "kind": "field",
-                  "owner": "self",
-                  "path": [
-                    "accruedUnits"
-                  ]
-                },
-                "right": {
-                  "kind": "int",
-                  "value": 0
-                }
-              }
-            ]
-          }
-        }
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
         "id": "r5-allowance-overage-only",
         "name": "Allowance_Only_In_Overage_Mode",
         "prior": 0.4,
@@ -1797,8 +1347,193 @@
     },
     {
       "inv": {
+        "id": "r4b-subscription-sanity",
+        "name": "positivePeriodNonNegativeUsage",
+        "prior": 0.9,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Subscription",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "lt",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodStart"
+                  ]
+                },
+                "right": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "periodEnd"
+                  ]
+                }
+              },
+              {
+                "kind": "cmp",
+                "op": "ge",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "accruedUnits"
+                  ]
+                },
+                "right": {
+                  "kind": "int",
+                  "value": 0
+                }
+              }
+            ]
+          }
+        },
+        "doc": "A billing period is well-ordered and accrued usage never goes negative."
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "r1b-le-always",
+        "name": "totalDueAtMostParts",
+        "prior": 0.9,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "cmp",
+            "op": "le",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "totalDue"
+              ]
+            },
+            "right": {
+              "kind": "plus",
+              "left": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "licenseFeeAmount"
+                ]
+              },
+              "right": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "usageAmount"
+                ]
+              }
+            }
+          }
+        },
+        "doc": "An invoice never bills more than the sum of its parts."
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "r2b-payment-rule",
+        "name": "neverOverpaidAndPaidExact",
+        "prior": 0.9,
+        "source": "seed",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Invoice",
+          "body": {
+            "kind": "and",
+            "args": [
+              {
+                "kind": "cmp",
+                "op": "le",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "amountPaid"
+                  ]
+                },
+                "right": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "totalDue"
+                  ]
+                }
+              },
+              {
+                "kind": "implies",
+                "left": {
+                  "kind": "inState",
+                  "owner": "self",
+                  "region": "settlement",
+                  "states": [
+                    "paid"
+                  ]
+                },
+                "right": {
+                  "kind": "cmp",
+                  "op": "eq",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "amountPaid"
+                    ]
+                  },
+                  "right": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "totalDue"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "doc": "An invoice is never overpaid, and a paid invoice is paid exactly."
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "r3-unique-draft",
+        "name": "oneDraftInvoicePerSubscription",
+        "prior": 0.25,
+        "source": "seed",
+        "candidate": {
+          "kind": "unique",
+          "aggregate": "Invoice",
+          "whileStates": {
+            "region": "settlement",
+            "states": [
+              "draft"
+            ]
+          },
+          "by": [
+            [
+              "subscription"
+            ]
+          ]
+        },
+        "doc": "At most one draft invoice exists per subscription at any time."
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
         "id": "r5c-overage-needs-allowance",
-        "name": "Overage_Implies_Real_Allowance",
+        "name": "overageImpliesRealAllowance",
         "prior": 0.95,
         "source": "seed",
         "candidate": {
@@ -1858,7 +1593,8 @@
               }
             ]
           }
-        }
+        },
+        "doc": "Overage pricing only makes sense with a real included-units allowance."
       },
       "status": "adopted"
     }

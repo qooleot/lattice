@@ -49,7 +49,7 @@ export function astToProse(m: DomainModel, adopted: CandidateInvariant[], ledger
       // plain comma-separated list of states with no arrows, so no transition is implied.
       const declared = (a.machine?.transitions ?? []).filter(t => t.region === r.name);
       if (declared.length > 0) {
-        lines.push(`**${r.name} lifecycle:** ${declared.map(t => `${label(t.from)} → ${label(t.to)}`).join(', ')}`, '');
+        lines.push(`**${r.name} lifecycle:** ${declared.map(t => `${label(t.from)} → ${label(t.to)} (${t.name})`).join(', ')}`, '');
       } else {
         lines.push(`**${r.name} states:** ${r.states.map(s => label(s.name)).join(', ')}`, '');
       }
