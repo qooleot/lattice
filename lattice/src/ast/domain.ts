@@ -19,7 +19,7 @@ export interface Machine { regions: Region[]; transitions: TransitionDef[] }
 export interface EnumDef { name: string; values: string[] }
 export interface EntityDef { kind: 'entity'; name: string; fields: Field[]; doc?: string }
 export interface AggregateDef { kind: 'aggregate'; name: string; fields: Field[]; machine?: Machine; doc?: string }
-export interface EventDef { name: string; fields: Field[] }
+export interface EventDef { name: string; fields: Field[]; doc?: string }
 
 export interface DomainModel {
   context: string;

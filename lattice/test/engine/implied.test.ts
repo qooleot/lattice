@@ -45,6 +45,27 @@ describe('impliedInvariants', () => {
     expect(isImplied({ kind: 'refsResolve', aggregate: 'Plan' }, m)).toBe(false);
   });
 
+  it('derives refsResolve for an entity with a ref field (owners are entities ∪ aggregates)', () => {
+    const m2: DomainModel = { ...m, entities: [...m.entities,
+      { kind: 'entity', name: 'Order', fields: [
+        { name: 'orderId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'plan', type: { kind: 'ref', target: 'Plan' } }] }] };
+    const d = impliedInvariants(m2).find(x => x.name === 'refsResolveOrder')!;
+    expect(d.candidate).toEqual({ kind: 'refsResolve', aggregate: 'Order' });
+    expect(isImplied({ kind: 'refsResolve', aggregate: 'Order' }, m2)).toBe(true);
+  });
+
+  it('derives a terminal rule per tagged state across multiple regions', () => {
+    const m2: DomainModel = JSON.parse(JSON.stringify(m));
+    m2.aggregates[0]!.machine!.regions.push({ name: 'dunning', initial: 'idle',
+      states: [{ name: 'idle' }, { name: 'closed', tags: ['terminal'] }] });
+    const names2 = impliedInvariants(m2).map(d => d.name);
+    expect(names2).toEqual(expect.arrayContaining(
+      ['terminalInvoiceSettlementPaid', 'terminalInvoiceSettlementVoid', 'terminalInvoiceDunningClosed']));
+    const t = impliedInvariants(m2).find(d => d.name === 'terminalInvoiceDunningClosed')!;
+    expect(t.candidate).toEqual({ kind: 'terminal', aggregate: 'Invoice', region: 'dunning', state: 'closed' });
+  });
+
   it('isImplied distinguishes different cmp bodies on the same aggregate (deep canonicalization)', () => {
     expect(isImplied({ kind: 'statePredicate', aggregate: 'Invoice',
       body: { kind: 'cmp', op: 'le', left: { kind: 'field', owner: 'self', path: ['totalDue'] },

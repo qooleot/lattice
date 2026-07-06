@@ -51,6 +51,18 @@ describe('parseLat', () => {
     }
   });
 
+  it("explains that '///' docs cannot attach to an enum", () => {
+    const r = parseLat('context C {\n  /// billing modes\n  enum Mode { fast, slow }\n}');
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.diagnostics).toHaveLength(1);
+      const d = r.diagnostics[0]!;
+      expect(d.code).toBe('enum-doc-unsupported');
+      expect(d.line).toBe(2);
+      expect(d.message).toContain('enum');
+    }
+  });
+
   it('does not flag /// or // inside strings', () => {
     expect(scanBannedComments('/// fine\ncontext C {}')).toEqual([]);
     expect(scanBannedComments('x "a // b" y')).toEqual([]);

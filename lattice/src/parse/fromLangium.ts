@@ -137,24 +137,26 @@ function mapBody(inv: G.InvariantDecl, aggregate: string, enums: Map<string, str
 }
 
 const CAMEL = /^[a-z][A-Za-z0-9]*$/, PASCAL = /^[A-Z][A-Za-z0-9]*$/;
-function namingWarnings(m: DomainModel, invNames: string[]): ParseDiagnostic[] {
+/** `loc` maps a construct key (see the `locs` population in loadLatText) to its CST position. */
+function namingWarnings(m: DomainModel, invNames: string[],
+    loc: (key: string) => { line: number; col: number }): ParseDiagnostic[] {
   const out: ParseDiagnostic[] = [];
-  const warn = (kind: string, n: string, re: RegExp, style: string) => {
-    if (!re.test(n)) out.push({ code: 'naming-convention', line: 1, col: 1,
+  const warn = (kind: string, n: string, re: RegExp, style: string, key: string) => {
+    if (!re.test(n)) out.push({ code: 'naming-convention', ...loc(key),
       message: `${kind} '${n}' should be ${style} (spec P8)` });
   };
-  warn('context', m.context, PASCAL, 'PascalCase');
-  for (const e of m.enums) { warn('enum', e.name, PASCAL, 'PascalCase'); e.values.forEach(v => warn('enum value', v, CAMEL, 'camelCase')); }
+  warn('context', m.context, PASCAL, 'PascalCase', 'context');
+  for (const e of m.enums) { warn('enum', e.name, PASCAL, 'PascalCase', `enum:${e.name}`); e.values.forEach(v => warn('enum value', v, CAMEL, 'camelCase', `enum:${e.name}`)); }
   const owners = [...m.entities, ...m.aggregates];
   for (const o of owners) {
-    warn(o.kind, o.name, PASCAL, 'PascalCase');
-    o.fields.forEach(f => warn('field', f.name, CAMEL, 'camelCase'));
+    warn(o.kind, o.name, PASCAL, 'PascalCase', `owner:${o.name}`);
+    o.fields.forEach(f => warn('field', f.name, CAMEL, 'camelCase', `field:${o.name}.${f.name}`));
     const mach = o.kind === 'aggregate' ? o.machine : undefined;
-    for (const r of mach?.regions ?? []) { warn('region', r.name, CAMEL, 'camelCase'); r.states.forEach(s => warn('state', s.name, CAMEL, 'camelCase')); }
-    mach?.transitions.forEach(t => warn('transition', t.name, CAMEL, 'camelCase'));
+    for (const r of mach?.regions ?? []) { warn('region', r.name, CAMEL, 'camelCase', `region:${o.name}.${r.name}`); r.states.forEach(s => warn('state', s.name, CAMEL, 'camelCase', `state:${o.name}.${r.name}.${s.name}`)); }
+    mach?.transitions.forEach(t => warn('transition', t.name, CAMEL, 'camelCase', `transition:${o.name}.${t.name}`));
   }
-  for (const e of m.events) warn('event', e.name, PASCAL, 'PascalCase');
-  invNames.forEach(n => warn('invariant', n, CAMEL, 'camelCase'));
+  for (const e of m.events) warn('event', e.name, PASCAL, 'PascalCase', `owner:${e.name}`);
+  invNames.forEach(n => warn('invariant', n, CAMEL, 'camelCase', `invariant:${n}`));
   return out;
 }
 
@@ -163,8 +165,14 @@ export function loadLatText(text: string): LoadResult {
   if (!parsed.ok) return parsed;
   const cst = parsed.cst;
   const diags: ParseDiagnostic[] = [];
+  // CST positions for naming warnings, keyed as in namingWarnings (enum values share their
+  // enum's position — value tokens have no individual AST nodes)
+  const locs = new Map<string, { line: number; col: number }>();
+  const noteFields = (owner: string, fs: G.FieldDecl[]) => { for (const f of fs) locs.set(`field:${owner}.${f.name}`, at(f)); };
+  locs.set('context', at(cst));
 
   const enumDecls = cst.items.filter((i): i is G.EnumDecl => i.$type === 'EnumDecl');
+  for (const e of enumDecls) locs.set(`enum:${e.name}`, at(e));
   const enumSet = new Set(enumDecls.map(e => e.name));
   const enumMap = new Map(enumDecls.map(e => [e.name, [...e.values]]));
 
@@ -183,17 +191,27 @@ export function loadLatText(text: string): LoadResult {
         const e = item as G.EntityDecl;
         const def: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags) };
         const d = joinDocs([...e.docs]); if (d) def.doc = d;
+        locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
         model.entities.push(def); break;
       }
       case 'EventDecl': {
         const e = item as G.EventDecl;
-        model.events.push({ name: e.name, fields: mapFields([...e.fields], enumSet, diags) } as EventDef); break;
+        const def: EventDef = { name: e.name, fields: mapFields([...e.fields], enumSet, diags) };
+        const d = joinDocs([...e.docs]); if (d) def.doc = d;
+        locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
+        model.events.push(def); break;
       }
       case 'AggregateDecl': {
         const a = item as G.AggregateDecl;
         const def: AggregateDef = { kind: 'aggregate', name: a.name, fields: mapFields([...a.fields], enumSet, diags) };
         if (a.machine) def.machine = mapMachine(a.machine, a.name, diags);
         const d = joinDocs([...a.docs]); if (d) def.doc = d;
+        locs.set(`owner:${a.name}`, at(a)); noteFields(a.name, [...a.fields]);
+        for (const r of a.machine?.regions ?? []) {
+          locs.set(`region:${a.name}.${r.name}`, at(r));
+          for (const st of r.states) locs.set(`state:${a.name}.${r.name}.${st.name}`, at(st));
+        }
+        for (const t of a.machine?.transitions ?? []) locs.set(`transition:${a.name}.${t.name}`, at(t));
         model.aggregates.push(def); break;
       }
     }
@@ -232,7 +250,7 @@ export function loadLatText(text: string): LoadResult {
       continue;
     }
     const gram = validateCandidate(candidate, model);
-    if (gram.length) { gram.forEach(g => diags.push({ code: g.code, message: `invariant ${decl.name}: ${g.message}`, ...at(decl) })); continue; }
+    if (gram.length) { gram.forEach(g => diags.push({ code: g.code, message: `invariant ${decl.name}: ${g.message}${g.at ? ` (at ${g.at})` : ''}`, ...at(decl) })); continue; }
     if (isImplied(candidate, model)) {
       warnings.push({ code: 'redundant-invariant',
         message: `invariant ${decl.name} restates a structure-implied rule; it is derived automatically and will not be printed`, ...at(decl) });
@@ -240,10 +258,12 @@ export function loadLatText(text: string): LoadResult {
     }
     const inv: CandidateInvariant = { id: `hand-${decl.name}`, name: decl.name, prior: 1, source: 'template', candidate };
     const d = joinDocs([...decl.docs]); if (d) inv.doc = d;
+    locs.set(`invariant:${decl.name}`, at(decl));
     invariants.push(inv);
   }
   if (diags.length) return { ok: false, diagnostics: diags };
 
-  warnings.push(...namingWarnings(model, invariants.map(i => i.name)));
+  warnings.push(...namingWarnings(model, invariants.map(i => i.name),
+    k => locs.get(k) ?? { line: 1, col: 1 }));
   return { ok: true, model, invariants, warnings };
 }

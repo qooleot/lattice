@@ -1,5 +1,6 @@
 import fc from 'fast-check';
-import type { DomainModel, AggregateDef, Field, EventDef } from '../../src/ast/domain.js';
+import type { DomainModel, AggregateDef, EntityDef, Field, EventDef, Machine, StateDef,
+  TransitionDef, TypeRef } from '../../src/ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Cmp } from '../../src/ast/invariant.js';
 import { RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
 
@@ -16,7 +17,9 @@ const uniqNames = (arb: fc.Arbitrary<string>, min: number, max: number) =>
 const docText = fc.string({ unit: fc.constantFrom(...'abc XYZ,.'.split('')), minLength: 1, maxLength: 30 })
   .map(s => s.trim()).filter(s => s.length > 0);
 
-function fieldArb(name: string, enumNames: string[]): fc.Arbitrary<Field> {
+// AGGREGATE fields: prim/enum only — never 'ref'. candidateArb's refsResolve arm depends on
+// this (see its comment); roundtrip.test.ts asserts the invariant executably.
+export function fieldArb(name: string, enumNames: string[]): fc.Arbitrary<Field> {
   const prim = fc.constantFrom('Int', 'Money', 'Date', 'Duration', 'Text', 'Id').map(p => ({ kind: 'prim' as const, prim: p as any }));
   const type = enumNames.length
     ? fc.oneof({ weight: 3, arbitrary: prim }, { weight: 1, arbitrary: fc.constantFrom(...enumNames).map(e => ({ kind: 'enum' as const, enum: e })) })
@@ -30,6 +33,32 @@ function fieldArb(name: string, enumNames: string[]): fc.Arbitrary<Field> {
     return f;
   });
 }
+
+// ENTITY fields additionally cover ref and List types (entities carry no explicit invariants,
+// so the refsResolve-arm constraint above does not apply to them).
+function entityFieldArb(name: string, enumNames: string[], ownerNames: string[]): fc.Arbitrary<Field> {
+  const prim: fc.Arbitrary<TypeRef> = fc.constantFrom('Int', 'Money', 'Date', 'Duration', 'Text', 'Id')
+    .map(p => ({ kind: 'prim' as const, prim: p as any }));
+  const scalar: fc.WeightedArbitrary<TypeRef>[] = [{ weight: 4, arbitrary: prim }];
+  if (enumNames.length) scalar.push({ weight: 1,
+    arbitrary: fc.constantFrom(...enumNames).map(e => ({ kind: 'enum' as const, enum: e })) });
+  const options: fc.WeightedArbitrary<TypeRef>[] = [...scalar,
+    { weight: 1, arbitrary: fc.oneof(...scalar).map(of => ({ kind: 'list' as const, of })) }];
+  if (ownerNames.length) options.push({ weight: 1,
+    arbitrary: fc.constantFrom(...ownerNames).map(t => ({ kind: 'ref' as const, target: t })) });
+  return fc.oneof(...options).map(type => ({ name, type }));
+}
+
+const entityArb = (name: string, enumNames: string[], ownerNames: string[]): fc.Arbitrary<EntityDef> =>
+  fc.tuple(uniqNames(camel.filter(n => n !== 'state'), 2, 4), fc.option(docText, { nil: undefined }))
+    .chain(([fieldNames, entDoc]) =>
+      fc.tuple(...fieldNames.slice(1).map(fn => entityFieldArb(fn, enumNames, ownerNames)))
+        .map(rest => {
+          const def: EntityDef = { kind: 'entity', name,
+            fields: [{ name: fieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest] };
+          if (entDoc) def.doc = entDoc;
+          return def;
+        }));
 
 const cmpOps: Cmp[] = ['eq', 'ne', 'lt', 'le', 'gt', 'ge'];
 function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[], depth: number): fc.Arbitrary<Predicate> {
@@ -102,16 +131,52 @@ function candidateArb(agg: AggregateDef, enums: { name: string; values: string[]
   return fc.oneof(...arbs);
 }
 
-// event field: simple prim-typed field, no ref/enum wiring (validateModel only checks `when`
-// references, which we never generate — see events below).
+// 1–2 regions; per region: 2–4 states (the LAST tagged @terminal — candidateArb's terminal arm
+// depends on exactly that), one transition, optionally triggered by a declared event.
+const machineArb = (fieldNames: string[], eventNames: string[]): fc.Arbitrary<Machine> =>
+  uniqNames(camel.filter(n => !fieldNames.includes(n)), 1, 2).chain(regionNames =>
+    fc.tuple(
+      fc.tuple(...regionNames.map(() => uniqNames(camel, 2, 4))),
+      uniqNames(camel, regionNames.length, regionNames.length),
+      fc.tuple(...regionNames.map(() => eventNames.length
+        ? fc.option(fc.constantFrom(...eventNames), { nil: undefined }) : fc.constant(undefined))),
+    ).map(([statesPer, transNames, whens]) => ({
+      regions: regionNames.map((name, i) => ({ name, initial: statesPer[i]![0]!,
+        states: statesPer[i]!.map((s, j): StateDef =>
+          j === statesPer[i]!.length - 1 ? { name: s, tags: ['terminal'] } : { name: s }) })),
+      transitions: regionNames.map((region, i) => {
+        const t: TransitionDef = { name: transNames[i]!, region, from: statesPer[i]![0]!, to: statesPer[i]![1]! };
+        if (whens[i]) t.when = whens[i];
+        return t;
+      }),
+    })));
+
+const aggArb = (name: string, enums: { name: string; values: string[] }[], eventNames: string[]): fc.Arbitrary<AggregateDef> =>
+  fc.tuple(uniqNames(camel.filter(n => n !== 'state'), 2, 4), fc.boolean(), fc.option(docText, { nil: undefined }))
+    .chain(([fieldNames, hasMachine, aggDoc]) =>
+      fc.tuple(...fieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name))))
+        .chain(rest => {
+          const fields: Field[] = [{ name: fieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest];
+          const base: AggregateDef = { kind: 'aggregate', name, fields };
+          if (aggDoc) base.doc = aggDoc;
+          if (!hasMachine) return fc.constant(base);
+          return machineArb(fieldNames, eventNames).map(machine => ({ ...base, machine }));
+        }));
+
+// event field: simple prim-typed field, no ref/enum wiring.
 const eventFieldArb = (name: string): fc.Arbitrary<Field> =>
   fc.constantFrom('Int', 'Money', 'Date', 'Duration', 'Text', 'Id')
     .map(prim => ({ name, type: { kind: 'prim' as const, prim: prim as any } }));
 
 const eventArb = (name: string): fc.Arbitrary<EventDef> =>
-  uniqNames(camel, 0, 2).chain(fieldNames =>
-    fc.tuple(...fieldNames.map(fn => eventFieldArb(fn))))
-    .map(fields => ({ name, fields }));
+  fc.tuple(uniqNames(camel, 0, 2), fc.option(docText, { nil: undefined }))
+    .chain(([fieldNames, evDoc]) =>
+      fc.tuple(...fieldNames.map(fn => eventFieldArb(fn)))
+        .map(fields => {
+          const ev: EventDef = { name, fields };
+          if (evDoc) ev.doc = evDoc;
+          return ev;
+        }));
 
 export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateInvariant[] }> =
   fc.tuple(pascal, uniqNames(pascal, 0, 2), fc.option(docText, { nil: undefined }))
@@ -122,47 +187,35 @@ export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateIn
           .map(vals => enumNames.map((name, i) => ({ name, values: vals[i]![1] }))),
         uniqNames(pascal.filter(n => !enumNames.includes(n)), 1, 2))
       .chain(([context, doc, enums, aggNames]) =>
-        fc.tuple(...aggNames.map(name =>
-          fc.tuple(uniqNames(camel.filter(n => n !== 'state'), 2, 4), fc.boolean(), fc.option(docText, { nil: undefined }))
-            .chain(([fieldNames, hasMachine, aggDoc]) =>
-              fc.tuple(...fieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name))))
-                .chain(rest => {
-                  const fields: Field[] = [{ name: fieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest];
-                  const base: AggregateDef = { kind: 'aggregate', name, fields };
-                  if (aggDoc) base.doc = aggDoc;
-                  if (!hasMachine) return fc.constant(base);
-                  return fc.tuple(camel.filter(n => !fieldNames.includes(n)), uniqNames(camel, 2, 4), camel)
-                    .map(([regionName, stateNames, transName]) => ({ ...base, machine: {
-                      regions: [{ name: regionName, initial: stateNames[0]!, states: stateNames.map((s, i) => {
-                        const st: any = { name: s };
-                        if (i === stateNames.length - 1) st.tags = ['terminal'];
-                        return st;
-                      }) }],
-                      transitions: [{ name: transName, region: regionName, from: stateNames[0]!, to: stateNames[1]! }] } } as AggregateDef));
-                }))))
-        .chain(aggs =>
-          fc.tuple(
-            uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)), 0, 2),
-            fc.option(fc.integer({ min: 1, max: 100 }), { nil: undefined }))
-          .chain(([eventNames, ticksPerDay]) =>
-            fc.tuple(...eventNames.map(name => eventArb(name)))
-              .map((events): [AggregateDef[], EventDef[], number | undefined] => [aggs, events, ticksPerDay])))
-        .chain(([aggs, events, ticksPerDay]) => {
-          const model: DomainModel = { context, enums, entities: [], aggregates: [...aggs], events };
-          if (doc) model.doc = doc;
-          if (ticksPerDay !== undefined) model.ticksPerDay = ticksPerDay;
-          return fc.tuple(...aggs.map(a =>
-            fc.array(fc.tuple(camel, fc.option(docText, { nil: undefined }), candidateArb(a, enums)), { maxLength: 2 })))
-            .map(perAgg => {
-              const used = new Set<string>();
-              const invariants: CandidateInvariant[] = [];
-              for (const list of perAgg) for (const [nm, d, candidate] of list) {
-                if (used.has(nm)) continue;
-                used.add(nm);
-                const inv: CandidateInvariant = { id: `hand-${nm}`, name: nm, prior: 1, source: 'template', candidate };
-                if (d) inv.doc = d;
-                invariants.push(inv);
-              }
-              return { model, invariants };
-            });
-        })));
+        // owner/event NAMES first (all mutually disjoint) so machines can reference events
+        // via `when` and entity fields can `ref` any owner
+        fc.tuple(
+          uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)), 0, 2),
+          fc.option(fc.integer({ min: 1, max: 100 }), { nil: undefined }))
+        .chain(([entityNames, ticksPerDay]) =>
+          uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n) && !entityNames.includes(n)), 0, 2)
+          .chain(eventNames =>
+            fc.tuple(
+              fc.tuple(...aggNames.map(name => aggArb(name, enums, eventNames))),
+              fc.tuple(...entityNames.map(name =>
+                entityArb(name, enums.map(e => e.name), [...aggNames, ...entityNames]))),
+              fc.tuple(...eventNames.map(name => eventArb(name))))
+            .chain(([aggs, entities, events]) => {
+              const model: DomainModel = { context, enums, entities: [...entities], aggregates: [...aggs], events: [...events] };
+              if (doc) model.doc = doc;
+              if (ticksPerDay !== undefined) model.ticksPerDay = ticksPerDay;
+              return fc.tuple(...aggs.map(a =>
+                fc.array(fc.tuple(camel, fc.option(docText, { nil: undefined }), candidateArb(a, enums)), { maxLength: 2 })))
+                .map(perAgg => {
+                  const used = new Set<string>();
+                  const invariants: CandidateInvariant[] = [];
+                  for (const list of perAgg) for (const [nm, d, candidate] of list) {
+                    if (used.has(nm)) continue;
+                    used.add(nm);
+                    const inv: CandidateInvariant = { id: `hand-${nm}`, name: nm, prior: 1, source: 'template', candidate };
+                    if (d) inv.doc = d;
+                    invariants.push(inv);
+                  }
+                  return { model, invariants };
+                });
+            })))));

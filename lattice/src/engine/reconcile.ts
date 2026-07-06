@@ -1,10 +1,10 @@
 import type { DomainModel } from '../ast/domain.js';
 import type { CandidateInvariant } from '../ast/invariant.js';
-import type { LedgerEntry } from './session.js';
+import { isoDay, type LedgerEntry } from './session.js';
 import { evaluateCandidate, type CaseState } from './evaluate.js';
 import { impliedInvariants, canonicalCandidate } from './implied.js';
 import { renameEntries, resolveWitness, applyRenamesToModel, applyRenamesToInvariant,
-  type RenameSpec } from './renames.js';
+  currentInvariantName, type RenameSpec } from './renames.js';
 import { diffModels } from '../parse/diff.js';
 
 export interface ReconcileInput {
@@ -78,9 +78,18 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
   const before = { model: normModel, canonical: canonicalSet(normModel, normExplicit) };
   const diff = diffModels(before, after, ledger, storedModel);
 
-  // removals (spec §5.6) — tag edits surface here as removed implied invariants
+  const allRenames = [...renameEntries(ledger), ...matchedRenames];
+
+  // removals (spec §5.6) — tag edits surface here as removed implied invariants. Ceremony is
+  // scoped to LEDGER-BACKED invariants (spec §3.4): an adopted/declined record whose historical
+  // name maps to this one. An unrecorded invariant removes without --force-remove — there is no
+  // record to overrule.
+  const ledgerBacked = (name: string) => ledger.some(e =>
+    (e.kind === 'adopted' || e.kind === 'declined') && currentInvariantName(e.invariant.name, allRenames) === name);
   for (const rem of diff.removedInvariants) {
-    if (forceRemove.includes(rem.name)) {
+    if (!ledgerBacked(rem.name)) {
+      applied.push(`removed invariant ${rem.name} (no ledger record)`);
+    } else if (forceRemove.includes(rem.name)) {
       appends.push({ kind: 'declined', at, invariant: rem, reason: 'hand-removed via --force-remove' });
       applied.push(`removed invariant ${rem.name}`);
     } else {
@@ -96,7 +105,6 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
   }
 
   // verdict replay (spec §5.5, asymmetric + delta rule)
-  const allRenames = [...renameEntries(ledger), ...matchedRenames];
   const verdicts = ledger.filter(e => e.kind === 'verdict') as Extract<LedgerEntry, { kind: 'verdict' }>[];
   const judgeable = (i: CandidateInvariant) => i.candidate.kind !== 'leadsTo';
   const changedOrAdded = [...diff.addedInvariants, ...diff.changedInvariants.map(c => c.after)].filter(judgeable);
@@ -110,7 +118,7 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
           refused.add(inv.name);
           refusals.push({ code: 'contradicts-verdict', invariant: inv.name, witnessId: v.witnessId,
             verdict: 'permit', judgedAt: v.at,
-            message: `invariant ${inv.name} forbids the state in ${v.witnessId}, judged permit on ${v.at.slice(0, 10)} — re-judge with the domain expert or revert` });
+            message: `invariant ${inv.name} forbids the state in ${v.witnessId}, judged permit on ${isoDay(v.at)} — re-judge with the domain expert or revert` });
         }
       for (const ch of diff.changedInvariants.filter(c => judgeable(c.after)))
         if (evaluateCandidate(ch.before.candidate, w) === 'permit'
@@ -118,7 +126,7 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
           refused.add(ch.name);
           refusals.push({ code: 'contradicts-verdict', invariant: ch.name, witnessId: v.witnessId,
             verdict: 'permit', judgedAt: v.at,
-            message: `invariant ${ch.name} now forbids the state in ${v.witnessId}, judged permit on ${v.at.slice(0, 10)} — re-judge with the domain expert or revert` });
+            message: `invariant ${ch.name} now forbids the state in ${v.witnessId}, judged permit on ${isoDay(v.at)} — re-judge with the domain expert or revert` });
         }
       for (const inv of after.canonical.filter(i => judgeable(i) && !refused.has(i.name)))
         if (evaluateCandidate(inv.candidate, w) === 'forbid')
@@ -128,7 +136,7 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
         set.some(i => judgeable(i) && evaluateCandidate(i.candidate, w) === 'forbid');
       if (forbids(before.canonical) && !forbids(after.canonical))
         refusals.push({ code: 'contradicts-verdict', witnessId: v.witnessId, verdict: 'forbid', judgedAt: v.at,
-          message: `this edit permits the state in ${v.witnessId}, judged forbid on ${v.at.slice(0, 10)} — re-judge with the domain expert or revert` });
+          message: `this edit permits the state in ${v.witnessId}, judged forbid on ${isoDay(v.at)} — re-judge with the domain expert or revert` });
     }
   }
 
@@ -151,7 +159,7 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
       continue;
     }
     appends.push({ kind: 'adopted', at, invariant: final,
-      provenance: `hand-edited ${at.slice(0, 10)}, consistent with ${wids || 'no judged cases'}` });
+      provenance: `hand-edited ${isoDay(at)}, consistent with ${wids || 'no judged cases'}` });
     applied.push(`invariant ${inv.name}`);
   }
   applied.push(...diff.structuralNotes, ...matchedRenames.map(r => `renamed ${r.scope} ${r.path} → ${r.to}`));

@@ -5,7 +5,7 @@ import type { DomainModel } from './ast/domain.js';
 import { validateModel } from './ast/validate.js';
 import { validateCandidate } from './ast/grammar.js';
 import type { CandidateInvariant } from './ast/invariant.js';
-import { loadState, saveState, appendLedger, readLedger, type SessionState, type LedgerEntry } from './engine/session.js';
+import { loadState, saveState, appendLedger, readLedger, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
 import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
 import { nextQuestion, checkDistinct, adoptedConstraints, type SolverDeps } from './engine/planner.js';
@@ -37,6 +37,10 @@ const readJson = (v: string): any => {
 };
 const isBadJson = (v: any): v is { [BAD_JSON]: string } => v != null && typeof v === 'object' && BAD_JSON in v;
 const now = () => new Date().toISOString();
+
+/** Mid-flight elicitation (design §5 step 8): apply must not race an open question loop. */
+const isSessionBusy = (s: SessionState): boolean =>
+  s.phase !== 'converged' || Object.keys(s.pendingWitnesses).length > 0;
 
 const VALID_JUDGES = ['permit', 'forbid', 'undecided'] as const;
 const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit', 'explain']);
@@ -252,7 +256,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         if (!loaded.ok) return { error: 'parse-failed', diagnostics: loaded.diagnostics };
 
         const sessionExists = existsSync(join(dir, 'state.json'));
-        if (sessionExists && (s.phase !== 'converged' || Object.keys(s.pendingWitnesses).length > 0) && s.model)
+        if (sessionExists && isSessionBusy(s) && s.model)
           return { error: 'session-busy', phase: s.phase, pendingWitnesses: Object.keys(s.pendingWitnesses),
             hint: 'finish or abandon the elicitation session before applying hand edits' };
 
@@ -287,7 +291,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           s.phase = 'converged';
           s.candidates = loaded.invariants.map(inv => ({ inv, status: 'adopted' as const }));
           for (const inv of loaded.invariants)
-            appendLedger(dir, { kind: 'adopted', at, invariant: inv, provenance: `hand-authored ${at.slice(0, 10)}` });
+            appendLedger(dir, { kind: 'adopted', at, invariant: inv, provenance: `hand-authored ${isoDay(at)}` });
           writeFileSync(join(dir, 'model.json'), JSON.stringify(loaded.model, null, 2));
           const written = writeProjections(latPath, loaded.model, loaded.invariants, readLedger(dir));
           return done({ ok: true, applied: ['fresh session', ...loaded.invariants.map(i => `invariant ${i.name}`)], written, ...outcomeBase });
@@ -304,6 +308,12 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         s.candidates = [
           ...s.candidates.filter(c => c.status !== 'adopted'),
           ...r.adopted.map(inv => ({ inv, status: 'adopted' as const }))];
+        // Crash-window ordering: the ledger is written FIRST, deliberately. A crash after the
+        // appends leaves state.json/model.json stale — re-running apply re-diffs against the old
+        // model and re-appends; the append-only ledger tolerates duplicate adopted/rename entries
+        // (latest wins, renames are idempotent). The reverse order is unrecoverable: state.json
+        // would already match the edit, so a re-run detects no rename and historical witnesses
+        // would never be remapped through the missing rename entries.
         for (const e of r.ledgerAppends) appendLedger(dir, e);
         writeFileSync(join(dir, 'model.json'), JSON.stringify(r.model, null, 2));
         const written = writeProjections(latPath, r.model, r.adopted, readLedger(dir));
@@ -322,7 +332,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         const inv = latest?.invariant ?? derived!;
         const witnessIds = new Set((latest?.provenance.match(/w\d+/g) ?? []));
         const witnesses = ledger.filter(e => e.kind === 'verdict' && witnessIds.has((e as any).witnessId))
-          .map(e => ({ id: (e as any).witnessId, judge: (e as any).judge, at: (e as any).at, salient: (e as any).salient }));
+          .map(e => ({ id: (e as any).witnessId, judge: (e as any).judge, at: (e as any).at, salient: (e as any).salient ?? [] }));
         const out: any = { name: current, english: renderCandidateEnglish(inv.candidate),
           provenance: latest?.provenance ?? 'implied by structure', witnesses,
           renames: chain.map(r => ({ from: r.from, to: r.to })) };

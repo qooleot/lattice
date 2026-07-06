@@ -1,14 +1,18 @@
 import type { CaseState, CaseEntity } from './evaluate.js';
 import type { DomainModel } from '../ast/domain.js';
 import type { LedgerEntry } from './session.js';
+import type { CandidateInvariant, Path, Predicate, Term } from '../ast/invariant.js';
 
 export type RenameScope = 'field' | 'state' | 'transition' | 'enumValue' | 'enum' | 'entity'
   | 'aggregate' | 'event' | 'invariant' | 'region';
+/** `path` is owner-qualified: `Owner.name` for members, `Owner.region.state` for states — the
+ *  final segment duplicates `from` so the path round-trips verbatim as the `--rename` flag's
+ *  left-hand side (cli.ts inferRenameSpec re-derives the scope from the full path). */
 export interface RenameSpec { scope: RenameScope; path: string; from: string; to: string }
 
 export const renameEntries = (ledger: LedgerEntry[]): RenameSpec[] =>
-  ledger.filter(e => e.kind === 'rename')
-    .map(e => ({ scope: (e as any).scope, path: (e as any).path, from: (e as any).from, to: (e as any).to }));
+  ledger.filter((e): e is Extract<LedgerEntry, { kind: 'rename' }> => e.kind === 'rename')
+    .map(e => ({ scope: e.scope, path: e.path, from: e.from, to: e.to }));
 
 /** Owner of an owner-qualified path: 'Job.count' → 'Job'; 'Job.run.waiting' → 'Job'. */
 const pathOwner = (p: string): string => p.split('.')[0]!;
@@ -128,22 +132,25 @@ export function applyRenamesToModel(m: DomainModel, renames: RenameSpec[]): Doma
 /** Apply renames inside a candidate invariant (paths, states, enum values, its own name).
  *  Field renames rewrite the FIRST path segment only when the rename's owner is the candidate's
  *  aggregate — every committed invariant uses single-segment paths; multi-hop renames out of scope. */
-export function applyRenamesToInvariant(i: import('../ast/invariant.js').CandidateInvariant,
-    renames: RenameSpec[]): import('../ast/invariant.js').CandidateInvariant {
+export function applyRenamesToInvariant(i: CandidateInvariant, renames: RenameSpec[]): CandidateInvariant {
   const inv = JSON.parse(JSON.stringify(i)) as typeof i;
   for (const r of renames) {
     const owner = pathOwner(r.path);
     if (r.scope === 'invariant' && inv.name === r.from) inv.name = r.to;
-    const c: any = inv.candidate;
-    const renPath = (p: string[]) => { if (owner === c.aggregate && p[0] === r.from && r.scope === 'field') p[0] = r.to; };
-    const walkTerm = (t: any) => {
-      if (!t) return;
-      if (t.kind === 'field') renPath(t.path);
-      if (t.kind === 'enumval' && r.scope === 'enumValue' && t.enum === owner && t.value === r.from) t.value = r.to;
-      if (t.kind === 'enumval' && r.scope === 'enum' && t.enum === r.from) t.enum = r.to;
-      if (t.kind === 'plus') { walkTerm(t.left); walkTerm(t.right); }
+    const c = inv.candidate;
+    const renPath = (p: Path) => { if (owner === c.aggregate && p[0] === r.from && r.scope === 'field') p[0] = r.to; };
+    const walkTerm = (t: Term): void => {
+      switch (t.kind) {
+        case 'field': renPath(t.path); break;
+        case 'enumval':
+          if (r.scope === 'enumValue' && t.enum === owner && t.value === r.from) t.value = r.to;
+          if (r.scope === 'enum' && t.enum === r.from) t.enum = r.to;
+          break;
+        case 'plus': walkTerm(t.left); walkTerm(t.right); break;
+        case 'int': case 'now': break;
+      }
     };
-    const walkPred = (p: any) => {
+    const walkPred = (p: Predicate | null | undefined): void => {
       if (!p) return;
       switch (p.kind) {
         case 'cmp': walkTerm(p.left); walkTerm(p.right); break;
@@ -151,10 +158,10 @@ export function applyRenamesToInvariant(i: import('../ast/invariant.js').Candida
           if (owner === c.aggregate) {
             if (r.scope === 'region' && p.region === r.from) p.region = r.to;
             if (r.scope === 'state' && p.region === r.path.split('.')[1])
-              p.states = p.states.map((s: string) => (s === r.from ? r.to : s));
+              p.states = p.states.map(s => (s === r.from ? r.to : s));
           }
           break;
-        case 'and': case 'or': p.args.forEach(walkPred); break;
+        case 'and': case 'or': p.args.forEach(a => walkPred(a)); break;
         case 'not': walkPred(p.arg); break;
         case 'implies': walkPred(p.left); walkPred(p.right); break;
       }
@@ -165,7 +172,7 @@ export function applyRenamesToInvariant(i: import('../ast/invariant.js').Candida
         if (owner === c.aggregate) {
           if (r.scope === 'region' && c.whileStates.region === r.from) c.whileStates.region = r.to;
           if (r.scope === 'state' && c.whileStates.region === r.path.split('.')[1])
-            c.whileStates.states = c.whileStates.states.map((s: string) => (s === r.from ? r.to : s));
+            c.whileStates.states = c.whileStates.states.map(s => (s === r.from ? r.to : s));
         }
         c.by.forEach(renPath);
         break;

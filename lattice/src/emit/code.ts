@@ -42,7 +42,10 @@ export function candidateBodyText(c: Candidate): string {
     case 'cardinality': return `count ${c.where ? `where ${predToText(c.where)} ` : ''}<= ${c.atMost}`;
     case 'terminal': return `terminal ${c.region}.${c.state}`;
     case 'monotonic': return `monotonic ${c.field.join('.')}`;
-    case 'conservation': return `conserve ${c.parts.map(p => p.join('.')).join(' + ')} == ${c.total.join('.')}`;
+    case 'conservation':
+      // grammar: 'conserve' parts ('+' parts)+ — a single part would print as unparseable text
+      if (c.parts.length < 2) throw new Error(`cannot print conservation on ${c.aggregate}: needs >= 2 parts, got ${c.parts.length}`);
+      return `conserve ${c.parts.map(p => p.join('.')).join(' + ')} == ${c.total.join('.')}`;
     case 'leadsTo': return `from ${predToText(c.from)} leads to ${predToText(c.to)} under fairness "${c.fairness}"`;
   }
 }
@@ -83,7 +86,11 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
   doc(m.doc, '', out);
   out.push(`context ${m.context} {`, '');
   if (m.ticksPerDay !== undefined) out.push(`  ticksPerDay = ${m.ticksPerDay}`, '');
-  for (const e of m.enums) out.push(`  enum ${e.name} { ${e.values.join(', ')} }`);
+  for (const e of m.enums) {
+    // grammar requires >= 1 value — 'enum X {  }' would not parse back
+    if (!e.values.length) throw new Error(`cannot print enum ${e.name}: it has no values`);
+    out.push(`  enum ${e.name} { ${e.values.join(', ')} }`);
+  }
   if (m.enums.length) out.push('');
   for (const ent of m.entities) {
     doc(ent.doc, '  ', out);
@@ -92,6 +99,7 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
     out.push('  }', '');
   }
   for (const ev of m.events) {
+    doc(ev.doc, '  ', out);
     out.push(`  event ${ev.name} {`);
     fieldLines(ev.fields, '    ', out);
     out.push('  }', '');

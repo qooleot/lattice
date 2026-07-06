@@ -1,5 +1,5 @@
 import type { DomainModel, AggregateDef, EntityDef } from '../ast/domain.js';
-import type { CandidateInvariant } from '../ast/invariant.js';
+import type { Candidate, CandidateInvariant, Predicate, Term } from '../ast/invariant.js';
 import type { LedgerEntry } from '../engine/session.js';
 import type { RenameSpec } from '../engine/renames.js';
 import { canonicalCandidate } from '../engine/implied.js';
@@ -19,7 +19,34 @@ const cjson = (v: unknown) => canonicalCandidate(v);
 type Owner = AggregateDef | EntityDef;
 const owners = (m: DomainModel): Owner[] => [...m.aggregates, ...m.entities];
 
-/** Ledger entries that mention the old name (spec P4 — witness keys/values + invariant records). */
+/** Enum values referenced inside a candidate's terms (for adopted-body rename detection). */
+function enumvalRefs(c: Candidate): { enum: string; value: string }[] {
+  const out: { enum: string; value: string }[] = [];
+  const term = (t: Term): void => {
+    if (t.kind === 'enumval') out.push({ enum: t.enum, value: t.value });
+    if (t.kind === 'plus') { term(t.left); term(t.right); }
+  };
+  const pred = (p: Predicate | null | undefined): void => {
+    if (!p) return;
+    switch (p.kind) {
+      case 'cmp': term(p.left); term(p.right); break;
+      case 'and': case 'or': p.args.forEach(a => pred(a)); break;
+      case 'not': pred(p.arg); break;
+      case 'implies': pred(p.left); pred(p.right); break;
+      case 'inState': break;
+    }
+  };
+  switch (c.kind) {
+    case 'statePredicate': pred(c.where); pred(c.body); break;
+    case 'cardinality': pred(c.where); break;
+    case 'leadsTo': pred(c.from); pred(c.to); break;
+    default: break;
+  }
+  return out;
+}
+
+/** Ledger entries that mention the old name (design §5 step 4 — witness keys/values, invariant
+ *  records, adopted candidate bodies, provenance text). */
 export function ledgerReferences(r: RenameSpec, ledger: LedgerEntry[], storedModel: DomainModel): string[] {
   const hits: string[] = [];
   const owner = r.path.split('.')[0]!;
@@ -51,9 +78,18 @@ export function ledgerReferences(r: RenameSpec, ledger: LedgerEntry[], storedMod
       });
       if (touched) hits.push(id);
     }
-    if (r.scope === 'invariant' && (e.kind === 'adopted' || e.kind === 'declined')
-        && (e as any).invariant.name === r.from)
-      hits.push(`${e.kind}:${r.from}`);
+    if (e.kind === 'adopted' || e.kind === 'declined') {
+      if (r.scope === 'invariant' && e.invariant.name === r.from) hits.push(`${e.kind}:${r.from}`);
+      // adopted candidate BODIES: enum values live inside terms, not witness fields
+      const evs = enumvalRefs(e.invariant.candidate);
+      if ((r.scope === 'enumValue' && evs.some(x => x.enum === owner && x.value === r.from))
+          || (r.scope === 'enum' && evs.some(x => x.enum === r.from)))
+        hits.push(`${e.kind}:${e.invariant.name}`);
+      // provenance text carries names too (e.g. template ids embed the aggregate name)
+      if (e.kind === 'adopted'
+          && new RegExp(`\\b${r.from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(e.provenance))
+        hits.push(`${e.kind}:${e.invariant.name}`);
+    }
   }
   return [...new Set(hits)];
 }
@@ -79,6 +115,8 @@ function namedThings(m: DomainModel): NamedThing[] {
   for (const ev of m.events) out.push({ scope: 'event', name: ev.name, shape: 'event' });
   return out;
 }
+// state paths keep the state name as a 3rd segment (duplicating RenameSpec.from) so the path is
+// exactly the --rename flag's left-hand side — see the RenameSpec doc in engine/renames.ts
 const qualify = (t: NamedThing): string =>
   t.scope === 'state' ? `${t.owner}.${t.region}.${t.name}` : t.owner ? `${t.owner}.${t.name}` : t.name;
 

@@ -12,6 +12,7 @@ context Demo {
     bonus  : Money @signed
     mode   : Mode
   }
+  /// Event doc
   event kicked { reason : Text }
   aggregate Job {
     jobId : Id key
@@ -42,7 +43,8 @@ describe('loadLatText', () => {
     expect(model.entities[0]!.doc).toBe('Entity doc');
     expect(model.entities[0]!.fields[1]).toEqual({ name: 'fee', type: { kind: 'prim', prim: 'Money' } });
     expect(model.entities[0]!.fields[2]!.tags).toEqual(['signed']);
-    expect(model.events).toEqual([{ name: 'kicked', fields: [{ name: 'reason', type: { kind: 'prim', prim: 'Text' } }] }]);
+    expect(model.events).toEqual([{ name: 'kicked', doc: 'Event doc',
+      fields: [{ name: 'reason', type: { kind: 'prim', prim: 'Text' } }] }]);
     const job = model.aggregates[0]!;
     expect(job.machine!.regions[0]).toEqual({ name: 'run', initial: 'queued', states: [
       { name: 'queued' }, { name: 'going', tags: ['active'] }, { name: 'done', tags: ['terminal'] }] });
@@ -86,7 +88,11 @@ describe('loadLatText', () => {
   it('closed grammar: unknown paths/states are structured diagnostics, not crashes', () => {
     const bad = loadLatText('context C { aggregate A { aId : Id key\n invariant x { nosuch >= 0 } } }');
     expect(bad.ok).toBe(false);
-    if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'unknown-path')).toBe(true);
+    if (!bad.ok) {
+      const d = bad.diagnostics.find(d => d.code === 'unknown-path')!;
+      // validateCandidate's sub-expression path rides along in the message
+      expect(d.message).toContain('(at body)');
+    }
   });
 
   it('missing on-target at context level is a diagnostic', () => {
@@ -102,10 +108,14 @@ describe('loadLatText', () => {
     if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'multiple-initial')).toBe(true);
   });
 
-  it('warns on naming convention violations without failing', () => {
-    const r2 = loadLatText('context C { entity Plan { plan_id : Id key } }');
+  it('warns on naming convention violations without failing, at the declaring line', () => {
+    const r2 = loadLatText('context C {\n  entity Plan {\n    plan_id : Id key\n  }\n}');
     expect(r2.ok).toBe(true);
-    if (r2.ok) expect(r2.warnings.some(w => w.code === 'naming-convention')).toBe(true);
+    if (r2.ok) {
+      const w = r2.warnings.find(w => w.code === 'naming-convention')!;
+      expect(w.message).toContain('plan_id');
+      expect(w.line).toBe(3);
+    }
   });
 
   it('validateModel diagnostics carry the dotted path in the message', () => {

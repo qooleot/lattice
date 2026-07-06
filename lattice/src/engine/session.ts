@@ -27,6 +27,9 @@ export type LedgerEntry =
   | { kind: 'structure'; at: string; question: string; answer: string }
   | { kind: 'rename'; at: string; scope: import('./renames.js').RenameScope; path: string; from: string; to: string };
 
+/** Calendar day of an ISO timestamp — the human-facing date in provenance and refusal text. */
+export const isoDay = (at: string): string => at.slice(0, 10);
+
 export function newSession(): SessionState {
   return { model: null, candidates: [], phase: 'structure', regenAttempts: 0, alternativeAttempts: 0,
     probesAsked: { forbid: false, permit: false }, pendingWitnesses: {}, witnessSeq: 0 };

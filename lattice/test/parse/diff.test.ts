@@ -36,6 +36,35 @@ describe('ledgerReferences', () => {
     expect(ledgerReferences({ scope: 'transition', path: 'Job.t', from: 't', to: 'x' }, ledger, stored)).toEqual([]);
   });
 
+  it('finds enum values referenced only inside adopted candidate BODIES (design §5 step 4)', () => {
+    const model: DomainModel = {
+      context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], events: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
+        { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'speed', type: { kind: 'enum', enum: 'Mode' } }] }],
+    };
+    const bodyRef: CandidateInvariant = { id: 'hand-fastOnly', name: 'fastOnly', prior: 1, source: 'template',
+      candidate: { kind: 'statePredicate', aggregate: 'Job',
+        body: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['speed'] },
+          right: { kind: 'enumval', enum: 'Mode', value: 'fast' } } } };
+    const led: LedgerEntry[] = [{ kind: 'adopted', at: 't', invariant: bodyRef, provenance: 'elicited (w1)' }];
+    expect(ledgerReferences({ scope: 'enumValue', path: 'Mode.fast', from: 'fast', to: 'quick' }, led, model))
+      .toEqual(['adopted:fastOnly']);
+    expect(ledgerReferences({ scope: 'enum', path: 'Mode', from: 'Mode', to: 'Speed' }, led, model))
+      .toEqual(['adopted:fastOnly']);
+    expect(ledgerReferences({ scope: 'enumValue', path: 'Mode.slow', from: 'slow', to: 'slower' }, led, model))
+      .toEqual([]);
+  });
+
+  it('finds names embedded in adopted provenance text', () => {
+    const led: LedgerEntry[] = [
+      { kind: 'adopted', at: 't', invariant: inv('unitsSane', 'units'), provenance: 'template tpl-nonneg-Job-units' }];
+    expect(ledgerReferences({ scope: 'field', path: 'Job.units', from: 'units', to: 'n' }, led, stored))
+      .toEqual(['adopted:unitsSane']);
+    expect(ledgerReferences({ scope: 'field', path: 'Job.other', from: 'other', to: 'n' }, led, stored))
+      .toEqual([]);
+  });
+
   it('enumValue references require an enum-typed field of that enum', () => {
     const model: DomainModel = {
       context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], events: [], entities: [],
@@ -68,6 +97,38 @@ describe('diffModels', () => {
     const d = diffModels(before, { model: mk('Job', 'usedUnits'), canonical: [inv('unitsSane', 'usedUnits')] }, quiet, before.model);
     expect(d.renameProposals).toEqual([]);
     expect(d.structuralNotes.join(' ')).toContain('usedUnits');
+  });
+
+  it('pairs region renames with an Owner.region path', () => {
+    const after: DomainModel = JSON.parse(JSON.stringify(mk('Job', 'units')));
+    after.aggregates[0]!.machine!.regions[0]!.name = 'phase';
+    const d = diffModels({ model: mk('Job', 'units'), canonical: [] }, { model: after, canonical: [] }, ledger, mk('Job', 'units'));
+    expect(d.renameProposals).toEqual([{ scope: 'region', path: 'Job.r', from: 'r', to: 'phase' }]);
+  });
+
+  it('pairs state renames with an Owner.region.state path (last segment = from)', () => {
+    const after: DomainModel = JSON.parse(JSON.stringify(mk('Job', 'units')));
+    after.aggregates[0]!.machine!.regions[0]!.states[0]!.name = 'begun';
+    after.aggregates[0]!.machine!.regions[0]!.initial = 'begun';
+    const d = diffModels({ model: mk('Job', 'units'), canonical: [] }, { model: after, canonical: [] }, ledger, mk('Job', 'units'));
+    expect(d.renameProposals).toEqual([{ scope: 'state', path: 'Job.r.s1', from: 's1', to: 'begun' }]);
+  });
+
+  it('pairs enum renames (single-segment path) backed by an adopted-body reference', () => {
+    const withEnum = (enumName: string): DomainModel => ({
+      context: 'C', enums: [{ name: enumName, values: ['fast', 'slow'] }], events: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
+        { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'speed', type: { kind: 'enum', enum: enumName } }] }],
+    });
+    const bodyRef: CandidateInvariant = { id: 'hand-fastOnly', name: 'fastOnly', prior: 1, source: 'template',
+      candidate: { kind: 'statePredicate', aggregate: 'Job',
+        body: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['speed'] },
+          right: { kind: 'enumval', enum: 'Mode', value: 'fast' } } } };
+    const led: LedgerEntry[] = [{ kind: 'adopted', at: 't', invariant: bodyRef, provenance: 'elicited (w1)' }];
+    const d = diffModels({ model: withEnum('Mode'), canonical: [] }, { model: withEnum('Speed'), canonical: [] },
+      led, withEnum('Mode'));
+    expect(d.renameProposals).toEqual([{ scope: 'enum', path: 'Mode', from: 'Mode', to: 'Speed' }]);
   });
 
   it('detects invariant rename by identical candidate', () => {

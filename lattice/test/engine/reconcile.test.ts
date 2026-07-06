@@ -90,14 +90,31 @@ describe('reconcile', () => {
     if (!r2.ok) expect(r2.refusals.some(x => x.code === 'contradicts-verdict' && x.witnessId === 'w1')).toBe(true);
   });
 
-  it('tag edit that kills an implied invariant follows the removal flow', () => {
+  it('tag edit that kills a ledger-backed implied invariant follows the removal flow', () => {
     const untagged: DomainModel = JSON.parse(JSON.stringify(model));
     delete (untagged.aggregates[0]!.machine!.regions[0]!.states[1] as any).tags;   // s2 no longer @terminal
-    const r = reconcile(base({ parsed: { model: untagged, invariants: [nonNeg] } }));
+    const terminalInv: CandidateInvariant = { id: 'implied-terminalJobRS2', name: 'terminalJobRS2',
+      prior: 1, source: 'template', candidate: { kind: 'terminal', aggregate: 'Job', region: 'r', state: 's2' } };
+    const backed: LedgerEntry[] = [...ledger,
+      { kind: 'adopted', at: '2026-07-05T12:30:00Z', invariant: terminalInv, provenance: 'template implied-terminalJobRS2' }];
+    const r = reconcile(base({ parsed: { model: untagged, invariants: [nonNeg] }, ledger: backed }));
     expect(r.ok).toBe(false);
     if (!r.ok) {
       const f = r.refusals.find(x => x.code === 'needs-force-remove')!;
       expect(f.invariant).toBe('terminalJobRS2');
+    }
+  });
+
+  it('removal of an invariant with NO ledger record applies without ceremony (spec §3.4)', () => {
+    // the test ledger has no adopted/declined record for terminalJobRS2, so untagging s2 is a
+    // plain structural edit — no --force-remove, no declined entry
+    const untagged: DomainModel = JSON.parse(JSON.stringify(model));
+    delete (untagged.aggregates[0]!.machine!.regions[0]!.states[1] as any).tags;
+    const r = reconcile(base({ parsed: { model: untagged, invariants: [nonNeg] } }));
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.ledgerAppends.filter(e => e.kind === 'declined')).toEqual([]);
+      expect(r.applied.some(a => a.includes('terminalJobRS2') && a.includes('no ledger record'))).toBe(true);
     }
   });
 

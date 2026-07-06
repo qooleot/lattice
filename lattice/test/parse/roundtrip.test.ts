@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { arbSpec } from './arbitraries.js';
+import { arbSpec, fieldArb } from './arbitraries.js';
 import { astToCode } from '../../src/emit/code.js';
 import { loadLatText } from '../../src/parse/fromLangium.js';
 import { isImplied } from '../../src/engine/implied.js';
-import type { DomainModel } from '../../src/ast/domain.js';
+import type { DomainModel, TypeRef } from '../../src/ast/domain.js';
 import type { CandidateInvariant } from '../../src/ast/invariant.js';
 
 const FIXTURES = join(import.meta.dirname, '../../fixtures/domains');
@@ -44,6 +44,15 @@ function roundTrip(model: DomainModel, invariants: CandidateInvariant[]) {
   // normalization idempotence: one more print∘parse is a fixed point
   expect(astToCode(r.model, r.invariants)).toBe(text);
 }
+
+describe('generator assumptions', () => {
+  it('fieldArb (aggregate fields) never emits ref types — the refsResolve arm depends on it', () => {
+    // if an aggregate ever grew a ref field, its explicit refsResolve invariant would become
+    // structure-implied and be silently dropped by the printer, breaking round-trip identity
+    const hasRef = (t: TypeRef): boolean => t.kind === 'ref' || (t.kind === 'list' && hasRef(t.of));
+    fc.assert(fc.property(fieldArb('f', ['SomeEnum']), f => !hasRef(f.type)), { numRuns: 500 });
+  });
+});
 
 describe('round-trip: parse ∘ print = id (spec §7.1)', () => {
   it('holds on generated specs (property)', () => {

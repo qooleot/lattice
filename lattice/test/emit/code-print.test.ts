@@ -92,3 +92,11 @@ it('never emits // and always emits every candidate kind parseably', () => {
   expect(text).toContain('invariant lt { from state run in {queued} leads to state run in {done} under fairness "start fires" }');
   for (const line of text.split('\n')) expect(line).not.toMatch(/(^|[^/])\/\/([^/]|$)/);
 });
+
+it('refuses degenerate inputs the grammar cannot parse back (throws, no garbage text)', () => {
+  const hollowEnum: DomainModel = { ...m, enums: [{ name: 'Hollow', values: [] }] };
+  expect(() => astToCode(hollowEnum, [])).toThrow(/enum Hollow/);
+  const onePart: CandidateInvariant = { id: 'hand-c1', name: 'c1', prior: 1, source: 'template',
+    candidate: { kind: 'conservation', aggregate: 'Job', parts: [['units']], total: ['units'] } };
+  expect(() => astToCode(m, [onePart])).toThrow(/conservation on Job/);
+});
