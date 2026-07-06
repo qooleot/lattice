@@ -7,14 +7,19 @@
     "typecheck": "tsc --noEmit",
     "engine": "tsx src/cli.ts",
     "fidelity": "tsx fidelity/harness.ts",
-    "tally": "tsx fidelity/tally.ts"
+    "tally": "tsx fidelity/tally.ts",
+    "langium:generate": "langium generate"
   },
   "dependencies": {
     "@informalsystems/quint": "^0.26.0",
-    "fast-xml-parser": "^4.5.0"
+    "chokidar": "^4.0.3",
+    "fast-xml-parser": "^4.5.0",
+    "langium": "^3.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "fast-check": "^3.23.2",
+    "langium-cli": "^3.5.2",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"

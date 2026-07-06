@@ -1,36 +1,121 @@
 {
-  "context": "Subscriptions API: hybrid license-fee + usage-based billing",
+  "context": "Subscriptions",
   "enums": [
-    { "name": "BillingPeriod", "values": ["monthly", "annual"] },
-    { "name": "UsagePricing", "values": ["overage", "all_units"] }
+    {
+      "name": "BillingPeriod",
+      "values": [
+        "monthly",
+        "annual"
+      ]
+    },
+    {
+      "name": "UsagePricing",
+      "values": [
+        "overage",
+        "allUnits"
+      ]
+    }
   ],
   "entities": [
     {
       "kind": "entity",
       "name": "Plan",
-      "doc": "Pricing definition: per-seat license fee plus usage billing in one of two modes",
       "fields": [
-        { "name": "planId", "type": { "kind": "prim", "prim": "Id" }, "key": true },
-        { "name": "licenseFee", "type": { "kind": "prim", "prim": "Money" } },
-        { "name": "usageRate", "type": { "kind": "prim", "prim": "Money" } },
-        { "name": "includedUnits", "type": { "kind": "prim", "prim": "Int" } },
-        { "name": "pricingMode", "type": { "kind": "enum", "enum": "UsagePricing" } },
-        { "name": "period", "type": { "kind": "enum", "enum": "BillingPeriod" } }
-      ]
+        {
+          "name": "planId",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          },
+          "key": true
+        },
+        {
+          "name": "licenseFee",
+          "type": {
+            "kind": "prim",
+            "prim": "Money"
+          }
+        },
+        {
+          "name": "usageRate",
+          "type": {
+            "kind": "prim",
+            "prim": "Money"
+          }
+        },
+        {
+          "name": "includedUnits",
+          "type": {
+            "kind": "prim",
+            "prim": "Int"
+          }
+        },
+        {
+          "name": "pricingMode",
+          "type": {
+            "kind": "enum",
+            "enum": "UsagePricing"
+          }
+        },
+        {
+          "name": "period",
+          "type": {
+            "kind": "enum",
+            "enum": "BillingPeriod"
+          }
+        }
+      ],
+      "doc": "Pricing definition: per-seat license fee plus usage billing in one of two modes"
     }
   ],
   "aggregates": [
     {
       "kind": "aggregate",
       "name": "Subscription",
-      "doc": "A customer's subscription to a Plan; usage accrues per billing period and resets at rollover",
       "fields": [
-        { "name": "subId", "type": { "kind": "prim", "prim": "Id" }, "key": true },
-        { "name": "plan", "type": { "kind": "ref", "target": "Plan" } },
-        { "name": "seats", "type": { "kind": "prim", "prim": "Int" } },
-        { "name": "periodStart", "type": { "kind": "prim", "prim": "Date" } },
-        { "name": "periodEnd", "type": { "kind": "prim", "prim": "Date" } },
-        { "name": "accruedUnits", "type": { "kind": "prim", "prim": "Int" } }
+        {
+          "name": "subId",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          },
+          "key": true
+        },
+        {
+          "name": "plan",
+          "type": {
+            "kind": "ref",
+            "target": "Plan"
+          }
+        },
+        {
+          "name": "seats",
+          "type": {
+            "kind": "prim",
+            "prim": "Int"
+          }
+        },
+        {
+          "name": "periodStart",
+          "type": {
+            "kind": "prim",
+            "prim": "Date"
+          }
+        },
+        {
+          "name": "periodEnd",
+          "type": {
+            "kind": "prim",
+            "prim": "Date"
+          }
+        },
+        {
+          "name": "accruedUnits",
+          "type": {
+            "kind": "prim",
+            "prim": "Int"
+          }
+        }
       ],
       "machine": {
         "regions": [
@@ -38,37 +123,148 @@
             "name": "lifecycle",
             "initial": "trialing",
             "states": [
-              { "name": "trialing" },
-              { "name": "active", "tags": ["active"] },
-              { "name": "past_due", "tags": ["active"] },
-              { "name": "canceled", "tags": ["terminal"] },
-              { "name": "expired", "tags": ["terminal"] }
+              {
+                "name": "trialing"
+              },
+              {
+                "name": "active",
+                "tags": [
+                  "active"
+                ]
+              },
+              {
+                "name": "pastDue",
+                "tags": [
+                  "active"
+                ]
+              },
+              {
+                "name": "canceled",
+                "tags": [
+                  "terminal"
+                ]
+              },
+              {
+                "name": "expired",
+                "tags": [
+                  "terminal"
+                ]
+              }
             ]
           }
         ],
         "transitions": [
-          { "name": "activate", "region": "lifecycle", "from": "trialing", "to": "active" },
-          { "name": "expire_trial", "region": "lifecycle", "from": "trialing", "to": "expired" },
-          { "name": "payment_failed", "region": "lifecycle", "from": "active", "to": "past_due" },
-          { "name": "recover", "region": "lifecycle", "from": "past_due", "to": "active" },
-          { "name": "cancel_from_trial", "region": "lifecycle", "from": "trialing", "to": "canceled" },
-          { "name": "cancel_from_active", "region": "lifecycle", "from": "active", "to": "canceled" },
-          { "name": "cancel_from_past_due", "region": "lifecycle", "from": "past_due", "to": "canceled" },
-          { "name": "dunning_exhausted", "region": "lifecycle", "from": "past_due", "to": "canceled" }
+          {
+            "name": "activate",
+            "region": "lifecycle",
+            "from": "trialing",
+            "to": "active"
+          },
+          {
+            "name": "expireTrial",
+            "region": "lifecycle",
+            "from": "trialing",
+            "to": "expired"
+          },
+          {
+            "name": "paymentFailed",
+            "region": "lifecycle",
+            "from": "active",
+            "to": "pastDue"
+          },
+          {
+            "name": "recover",
+            "region": "lifecycle",
+            "from": "pastDue",
+            "to": "active"
+          },
+          {
+            "name": "cancelFromTrial",
+            "region": "lifecycle",
+            "from": "trialing",
+            "to": "canceled"
+          },
+          {
+            "name": "cancelFromActive",
+            "region": "lifecycle",
+            "from": "active",
+            "to": "canceled"
+          },
+          {
+            "name": "cancelFromPastDue",
+            "region": "lifecycle",
+            "from": "pastDue",
+            "to": "canceled"
+          },
+          {
+            "name": "dunningExhausted",
+            "region": "lifecycle",
+            "from": "pastDue",
+            "to": "canceled"
+          }
         ]
-      }
+      },
+      "doc": "A customer's subscription to a Plan; usage accrues per billing period and resets at rollover"
     },
     {
       "kind": "aggregate",
       "name": "Invoice",
-      "doc": "Period invoice: license-fee portion plus usage portion; partial payments accrue",
       "fields": [
-        { "name": "invoiceId", "type": { "kind": "prim", "prim": "Id" }, "key": true },
-        { "name": "subscription", "type": { "kind": "ref", "target": "Subscription" } },
-        { "name": "licenseFeeAmount", "type": { "kind": "prim", "prim": "Money" }, "tags": ["total"] },
-        { "name": "usageAmount", "type": { "kind": "prim", "prim": "Money" }, "tags": ["total"] },
-        { "name": "totalDue", "type": { "kind": "prim", "prim": "Money" }, "tags": ["total"] },
-        { "name": "amountPaid", "type": { "kind": "prim", "prim": "Money" }, "tags": ["balance"] }
+        {
+          "name": "invoiceId",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          },
+          "key": true
+        },
+        {
+          "name": "subscription",
+          "type": {
+            "kind": "ref",
+            "target": "Subscription"
+          }
+        },
+        {
+          "name": "licenseFeeAmount",
+          "type": {
+            "kind": "prim",
+            "prim": "Money"
+          },
+          "tags": [
+            "total"
+          ]
+        },
+        {
+          "name": "usageAmount",
+          "type": {
+            "kind": "prim",
+            "prim": "Money"
+          },
+          "tags": [
+            "total"
+          ]
+        },
+        {
+          "name": "totalDue",
+          "type": {
+            "kind": "prim",
+            "prim": "Money"
+          },
+          "tags": [
+            "total"
+          ]
+        },
+        {
+          "name": "amountPaid",
+          "type": {
+            "kind": "prim",
+            "prim": "Money"
+          },
+          "tags": [
+            "balance"
+          ]
+        }
       ],
       "machine": {
         "regions": [
@@ -76,23 +272,72 @@
             "name": "settlement",
             "initial": "draft",
             "states": [
-              { "name": "draft" },
-              { "name": "open", "tags": ["active"] },
-              { "name": "paid", "tags": ["terminal"] },
-              { "name": "void", "tags": ["terminal"] },
-              { "name": "uncollectible", "tags": ["terminal"] }
+              {
+                "name": "draft"
+              },
+              {
+                "name": "open",
+                "tags": [
+                  "active"
+                ]
+              },
+              {
+                "name": "paid",
+                "tags": [
+                  "terminal"
+                ]
+              },
+              {
+                "name": "void",
+                "tags": [
+                  "terminal"
+                ]
+              },
+              {
+                "name": "uncollectible",
+                "tags": [
+                  "terminal"
+                ]
+              }
             ]
           }
         ],
         "transitions": [
-          { "name": "finalize", "region": "settlement", "from": "draft", "to": "open" },
-          { "name": "settle", "region": "settlement", "from": "open", "to": "paid" },
-          { "name": "void_draft", "region": "settlement", "from": "draft", "to": "void" },
-          { "name": "void_open", "region": "settlement", "from": "open", "to": "void" },
-          { "name": "write_off", "region": "settlement", "from": "open", "to": "uncollectible" }
+          {
+            "name": "finalize",
+            "region": "settlement",
+            "from": "draft",
+            "to": "open"
+          },
+          {
+            "name": "settle",
+            "region": "settlement",
+            "from": "open",
+            "to": "paid"
+          },
+          {
+            "name": "voidDraft",
+            "region": "settlement",
+            "from": "draft",
+            "to": "void"
+          },
+          {
+            "name": "voidOpen",
+            "region": "settlement",
+            "from": "open",
+            "to": "void"
+          },
+          {
+            "name": "writeOff",
+            "region": "settlement",
+            "from": "open",
+            "to": "uncollectible"
+          }
         ]
-      }
+      },
+      "doc": "Period invoice: license-fee portion plus usage portion; partial payments accrue"
     }
   ],
-  "events": []
+  "events": [],
+  "doc": "Subscriptions API: hybrid license-fee + usage-based billing"
 }

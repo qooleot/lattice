@@ -1,11 +1,11 @@
 import { parseArgs } from 'node:util';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import type { DomainModel } from './ast/domain.js';
 import { validateModel } from './ast/validate.js';
 import { validateCandidate } from './ast/grammar.js';
 import type { CandidateInvariant } from './ast/invariant.js';
-import { loadState, saveState, appendLedger, readLedger, type SessionState } from './engine/session.js';
+import { loadState, saveState, appendLedger, readLedger, type SessionState, type LedgerEntry } from './engine/session.js';
 import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
 import { nextQuestion, checkDistinct, adoptedConstraints, type SolverDeps } from './engine/planner.js';
@@ -14,8 +14,13 @@ import { astToAlloy } from './emit/alloy.js';
 import { astToQuint } from './emit/quint.js';
 import { runAlloy } from './solvers/alloy-adapter.js';
 import { runQuint } from './solvers/quint-adapter.js';
-import { astToProse } from './emit/prose.js';
+import { astToProse, renderCandidateEnglish } from './emit/prose.js';
 import { astToCode } from './emit/code.js';
+import { impliedInvariants, canonicalCandidate } from './engine/implied.js';
+import { loadLatText } from './parse/fromLangium.js';
+import { reconcile } from './engine/reconcile.js';
+import type { RenameSpec, RenameScope } from './engine/renames.js';
+import { renameEntries, currentInvariantName } from './engine/renames.js';
 
 export const realDeps: SolverDeps = {
   alloy: async (m, q, max) => runAlloy(astToAlloy(m, q), max),
@@ -34,7 +39,7 @@ const isBadJson = (v: any): v is { [BAD_JSON]: string } => v != null && typeof v
 const now = () => new Date().toISOString();
 
 const VALID_JUDGES = ['permit', 'forbid', 'undecided'] as const;
-const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit']);
+const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit', 'explain']);
 // terminal/monotonic/leadsTo/refsResolve are template-adopted only (spec §7/§8): they either crash
 // candidateToQuint when pair-routed against a Quint-side candidate, or (refsResolve) mis-evaluate
 // on Quint witnesses that never populate the fields refsResolve's vacuous-true Alloy semantics
@@ -43,13 +48,56 @@ const UNELICITABLE_KINDS = new Set(['terminal', 'monotonic', 'leadsTo', 'refsRes
 const notElicitable = (kinds: string[]) =>
   ({ error: 'not-elicitable', kinds, hint: 'these kinds are template-adopted, not elicited' });
 
+function writeProjections(latPath: string, model: DomainModel, adopted: CandidateInvariant[],
+    ledger: LedgerEntry[]): string[] {
+  const outDir = dirname(latPath);
+  const shapes = new Set(adopted.map(a => canonicalCandidate(a.candidate)));
+  const derived = impliedInvariants(model).filter(d => !shapes.has(canonicalCandidate(d.candidate)));
+  // apply --lat foo.lat rewrites foo.lat itself (spec §4); prose stays a sibling spec.prose.md
+  const lat = latPath, prose = join(outDir, 'spec.prose.md');
+  writeFileSync(lat, astToCode(model, adopted));
+  writeFileSync(prose, astToProse(model, [...adopted, ...derived], ledger));
+  return [lat, prose];
+}
+
+function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
+  const segs = path.split('.');
+  const from = segs[segs.length - 1]!;
+  const scope = ((): RenameScope | null => {
+    if (segs.length === 1) {
+      if (m.aggregates.some(a => a.name === from)) return 'aggregate';
+      if (m.entities.some(e => e.name === from)) return 'entity';
+      if (m.enums.some(e => e.name === from)) return 'enum';
+      if (m.events.some(e => e.name === from)) return 'event';
+      return invariantNames.has(from) ? 'invariant' : null;
+    }
+    const owner = m.aggregates.find(a => a.name === segs[0]) ?? m.entities.find(e => e.name === segs[0]);
+    if (segs.length === 2) {
+      if (m.enums.some(e => e.name === segs[0] && e.values.includes(from))) return 'enumValue';
+      if (!owner) return null;
+      if (owner.fields.some(f => f.name === from)) return 'field';
+      const mach = owner.kind === 'aggregate' ? owner.machine : undefined;
+      if (mach?.regions.some(r => r.name === from)) return 'region';
+      if (mach?.transitions.some(t => t.name === from)) return 'transition';
+      return null;
+    }
+    if (segs.length === 3 && owner?.kind === 'aggregate'
+        && owner.machine?.regions.some(r => r.name === segs[1] && r.states.some(st => st.name === from))) return 'state';
+    return null;
+  })();
+  return scope ? { scope, path, from, to } : null;
+}
+
 export async function runCommand(argv: string[], deps: SolverDeps): Promise<object> {
   try {
     const cmd = argv[0]!;
     const { values } = parseArgs({ args: argv.slice(1), options: {
       session: { type: 'string' }, model: { type: 'string' }, candidates: { type: 'string' }, candidate: { type: 'string' },
       witness: { type: 'string' }, judge: { type: 'string' }, out: { type: 'string' }, topic: { type: 'string' }, note: { type: 'string' },
-      question: { type: 'string' }, answer: { type: 'string' }
+      question: { type: 'string' }, answer: { type: 'string' },
+      lat: { type: 'string' }, 'dry-run': { type: 'boolean' },
+      rename: { type: 'string', multiple: true }, 'force-remove': { type: 'string', multiple: true },
+      name: { type: 'string' }
     }});
 
     if (!values.session) return { error: 'missing-arg', arg: 'session' };
@@ -65,10 +113,20 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         break;
       case 'witness-show': if (!values.witness) return { error: 'missing-arg', arg: 'witness' }; break;
       case 'emit': if (!values.out) return { error: 'missing-arg', arg: 'out' }; break;
+      case 'explain': if (!values.name) return { error: 'missing-arg', arg: 'name' }; break;
       case 'structure':
         if (!values.question) return { error: 'missing-arg', arg: 'question' };
         if (!values.answer) return { error: 'missing-arg', arg: 'answer' };
         break;
+      case 'apply': if (!values.lat) return { error: 'missing-arg', arg: 'lat' }; break;
+      case 'sync': if (!values.lat) return { error: 'missing-arg', arg: 'lat' }; break;
+    }
+
+    if (cmd === 'sync') {
+      const { startSync } = await import('./engine/sync.js');
+      startSync({ lat: values.lat!, session: dir, deps,
+        onOutcome: o => console.log(JSON.stringify(o)) });
+      await new Promise(() => {});   // run until SIGINT
     }
 
     const s = loadState(dir);
@@ -177,11 +235,106 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       case 'emit': {
         const adopted = s.candidates.filter(c => c.status === 'adopted').map(c => c.inv);
         const ledger = readLedger(dir);
+        const shapes = new Set(adopted.map(a => canonicalCandidate(a.candidate)));
+        const derived = impliedInvariants(model()).filter(d => !shapes.has(canonicalCandidate(d.candidate)));
         mkdirSync(values.out!, { recursive: true });
         const prose = join(values.out!, 'spec.prose.md'), lat = join(values.out!, 'spec.lat');
-        writeFileSync(prose, astToProse(model(), adopted, ledger));
-        writeFileSync(lat, astToCode(model(), adopted, ledger));
+        writeFileSync(prose, astToProse(model(), [...adopted, ...derived], ledger));
+        writeFileSync(lat, astToCode(model(), adopted));
         return { written: [prose, lat] };
+      }
+      case 'apply': {
+        const latPath = values.lat!;
+        let text: string;
+        try { text = readFileSync(latPath, 'utf8'); }
+        catch (err) { return { error: 'unreadable-lat', message: String(err) }; }
+        const loaded = loadLatText(text);
+        if (!loaded.ok) return { error: 'parse-failed', diagnostics: loaded.diagnostics };
+
+        const sessionExists = existsSync(join(dir, 'state.json'));
+        if (sessionExists && (s.phase !== 'converged' || Object.keys(s.pendingWitnesses).length > 0) && s.model)
+          return { error: 'session-busy', phase: s.phase, pendingWitnesses: Object.keys(s.pendingWitnesses),
+            hint: 'finish or abandon the elicitation session before applying hand edits' };
+
+        const storedModel: DomainModel | null = sessionExists
+          ? (s.model ?? JSON.parse(readFileSync(join(dir, 'model.json'), 'utf8')))
+          : null;
+        const storedExplicit = sessionExists
+          ? s.candidates.filter(c => c.status === 'adopted').map(c => c.inv) : [];
+
+        const invariantNames = storedModel
+          ? new Set([
+              ...storedExplicit.map(i => i.name),
+              ...impliedInvariants(storedModel).map(d => d.name)
+            ])
+          : new Set<string>();
+
+        const renames: RenameSpec[] = [];
+        for (const rv of values.rename ?? []) {
+          const m2 = rv.match(/^([A-Za-z_][\w.]*)=([A-Za-z_]\w*)$/);
+          if (!m2) return { error: 'bad-rename-flag', flag: rv, hint: 'use --rename Owner.oldName=newName' };
+          const spec = inferRenameSpec(m2[1]!, m2[2]!, storedModel ?? loaded.model, invariantNames);
+          if (!spec) return { error: 'unknown-rename-path', flag: rv };
+          renames.push(spec);
+        }
+
+        const at = now();
+        const outcomeBase = { warnings: loaded.warnings.map(w => `${w.code}: ${w.message}`) };
+        if (!storedModel) {
+          // hand-authored new spec (spec §5.8): everything adopts, no verdicts to contradict
+          if (values['dry-run']) return { ok: true, dryRun: true, applied: ['fresh session'], ...outcomeBase };
+          s.model = loaded.model;
+          s.phase = 'converged';
+          s.candidates = loaded.invariants.map(inv => ({ inv, status: 'adopted' as const }));
+          for (const inv of loaded.invariants)
+            appendLedger(dir, { kind: 'adopted', at, invariant: inv, provenance: `hand-authored ${at.slice(0, 10)}` });
+          writeFileSync(join(dir, 'model.json'), JSON.stringify(loaded.model, null, 2));
+          const written = writeProjections(latPath, loaded.model, loaded.invariants, readLedger(dir));
+          return done({ ok: true, applied: ['fresh session', ...loaded.invariants.map(i => `invariant ${i.name}`)], written, ...outcomeBase });
+        }
+
+        const r = reconcile({ parsed: { model: loaded.model, invariants: loaded.invariants },
+          storedModel, storedExplicit, ledger: readLedger(dir),
+          confirmedRenames: renames, forceRemove: values['force-remove'] ?? [], at });
+        const warnings = [...outcomeBase.warnings, ...r.warnings];
+        if (!r.ok) return { error: 'refused', refusals: r.refusals, warnings };
+        if (values['dry-run']) return { ok: true, dryRun: true, applied: r.applied, warnings };
+
+        s.model = r.model;
+        s.candidates = [
+          ...s.candidates.filter(c => c.status !== 'adopted'),
+          ...r.adopted.map(inv => ({ inv, status: 'adopted' as const }))];
+        for (const e of r.ledgerAppends) appendLedger(dir, e);
+        writeFileSync(join(dir, 'model.json'), JSON.stringify(r.model, null, 2));
+        const written = writeProjections(latPath, r.model, r.adopted, readLedger(dir));
+        return done({ ok: true, applied: r.applied, written, warnings });
+      }
+      case 'explain': {
+        const ledger = readLedger(dir);
+        const renames = renameEntries(ledger).filter(r => r.scope === 'invariant');
+        const current = currentInvariantName(values.name!, renames);
+        const chain = renames.filter(r => currentInvariantName(r.from, renames) === current);
+        const adoptions = ledger.filter(e => e.kind === 'adopted'
+          && currentInvariantName((e as any).invariant.name, renames) === current) as any[];
+        const derived = impliedInvariants(model()).find(d => d.name === current);
+        if (!adoptions.length && !derived) return { error: 'unknown-invariant', name: values.name };
+        const latest = adoptions[adoptions.length - 1];
+        const inv = latest?.invariant ?? derived!;
+        const witnessIds = new Set((latest?.provenance.match(/w\d+/g) ?? []));
+        const witnesses = ledger.filter(e => e.kind === 'verdict' && witnessIds.has((e as any).witnessId))
+          .map(e => ({ id: (e as any).witnessId, judge: (e as any).judge, at: (e as any).at, salient: (e as any).salient }));
+        const out: any = { name: current, english: renderCandidateEnglish(inv.candidate),
+          provenance: latest?.provenance ?? 'implied by structure', witnesses,
+          renames: chain.map(r => ({ from: r.from, to: r.to })) };
+        if (derived) {
+          // set whenever the rule is CURRENTLY implied — historical adoption entries may coexist
+          // (post-migration the 13 template adoptions remain in the ledger under old names)
+          const c = derived.candidate;
+          out.implied = c.kind === 'terminal' ? `implied by @terminal on ${c.aggregate}.${c.region}.${c.state}`
+            : c.kind === 'refsResolve' ? `implied by ref fields on ${c.aggregate}`
+            : `implied by Money field on ${c.aggregate}`;
+        }
+        return out;
       }
       default: return { error: 'unknown-command', cmd };
     }
@@ -192,5 +345,9 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
 
 const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 if (isMain) runCommand(process.argv.slice(2), realDeps)
-  .then(o => console.log(JSON.stringify(o, null, 2)))
-  .catch(err => { console.log(JSON.stringify({ error: 'internal', message: String(err) }, null, 2)); process.exitCode = 1; });
+  .then(o => {
+    console.log(JSON.stringify(o, null, 2));
+    const err = (o as any)?.error;
+    if (err) process.exitCode = err === 'internal' ? 2 : 1;
+  })
+  .catch(err => { console.log(JSON.stringify({ error: 'internal', message: String(err) }, null, 2)); process.exitCode = 2; });

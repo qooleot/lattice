@@ -26,16 +26,19 @@ describe('astToProse', () => {
 });
 
 describe('astToCode', () => {
-  const code = astToCode(traceAModel, [H3], ledger);
+  const code = astToCode(traceAModel, [H3]);
   it('pretty-prints the .lat projection', () => {
     expect(code).toContain('context Billing {');
     expect(code).toContain('aggregate Subscription {');
     expect(code).toContain('customer : ref Customer');
-    expect(code).toContain('region Access { states { Trialing, Active @active, Ended @terminal } }');
-    expect(code).toContain('unique while Active by (customer, plan.family)');
+    expect(code).toContain('region Access { states { Trialing @initial, Active @active, Ended @terminal } }');
+    expect(code).toContain('invariant SingleActivePerFamily { unique while Access in {Active} by (customer, plan.family) }');
   });
-  it('appends a ledger-anchor comment for an adopted invariant with a matching ledger entry', () => {
-    expect(code).toContain('⚓ elicited w1–w2');
+  it('omits an adopted invariant whose candidate is structurally implied (spec §3.4)', () => {
+    const impliedDup: CandidateInvariant = { id: 'tpl-refsResolve-Subscription', name: 'NoOrphanSubscription', prior: 0.9, source: 'template',
+      candidate: { kind: 'refsResolve', aggregate: 'Subscription' } };
+    const withImplied = astToCode(traceAModel, [H3, impliedDup]);
+    expect(withImplied).not.toContain('NoOrphanSubscription');
   });
 });
 
@@ -48,23 +51,23 @@ describe('DomainModel.doc rendering', () => {
     expect(prose).toContain('*Subscriptions API: hybrid license-fee + usage-based billing*');
   });
 
-  it('renders doc as a leading comment above the context line in code', () => {
-    const code = astToCode(withDoc, [H3], ledger);
-    expect(code).toContain('// Subscriptions API: hybrid license-fee + usage-based billing');
-    expect(code.indexOf('//')).toBeLessThan(code.indexOf('context Billing {'));
+  it('renders doc as a leading /// doc-comment above the context line in code', () => {
+    const code = astToCode(withDoc, [H3]);
+    expect(code).toContain('/// Subscriptions API: hybrid license-fee + usage-based billing');
+    expect(code.indexOf('///')).toBeLessThan(code.indexOf('context Billing {'));
   });
 
   it('omits the doc line entirely when doc is unset', () => {
-    const code = astToCode(traceAModel, [H3], ledger);
+    const code = astToCode(traceAModel, [H3]);
     expect(code.startsWith('context Billing {')).toBe(true);
   });
 });
 
 describe('emitted .lat smoke tripwire', () => {
-  it('first non-comment line is a valid context declaration', () => {
+  it('first non-doc-comment line is a valid context declaration', () => {
     const withDoc = { ...traceAModel, doc: 'Subscriptions API: hybrid license-fee + usage-based billing' };
-    const code = astToCode(withDoc, [H3], ledger);
-    const firstNonComment = code.split('\n').find(l => l.trim() !== '' && !l.trim().startsWith('//'));
+    const code = astToCode(withDoc, [H3]);
+    const firstNonComment = code.split('\n').find(l => l.trim() !== '' && !l.trim().startsWith('///'));
     expect(firstNonComment).toMatch(/^context [A-Za-z_][A-Za-z0-9_]* \{$/);
   });
 });

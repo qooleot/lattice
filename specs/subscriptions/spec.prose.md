@@ -6,34 +6,34 @@
 
 A customer's subscription to a Plan; usage accrues per billing period and resets at rollover
 
-**lifecycle lifecycle:** trialing → active → past_due → canceled (terminal) → expired (terminal)
+**lifecycle lifecycle:** trialing → active (activate), trialing → expired (terminal) (expireTrial), active → pastDue (paymentFailed), pastDue → active (recover), trialing → canceled (terminal) (cancelFromTrial), active → canceled (terminal) (cancelFromActive), pastDue → canceled (terminal) (cancelFromPastDue), pastDue → canceled (terminal) (dunningExhausted)
 
 ## Invoice
 
 Period invoice: license-fee portion plus usage portion; partial payments accrue
 
-**settlement lifecycle:** draft → open → paid (terminal) → void (terminal) → uncollectible (terminal)
+**settlement lifecycle:** draft → open (finalize), open → paid (terminal) (settle), draft → void (terminal) (voidDraft), open → void (terminal) (voidOpen), open → uncollectible (terminal) (writeOff)
 
 ## Always true
 
-- Every reference on Subscription resolves to an existing record.  (template tpl-9-Subscription: NoOrphan_Subscription)
-- Once Subscription is canceled, it stays canceled.  (template tpl-3-Subscription-canceled: Terminal_Subscription_canceled)
-- Once Subscription is expired, it stays expired.  (template tpl-3-Subscription-expired: Terminal_Subscription_expired)
-- On every Invoice: licenseFeeAmount ≥ 0.  (template tpl-2-Invoice-licenseFeeAmount: NonNegative_Invoice_licenseFeeAmount)
-- On every Invoice: usageAmount ≥ 0.  (template tpl-2-Invoice-usageAmount: NonNegative_Invoice_usageAmount)
-- On every Invoice: totalDue ≥ 0.  (template tpl-2-Invoice-totalDue: NonNegative_Invoice_totalDue)
-- On every Invoice: amountPaid ≥ 0.  (template tpl-2-Invoice-amountPaid: NonNegative_Invoice_amountPaid)
-- Every reference on Invoice resolves to an existing record.  (template tpl-9-Invoice: NoOrphan_Invoice)
-- Once Invoice is paid, it stays paid.  (template tpl-3-Invoice-paid: Terminal_Invoice_paid)
-- Once Invoice is void, it stays void.  (template tpl-3-Invoice-void: Terminal_Invoice_void)
-- Once Invoice is uncollectible, it stays uncollectible.  (template tpl-3-Invoice-uncollectible: Terminal_Invoice_uncollectible)
-- On every Plan: licenseFee ≥ 0.  (template tpl-2-Plan-licenseFee: NonNegative_Plan_licenseFee)
-- On every Plan: usageRate ≥ 0.  (template tpl-2-Plan-usageRate: NonNegative_Plan_usageRate)
-- On every Invoice: totalDue ≤ licenseFeeAmount + usageAmount.  (elicited (w1, w2): TotalDue_At_Most_Parts)
-- On every Invoice: amountPaid ≤ totalDue and if it is paid, then amountPaid is totalDue.  (elicited (w1, w2, w3): Never_Overpaid_And_Paid_Exact)
-- Only one Invoice may be draft per (subscription).  (elicited (w1, w2, w3, w4, w5): One_Draft_Invoice_Per_Subscription)
-- On every Subscription: periodStart < periodEnd and accruedUnits ≥ 0.  (elicited (w1, w2, w3, w4, w5): Positive_Period_NonNegative_Usage)
-- On every Plan: includedUnits ≥ 0 and if pricingMode is overage, then includedUnits ≥ 1.  (elicited (w1, w2, w3, w4, w5): Overage_Implies_Real_Allowance)
+- On every Subscription: periodStart < periodEnd and accruedUnits ≥ 0.  (elicited (w1, w2, w3, w4, w5): positivePeriodNonNegativeUsage)
+- On every Invoice: totalDue ≤ licenseFeeAmount + usageAmount.  (elicited (w1, w2): totalDueAtMostParts)
+- On every Invoice: amountPaid ≤ totalDue and if it is paid, then amountPaid is totalDue.  (elicited (w1, w2, w3): neverOverpaidAndPaidExact)
+- Only one Invoice may be draft per (subscription).  (elicited (w1, w2, w3, w4, w5): oneDraftInvoicePerSubscription)
+- On every Plan: includedUnits ≥ 0 and if pricingMode is overage, then includedUnits ≥ 1.  (elicited (w1, w2, w3, w4, w5): overageImpliesRealAllowance)
+- Every reference on Subscription resolves to an existing record.  (implied by structure: refsResolveSubscription)
+- Once Subscription is canceled, it stays canceled.  (implied by structure: terminalSubscriptionLifecycleCanceled)
+- Once Subscription is expired, it stays expired.  (implied by structure: terminalSubscriptionLifecycleExpired)
+- On every Invoice: licenseFeeAmount ≥ 0.  (implied by structure: nonNegativeInvoiceLicenseFeeAmount)
+- On every Invoice: usageAmount ≥ 0.  (implied by structure: nonNegativeInvoiceUsageAmount)
+- On every Invoice: totalDue ≥ 0.  (implied by structure: nonNegativeInvoiceTotalDue)
+- On every Invoice: amountPaid ≥ 0.  (implied by structure: nonNegativeInvoiceAmountPaid)
+- Every reference on Invoice resolves to an existing record.  (implied by structure: refsResolveInvoice)
+- Once Invoice is paid, it stays paid.  (implied by structure: terminalInvoiceSettlementPaid)
+- Once Invoice is void, it stays void.  (implied by structure: terminalInvoiceSettlementVoid)
+- Once Invoice is uncollectible, it stays uncollectible.  (implied by structure: terminalInvoiceSettlementUncollectible)
+- On every Plan: licenseFee ≥ 0.  (implied by structure: nonNegativePlanLicenseFee)
+- On every Plan: usageRate ≥ 0.  (implied by structure: nonNegativePlanUsageRate)
 
 ## ⚠️ Open decisions
 

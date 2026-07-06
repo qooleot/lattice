@@ -184,6 +184,32 @@ describe('engine CLI', () => {
     expect(out.written.length).toBe(2);
   });
 
+  it('emit lists an adopted implied-shape rule once in prose even with jumbled key order', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'emit-dedup-'));
+    const model = {
+      context: 'Dedup', enums: [], events: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Box', fields: [
+        { name: 'boxId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }],
+    };
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(model));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    // jumble the stored adopted candidate's key order so raw JSON.stringify comparison would differ
+    const statePath = join(dir, 'state.json');
+    const state = JSON.parse(readFileSync(statePath, 'utf8'));
+    const adoptedEntry = state.candidates.find((c: any) => c.status === 'adopted' && c.inv.candidate.kind === 'statePredicate');
+    const reorder = (o: any): any => Array.isArray(o) ? o.map(reorder)
+      : o && typeof o === 'object' ? Object.fromEntries(Object.keys(o).reverse().map(k => [k, reorder(o[k])])) : o;
+    adoptedEntry.inv.candidate = reorder(adoptedEntry.inv.candidate);
+    writeFileSync(statePath, JSON.stringify(state));
+    // init template-adopts NonNegative_Box_amount whose candidate matches the implied rule
+    const r: any = await runCommand(['emit', '--session', dir, '--out', dir], fakeDeps);
+    expect(r.written).toBeDefined();
+    const prose = readFileSync(join(dir, 'spec.prose.md'), 'utf8');
+    const hits = prose.split('\n').filter(l => l.includes('amount') && l.includes('never') === false && l.includes('≥ 0'));
+    expect(hits.length).toBe(1);
+  });
+
   it('rejects an invalid --judge without touching state or ledger', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cli-'));
     writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));

@@ -1,0 +1,5 @@
+{
+  "projectName": "Lat",
+  "languages": [{ "id": "lat", "grammar": "src/parse/lat.langium", "fileExtensions": [".lat"] }],
+  "out": "src/parse/generated"
+}
