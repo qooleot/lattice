@@ -118,6 +118,14 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         if (!values.answer) return { error: 'missing-arg', arg: 'answer' };
         break;
       case 'apply': if (!values.lat) return { error: 'missing-arg', arg: 'lat' }; break;
+      case 'sync': if (!values.lat) return { error: 'missing-arg', arg: 'lat' }; break;
+    }
+
+    if (cmd === 'sync') {
+      const { startSync } = await import('./engine/sync.js');
+      startSync({ lat: values.lat!, session: dir, deps,
+        onOutcome: o => console.log(JSON.stringify(o)) });
+      await new Promise(() => {});   // run until SIGINT
     }
 
     const s = loadState(dir);
