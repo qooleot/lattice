@@ -14,12 +14,13 @@ import { astToAlloy } from './emit/alloy.js';
 import { astToQuint } from './emit/quint.js';
 import { runAlloy } from './solvers/alloy-adapter.js';
 import { runQuint } from './solvers/quint-adapter.js';
-import { astToProse } from './emit/prose.js';
+import { astToProse, renderCandidateEnglish } from './emit/prose.js';
 import { astToCode } from './emit/code.js';
 import { impliedInvariants, canonicalCandidate } from './engine/implied.js';
 import { loadLatText } from './parse/fromLangium.js';
 import { reconcile } from './engine/reconcile.js';
 import type { RenameSpec, RenameScope } from './engine/renames.js';
+import { renameEntries, currentInvariantName } from './engine/renames.js';
 
 export const realDeps: SolverDeps = {
   alloy: async (m, q, max) => runAlloy(astToAlloy(m, q), max),
@@ -38,7 +39,7 @@ const isBadJson = (v: any): v is { [BAD_JSON]: string } => v != null && typeof v
 const now = () => new Date().toISOString();
 
 const VALID_JUDGES = ['permit', 'forbid', 'undecided'] as const;
-const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit']);
+const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit', 'explain']);
 // terminal/monotonic/leadsTo/refsResolve are template-adopted only (spec §7/§8): they either crash
 // candidateToQuint when pair-routed against a Quint-side candidate, or (refsResolve) mis-evaluate
 // on Quint witnesses that never populate the fields refsResolve's vacuous-true Alloy semantics
@@ -111,6 +112,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         break;
       case 'witness-show': if (!values.witness) return { error: 'missing-arg', arg: 'witness' }; break;
       case 'emit': if (!values.out) return { error: 'missing-arg', arg: 'out' }; break;
+      case 'explain': if (!values.name) return { error: 'missing-arg', arg: 'name' }; break;
       case 'structure':
         if (!values.question) return { error: 'missing-arg', arg: 'question' };
         if (!values.answer) return { error: 'missing-arg', arg: 'answer' };
@@ -297,6 +299,33 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         writeFileSync(join(dir, 'model.json'), JSON.stringify(r.model, null, 2));
         const written = writeProjections(latPath, r.model, r.adopted, readLedger(dir));
         return done({ ok: true, applied: r.applied, written, warnings });
+      }
+      case 'explain': {
+        const ledger = readLedger(dir);
+        const renames = renameEntries(ledger).filter(r => r.scope === 'invariant');
+        const current = currentInvariantName(values.name!, renames);
+        const chain = renames.filter(r => currentInvariantName(r.from, renames) === current);
+        const adoptions = ledger.filter(e => e.kind === 'adopted'
+          && currentInvariantName((e as any).invariant.name, renames) === current) as any[];
+        const derived = impliedInvariants(model()).find(d => d.name === current);
+        if (!adoptions.length && !derived) return { error: 'unknown-invariant', name: values.name };
+        const latest = adoptions[adoptions.length - 1];
+        const inv = latest?.invariant ?? derived!;
+        const witnessIds = new Set((latest?.provenance.match(/w\d+/g) ?? []));
+        const witnesses = ledger.filter(e => e.kind === 'verdict' && witnessIds.has((e as any).witnessId))
+          .map(e => ({ id: (e as any).witnessId, judge: (e as any).judge, at: (e as any).at, salient: (e as any).salient }));
+        const out: any = { name: current, english: renderCandidateEnglish(inv.candidate),
+          provenance: latest?.provenance ?? 'implied by structure', witnesses,
+          renames: chain.map(r => ({ from: r.from, to: r.to })) };
+        if (derived) {
+          // set whenever the rule is CURRENTLY implied — historical adoption entries may coexist
+          // (post-migration the 13 template adoptions remain in the ledger under old names)
+          const c = derived.candidate;
+          out.implied = c.kind === 'terminal' ? `implied by @terminal on ${c.aggregate}.${c.region}.${c.state}`
+            : c.kind === 'refsResolve' ? `implied by ref fields on ${c.aggregate}`
+            : `implied by Money field on ${c.aggregate}`;
+        }
+        return out;
       }
       default: return { error: 'unknown-command', cmd };
     }
