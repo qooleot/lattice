@@ -33,6 +33,10 @@ Three diagram types, per the user's scoping decisions:
 
 Explicitly **out**: invariant overlays/annotations on diagrams (user decision).
 
+Also in scope (user decision, 2026-07-06): a **whole-language reference** under `docs/language/`
+in the style of Context Mapper's per-pattern doc pages — one short page per construct, covering
+the existing language and the constructs this slice adds (§10).
+
 ## 2. Context Mapper research — what transfers
 
 - CML generators are **one small "Creator" class per diagram type**, doing plain typed iteration
@@ -271,7 +275,36 @@ loop:
    publishedLanguage; exposes Plan }`).
 4. Run `docs`; commit generated outputs; verify rendering on GitHub.
 
-## 10. Testing
+## 10. Language reference docs — `docs/language/`
+
+A whole-language reference, borrowing Context Mapper's page template (studied on their
+open-host-service page): each page is short (~200 words), with a one-paragraph **description**
+linking related pages, a **Syntax** section with a ` ```lat ` code block, **Semantic Rules**
+bullets that name the real diagnostics (`invalid-name`, `naming-convention`,
+`cross-context-ref-unsupported`, …), an **Example**, and **See also** links. `docs/language/
+README.md` is the index (GitHub renders it for the directory) with a grouped table of contents.
+
+Page inventory:
+
+| Group | Pages |
+|---|---|
+| Overview | `README.md` (index + 10-line tour), `projections.md` (prose/diagrams are generated; do-not-edit) |
+| Strategic | `context-map.md` (contextMap, contains/from), `upstream-downstream.md` (incl. `exposes`), `open-host.md`, `published-language.md`, `anticorruption.md`, `conformist.md`, `partnership.md`, `shared-kernel.md` |
+| Structure | `context.md`, `enum.md`, `entity.md`, `aggregate.md`, `field-types.md` (primitives, `List<>`, `ref`, qualified refs), `event.md`, `service.md` |
+| Behavior | `machine.md` (regions, states, `@initial`/`@active`/`@terminal`), `transition.md` |
+| Invariants | `invariant.md` (declaration, predicates, operators), `invariant-forms.md` (all 8 bodies: predicate, unique, refs resolve, count, terminal, monotonic, conserve, leads-to), `derived-invariants.md` (slice-3 P9: what is implied, not printed) |
+| Meta | `doc-comments.md` (`///`, the `//` ban), `naming-conventions.md`, `tags.md`, `editing.md` (apply/sync, rename ceremony, ledger reconciliation from the engineer's seat) |
+
+Like CML's role pages (Open Host Service, Conformist, …), each role keyword gets its own page:
+the DDD pattern in a paragraph, then the Lattice spelling.
+
+**Docs are held to the code's standard:** every ` ```lat ` block in `docs/language/` is extracted
+and parsed in tests (context files, map files, and — for fragment examples — wrapped in a minimal
+valid context first), so a grammar change that invalidates an example fails CI, and examples can
+never rot into pseudo-code. A grammar change therefore ships with its page update (added to the
+institutional checklist).
+
+## 11. Testing
 
 - **Grammar/round-trip**: slice-3 round-trip property tests extended over `service`, qualified
   refs, and `contextMap` files; parse-error tests for malformed map syntax.
@@ -294,8 +327,10 @@ loop:
   for that field; a candidate naming a qualified-ref path → `cross-context-ref-unsupported`.
 - **Reconcile tests**: service add/edit/rename applies without ceremony; renaming an aggregate
   referenced from a service command rewrites the reference.
+- **Docs parse gate**: every ` ```lat ` block under `docs/language/` parses (fragments wrapped in
+  a minimal context; see §10).
 
-## 11. Slice boundaries (what this is NOT)
+## 12. Slice boundaries (what this is NOT)
 
 - No invariant overlays on diagrams (user decision).
 - No `requires`/`ensures`/`saga` on services; no `acl`/`translate`/`external` constructs — the
