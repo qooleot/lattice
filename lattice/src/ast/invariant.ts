@@ -31,6 +31,7 @@ export type Candidate =
 export interface CandidateInvariant {
   id: string;
   name: string;
+  doc?: string;                                     // human-owned /// English (spec P12); round-trips
   prior: number;                                    // LLM plausibility weight, 0..1
   source: 'seed' | 'template' | 'regen' | 'alternative';
   candidate: Candidate;

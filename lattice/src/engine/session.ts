@@ -24,7 +24,8 @@ export type LedgerEntry =
   | { kind: 'open-decision'; at: string; topic: string; note: string; witnessId?: string; salient?: SalientFact[]; witness?: CaseState }
   | { kind: 'adopted'; at: string; invariant: CandidateInvariant; provenance: string }
   | { kind: 'declined'; at: string; invariant: CandidateInvariant; reason: string }
-  | { kind: 'structure'; at: string; question: string; answer: string };
+  | { kind: 'structure'; at: string; question: string; answer: string }
+  | { kind: 'rename'; at: string; scope: import('./renames.js').RenameScope; path: string; from: string; to: string };
 
 export function newSession(): SessionState {
   return { model: null, candidates: [], phase: 'structure', regenAttempts: 0, alternativeAttempts: 0,
