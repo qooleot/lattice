@@ -125,7 +125,9 @@ function mapBody(inv: G.InvariantDecl, aggregate: string, enums: Map<string, str
       parts: (b as G.ConserveBody).parts.map(mapPath), total: mapPath((b as G.ConserveBody).total) };
     case 'LeadsToBody': return { kind: 'leadsTo', aggregate,
       from: mapPred((b as G.LeadsToBody).from, enums), to: mapPred((b as G.LeadsToBody).to, enums),
-      fairness: (b as G.LeadsToBody).fairness.slice(1, -1) };
+      // Langium's default value converter already strips STRING-terminal quotes (rule name STRING
+      // triggers ValueConverter.convertString); slicing again here truncated the first/last real chars.
+      fairness: (b as G.LeadsToBody).fairness };
     default: {
       const c: Candidate = { kind: 'statePredicate', aggregate, body: mapPred((b as G.PredicateBody).pred, enums) };
       if (where) (c as any).where = where;
