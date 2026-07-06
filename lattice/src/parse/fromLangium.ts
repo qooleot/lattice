@@ -213,7 +213,8 @@ export function loadLatText(text: string): LoadResult {
     }
   }
 
-  const modelDiags = validateModel(model).map(d => ({ code: d.code, message: d.message, line: 1, col: 1 }));
+  const modelDiags = validateModel(model).map(d =>
+    ({ code: d.code, message: d.at ? `${d.message} (at ${d.at})` : d.message, line: 1, col: 1 }));
   diags.push(...modelDiags);
   if (diags.length) return { ok: false, diagnostics: diags };
 

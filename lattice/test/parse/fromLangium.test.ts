@@ -107,4 +107,22 @@ describe('loadLatText', () => {
     expect(r2.ok).toBe(true);
     if (r2.ok) expect(r2.warnings.some(w => w.code === 'naming-convention')).toBe(true);
   });
+
+  it('validateModel diagnostics carry the dotted path in the message', () => {
+    const bad = loadLatText('context C { entity E { eId : Id key\n  broken : ref Nowhere } }');
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'unresolved-ref' && d.message.includes('E.broken'))).toBe(true);
+  });
+
+  it('does not drop a real cmp invariant on an aggregate with implied Money rules', () => {
+    const r2 = loadLatText(`context C { aggregate Inv { invId : Id key
+      total : Money
+      fee   : Money
+      invariant totalAtMostFee { total <= fee + 1 } } }`);
+    expect(r2.ok).toBe(true);
+    if (r2.ok) {
+      expect(r2.invariants.map(i => i.name)).toEqual(['totalAtMostFee']);
+      expect(r2.warnings.some(w => w.code === 'redundant-invariant')).toBe(false);
+    }
+  });
 });

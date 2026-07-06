@@ -44,4 +44,13 @@ describe('impliedInvariants', () => {
     expect(isImplied({ kind: 'refsResolve', aggregate: 'Invoice' }, m)).toBe(true);
     expect(isImplied({ kind: 'refsResolve', aggregate: 'Plan' }, m)).toBe(false);
   });
+
+  it('isImplied distinguishes different cmp bodies on the same aggregate (deep canonicalization)', () => {
+    expect(isImplied({ kind: 'statePredicate', aggregate: 'Invoice',
+      body: { kind: 'cmp', op: 'le', left: { kind: 'field', owner: 'self', path: ['totalDue'] },
+        right: { kind: 'plus', left: { kind: 'field', owner: 'self', path: ['totalDue'] }, right: { kind: 'int', value: 1 } } } }, m)).toBe(false);
+    expect(isImplied({ kind: 'statePredicate', aggregate: 'Invoice',
+      body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['totalDue'] },
+        right: { kind: 'int', value: 0 } } }, m)).toBe(true);
+  });
 });

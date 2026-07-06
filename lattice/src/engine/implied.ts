@@ -30,7 +30,13 @@ export function impliedInvariants(m: DomainModel): CandidateInvariant[] {
   return out;
 }
 
-const canonical = (c: Candidate) => JSON.stringify(c, Object.keys(c).sort());
+function sortDeep(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(sortDeep);
+  if (v && typeof v === 'object')
+    return Object.fromEntries(Object.keys(v as object).sort().map(k => [k, sortDeep((v as Record<string, unknown>)[k])]));
+  return v;
+}
+const canonical = (c: Candidate) => JSON.stringify(sortDeep(c));
 export function isImplied(c: Candidate, m: DomainModel): boolean {
   const mine = canonical(c);
   return impliedInvariants(m).some(d => canonical(d.candidate) === mine);
