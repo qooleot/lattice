@@ -249,12 +249,23 @@ order). Historical entries are never rewritten.
    rewrite references inside the model, append a `rename` ledger entry. Unreferenced pairs apply
    as plain delete+add, no ceremony. Same-body invariant delete+add pairs are proposed as
    invariant renames.
-5. **Invariant adds and edits.** Replay **every** `verdict` ledger entry through
-   `evaluateCandidate` (witnesses resolved through the rename mapping). Consistent with all
-   verdicts → applied; ledger gains an `adopted` entry with provenance
-   `hand-edited <date>, consistent with <w-ids>`. Contradicts any verdict → **rejected**, naming
-   the witness, its verdict, and when it was judged: *"this edit permits the state in w3, judged
-   forbid on 2026-07-05 — re-judge with the domain expert or revert."* No silent overrules.
+5. **Invariant adds and edits.** Replay **every** `verdict` ledger entry (witnesses resolved
+   through the rename mapping), with **asymmetric semantics** — a verdict is a judgment about the
+   state, not about one invariant:
+   - *permit* witnesses must not gain forbidders **from this edit**: an added invariant that
+     forbids a permit-judged witness, or a changed invariant whose previous form permitted the
+     witness and whose new form forbids it, is **rejected** naming the witness, verdict, and
+     judgment date. Invariants that already forbade a permit witness before the edit (the real
+     subscriptions ledger contains such baseline noise — e.g. w1 was judged permit while the
+     later-adopted one-draft rule forbids it) are reported as warnings, not refusals: they are
+     not this edit's fault, and a confirmed rename is a name change, not a semantic edit — it is
+     normalized away before the change set is computed.
+   - *forbid* witnesses must be forbidden by **at least one** invariant in the canonical set
+     (explicit ∪ implied): if the before-set forbids a witness and the after-set does not, the
+     edit is **rejected**: *"this edit permits the state in w5, judged forbid on 2026-07-05 —
+     re-judge with the domain expert or revert."*
+   Consistent edits apply; ledger gains an `adopted` entry with provenance
+   `hand-edited <date>, consistent with <w-ids>`. No silent overrules.
 6. **Removals.** A deleted explicit block, removed `@terminal`, added `@signed`, or removed
    `ref`/`Money` field that kills a ledger-backed invariant is refused unless
    `--force-remove <name>`, which appends a `declined` entry recording the explicit overrule.
