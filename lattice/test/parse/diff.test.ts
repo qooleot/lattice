@@ -25,15 +25,30 @@ const ledger: LedgerEntry[] = [
 describe('ledgerReferences', () => {
   const stored = mk('Job', 'units');
   it('finds field references in witnesses', () => {
-    expect(ledgerReferences({ scope: 'field', path: 'Job.units', from: 'units', to: 'n' }, ledger)).toEqual(['w1']);
-    expect(ledgerReferences({ scope: 'field', path: 'Job.other', from: 'other', to: 'n' }, ledger)).toEqual([]);
+    expect(ledgerReferences({ scope: 'field', path: 'Job.units', from: 'units', to: 'n' }, ledger, stored)).toEqual(['w1']);
+    expect(ledgerReferences({ scope: 'field', path: 'Job.other', from: 'other', to: 'n' }, ledger, stored)).toEqual([]);
   });
   it('finds state and type and invariant references', () => {
-    expect(ledgerReferences({ scope: 'state', path: 'Job.r.s1', from: 's1', to: 'x' }, ledger)).toEqual(['w1']);
-    expect(ledgerReferences({ scope: 'aggregate', path: 'Job', from: 'Job', to: 'Task' }, ledger)).toEqual(['w1']);
-    expect(ledgerReferences({ scope: 'invariant', path: 'unitsSane', from: 'unitsSane', to: 'x' }, ledger))
+    expect(ledgerReferences({ scope: 'state', path: 'Job.r.s1', from: 's1', to: 'x' }, ledger, stored)).toEqual(['w1']);
+    expect(ledgerReferences({ scope: 'aggregate', path: 'Job', from: 'Job', to: 'Task' }, ledger, stored)).toEqual(['w1']);
+    expect(ledgerReferences({ scope: 'invariant', path: 'unitsSane', from: 'unitsSane', to: 'x' }, ledger, stored))
       .toEqual(['adopted:unitsSane']);
-    expect(ledgerReferences({ scope: 'transition', path: 'Job.t', from: 't', to: 'x' }, ledger)).toEqual([]);
+    expect(ledgerReferences({ scope: 'transition', path: 'Job.t', from: 't', to: 'x' }, ledger, stored)).toEqual([]);
+  });
+
+  it('enumValue references require an enum-typed field of that enum', () => {
+    const model: DomainModel = {
+      context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], events: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
+        { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'speed', type: { kind: 'enum', enum: 'Mode' } },
+        { name: 'label', type: { kind: 'prim', prim: 'Text' } }] }],
+    };
+    const led: LedgerEntry[] = [{ kind: 'verdict', at: 't', witnessId: 'w9', judge: 'permit', question: '',
+      witness: { entities: [{ type: 'Job', id: 'j', fields: { speed: 'fast', label: 'slow' } }] }, salient: [] }];
+    expect(ledgerReferences({ scope: 'enumValue', path: 'Mode.fast', from: 'fast', to: 'quick' }, led, model)).toEqual(['w9']);
+    // 'slow' appears only as a Text field's VALUE — must not count
+    expect(ledgerReferences({ scope: 'enumValue', path: 'Mode.slow', from: 'slow', to: 'slower' }, led, model)).toEqual([]);
   });
 });
 
@@ -75,5 +90,15 @@ describe('diffModels', () => {
     const d = diffModels(before, { model: before.model, canonical: [docd] }, [], before.model);
     expect(d.changedInvariants).toEqual([]);
     expect(d.addedInvariants).toEqual([]);
+  });
+
+  it('invariant equality is key-order-insensitive (rename pairing + change detection)', () => {
+    const jumbled = JSON.parse(JSON.stringify(inv('unitsSane', 'units')));
+    jumbled.candidate = { body: { right: { value: 0, kind: 'int' }, left: { path: ['units'], owner: 'self', kind: 'field' }, op: 'ge', kind: 'cmp' }, aggregate: 'Job', kind: 'statePredicate' };
+    const d = diffModels({ model: mk('Job', 'units'), canonical: [jumbled] },
+      { model: mk('Job', 'units'), canonical: [inv('unitsSane', 'units')] }, [], mk('Job', 'units'));
+    expect(d.changedInvariants).toEqual([]);   // same semantics, different key order — not a change
+    expect(d.addedInvariants).toEqual([]);
+    expect(d.removedInvariants).toEqual([]);
   });
 });

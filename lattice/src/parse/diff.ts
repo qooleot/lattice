@@ -2,6 +2,7 @@ import type { DomainModel, AggregateDef, EntityDef } from '../ast/domain.js';
 import type { CandidateInvariant } from '../ast/invariant.js';
 import type { LedgerEntry } from '../engine/session.js';
 import type { RenameSpec } from '../engine/renames.js';
+import { canonicalCandidate } from '../engine/implied.js';
 
 export interface InvariantChange { name: string; before: CandidateInvariant; after: CandidateInvariant }
 export interface ModelDiff {
@@ -12,12 +13,14 @@ export interface ModelDiff {
   structuralNotes: string[];
 }
 
-const cjson = (v: unknown) => JSON.stringify(v);
+// Key-order-insensitive canonical shape equality — candidates/types cross construction sites
+// (parser vs session JSON), so raw JSON.stringify would misclassify equal shapes as different.
+const cjson = (v: unknown) => canonicalCandidate(v);
 type Owner = AggregateDef | EntityDef;
 const owners = (m: DomainModel): Owner[] => [...m.aggregates, ...m.entities];
 
 /** Ledger entries that mention the old name (spec P4 — witness keys/values + invariant records). */
-export function ledgerReferences(r: RenameSpec, ledger: LedgerEntry[]): string[] {
+export function ledgerReferences(r: RenameSpec, ledger: LedgerEntry[], storedModel: DomainModel): string[] {
   const hits: string[] = [];
   const owner = r.path.split('.')[0]!;
   for (const e of ledger) {
@@ -33,7 +36,16 @@ export function ledgerReferences(r: RenameSpec, ledger: LedgerEntry[]): string[]
             const region = r.path.split('.')[1]!;
             return ent.type === owner && ent.fields[`${region}.state`] === r.from;
           }
-          case 'enumValue': return Object.values(ent.fields).includes(r.from);
+          case 'enumValue': {
+            // only fields whose declared type IS this enum count — value-string collisions with
+            // unrelated fields must not fabricate ledger references
+            const def = storedModel.aggregates.find(a => a.name === ent.type)
+              ?? storedModel.entities.find(x => x.name === ent.type);
+            return Object.entries(ent.fields).some(([k, v]) => {
+              const f = def?.fields.find(x => x.name === k);
+              return f?.type.kind === 'enum' && f.type.enum === owner && v === r.from;
+            });
+          }
           default: return false;
         }
       });
@@ -82,7 +94,7 @@ export function diffModels(
   before: { model: DomainModel; canonical: CandidateInvariant[] },
   after: { model: DomainModel; canonical: CandidateInvariant[] },
   ledger: LedgerEntry[],
-  _storedModel: DomainModel,
+  storedModel: DomainModel,
 ): ModelDiff {
   const notes: string[] = [];
   const proposals: RenameSpec[] = [];
@@ -98,7 +110,7 @@ export function diffModels(
     const candidates = added.filter(x => !consumedAdds.has(x) && x.scope === r.scope && x.owner === r.owner && x.region === r.region
       && (r.scope === 'aggregate' || r.scope === 'entity' ? ownerShapeMatch(r, x) : x.shape === r.shape));
     const spec: RenameSpec = { scope: r.scope, path: qualify(r), from: r.name, to: candidates[0]?.name ?? '' };
-    if (candidates.length && ledgerReferences(spec, ledger).length) {
+    if (candidates.length && ledgerReferences(spec, ledger, storedModel).length) {
       proposals.push(spec);
       consumedAdds.add(candidates[0]!);
     } else {
@@ -121,7 +133,7 @@ export function diffModels(
     const match = addedInvariants.find(ad => cjson(ad.candidate) === cjson(rem.candidate));
     if (!match) continue;
     const spec: RenameSpec = { scope: 'invariant', path: rem.name, from: rem.name, to: match.name };
-    if (ledgerReferences(spec, ledger).length) {
+    if (ledgerReferences(spec, ledger, storedModel).length) {
       proposals.push(spec);
       addedInvariants = addedInvariants.filter(x => x !== match);
       removedInvariants = removedInvariants.filter(x => x !== rem);
