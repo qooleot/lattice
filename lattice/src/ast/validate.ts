@@ -1,5 +1,6 @@
 import type { Diagnostic } from './invariant.js';
 import type { DomainModel, Field, TypeRef } from './domain.js';
+import { RESERVED_WORDS } from './reserved.js';
 
 export const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -8,6 +9,8 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   const checkName = (kind: string, value: string, at?: string) => {
     if (!IDENT_RE.test(value))
       out.push({ code: 'invalid-name', message: `${kind} name '${value}' is not a valid identifier (letters, digits, underscore; no spaces)`, at });
+    else if (RESERVED_WORDS.has(value))
+      out.push({ code: 'reserved-word', message: `${kind} name '${value}' is a .lat keyword and cannot be used as an identifier`, at });
   };
 
   checkName('context', m.context);

@@ -17,7 +17,8 @@ export interface ReconcileInput {
   at: string;
 }
 export interface Refusal {
-  code: 'needs-rename-confirmation' | 'needs-force-remove' | 'contradicts-verdict' | 'template-only-kind';
+  code: 'needs-rename-confirmation' | 'needs-force-remove' | 'contradicts-verdict' | 'template-only-kind'
+    | 'unmatched-rename-confirmation';
   message: string; invariant?: string; witnessId?: string; verdict?: 'permit' | 'forbid'; judgedAt?: string;
   rename?: RenameSpec;
 }
@@ -56,13 +57,24 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
       message: `'${p.from}' → '${p.to}' looks like a rename of ledger-referenced ${p.scope} ${p.path}; ` +
         `confirm with --rename ${p.path}=${p.to} (or --force-remove if it is really a delete+add)` });
   }
-  for (const r of confirmedRenames)
+  // a confirmation matching NO detected proposal is not a rename at all — appending it would
+  // silently rewrite historical witnesses (resolveWitness) and poison all future replay
+  const detectedKey = new Set(detection.renameProposals.map(p => `${p.scope}|${p.path}|${p.from}|${p.to}`));
+  const unmatchedRenames = confirmedRenames.filter(r => !detectedKey.has(`${r.scope}|${r.path}|${r.from}|${r.to}`));
+  for (const r of unmatchedRenames) {
+    refusals.push({ code: 'unmatched-rename-confirmation', rename: r,
+      message: `--rename ${r.path}=${r.to} does not correspond to any detected rename in this edit — ` +
+        `remove the flag or re-check the edit` });
+  }
+  // only MATCHED confirmations get ledgered — an unmatched one is refused above, never applied
+  const matchedRenames = confirmedRenames.filter(r => !unmatchedRenames.includes(r));
+  for (const r of matchedRenames)
     appends.push({ kind: 'rename', at, scope: r.scope, path: r.path, from: r.from, to: r.to });
 
   // normalization: renames are name changes, not semantic edits (spec §5.5 as amended) —
-  // apply confirmed renames to the stored side, then diff again for the real change set
-  const normModel = applyRenamesToModel(storedModel, confirmedRenames);
-  const normExplicit = storedExplicit.map(i => applyRenamesToInvariant(i, confirmedRenames));
+  // apply confirmed (MATCHED only) renames to the stored side, then diff again for the real change set
+  const normModel = applyRenamesToModel(storedModel, matchedRenames);
+  const normExplicit = storedExplicit.map(i => applyRenamesToInvariant(i, matchedRenames));
   const before = { model: normModel, canonical: canonicalSet(normModel, normExplicit) };
   const diff = diffModels(before, after, ledger, storedModel);
 
@@ -84,7 +96,7 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
   }
 
   // verdict replay (spec §5.5, asymmetric + delta rule)
-  const allRenames = [...renameEntries(ledger), ...confirmedRenames];
+  const allRenames = [...renameEntries(ledger), ...matchedRenames];
   const verdicts = ledger.filter(e => e.kind === 'verdict') as Extract<LedgerEntry, { kind: 'verdict' }>[];
   const judgeable = (i: CandidateInvariant) => i.candidate.kind !== 'leadsTo';
   const changedOrAdded = [...diff.addedInvariants, ...diff.changedInvariants.map(c => c.after)].filter(judgeable);
@@ -131,10 +143,17 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
   });
   for (const inv of changedOrAdded) {
     const final = adopted.find(a => a.name === inv.name) ?? inv;
+    // structure-implied additions (spec §3.4) are derived, not hand-authored — they get NO
+    // adoption ceremony in the ledger, even though verdict replay above still covers them
+    // (they can introduce forbidders just like any other invariant).
+    if (final.id.startsWith('implied-')) {
+      applied.push(`implied invariant ${inv.name} (derived from structure)`);
+      continue;
+    }
     appends.push({ kind: 'adopted', at, invariant: final,
       provenance: `hand-edited ${at.slice(0, 10)}, consistent with ${wids || 'no judged cases'}` });
     applied.push(`invariant ${inv.name}`);
   }
-  applied.push(...diff.structuralNotes, ...confirmedRenames.map(r => `renamed ${r.scope} ${r.path} → ${r.to}`));
+  applied.push(...diff.structuralNotes, ...matchedRenames.map(r => `renamed ${r.scope} ${r.path} → ${r.to}`));
   return { ok: true, model: parsed.model, adopted, ledgerAppends: appends, applied, warnings };
 }

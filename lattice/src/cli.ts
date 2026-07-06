@@ -53,7 +53,8 @@ function writeProjections(latPath: string, model: DomainModel, adopted: Candidat
   const outDir = dirname(latPath);
   const shapes = new Set(adopted.map(a => canonicalCandidate(a.candidate)));
   const derived = impliedInvariants(model).filter(d => !shapes.has(canonicalCandidate(d.candidate)));
-  const lat = join(outDir, 'spec.lat'), prose = join(outDir, 'spec.prose.md');
+  // apply --lat foo.lat rewrites foo.lat itself (spec §4); prose stays a sibling spec.prose.md
+  const lat = latPath, prose = join(outDir, 'spec.prose.md');
   writeFileSync(lat, astToCode(model, adopted));
   writeFileSync(prose, astToProse(model, [...adopted, ...derived], ledger));
   return [lat, prose];

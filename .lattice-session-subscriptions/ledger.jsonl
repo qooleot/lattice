@@ -59,3 +59,16 @@
 {"kind":"rename","at":"2026-07-06T06:12:50.726Z","scope":"transition","path":"Invoice.void_draft","from":"void_draft","to":"voidDraft"}
 {"kind":"rename","at":"2026-07-06T06:12:50.726Z","scope":"transition","path":"Invoice.void_open","from":"void_open","to":"voidOpen"}
 {"kind":"rename","at":"2026-07-06T06:12:50.726Z","scope":"transition","path":"Invoice.write_off","from":"write_off","to":"writeOff"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"NoOrphan_Subscription","from":"NoOrphan_Subscription","to":"refsResolveSubscription"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"Terminal_Subscription_canceled","from":"Terminal_Subscription_canceled","to":"terminalSubscriptionLifecycleCanceled"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"Terminal_Subscription_expired","from":"Terminal_Subscription_expired","to":"terminalSubscriptionLifecycleExpired"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"NonNegative_Invoice_licenseFeeAmount","from":"NonNegative_Invoice_licenseFeeAmount","to":"nonNegativeInvoiceLicenseFeeAmount"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"NonNegative_Invoice_usageAmount","from":"NonNegative_Invoice_usageAmount","to":"nonNegativeInvoiceUsageAmount"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"NonNegative_Invoice_totalDue","from":"NonNegative_Invoice_totalDue","to":"nonNegativeInvoiceTotalDue"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"NonNegative_Invoice_amountPaid","from":"NonNegative_Invoice_amountPaid","to":"nonNegativeInvoiceAmountPaid"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"NoOrphan_Invoice","from":"NoOrphan_Invoice","to":"refsResolveInvoice"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"Terminal_Invoice_paid","from":"Terminal_Invoice_paid","to":"terminalInvoiceSettlementPaid"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"Terminal_Invoice_void","from":"Terminal_Invoice_void","to":"terminalInvoiceSettlementVoid"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"Terminal_Invoice_uncollectible","from":"Terminal_Invoice_uncollectible","to":"terminalInvoiceSettlementUncollectible"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"NonNegative_Plan_licenseFee","from":"NonNegative_Plan_licenseFee","to":"nonNegativePlanLicenseFee"}
+{"kind":"rename","at":"2026-07-06T06:51:37.224Z","scope":"invariant","path":"NonNegative_Plan_usageRate","from":"NonNegative_Plan_usageRate","to":"nonNegativePlanUsageRate"}

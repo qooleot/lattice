@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -18,5 +18,12 @@ describe('CLI exit codes (design §5.8)', () => {
   it('success exits 0', () => {
     const dir = mkdtempSync(join(tmpdir(), 'exit-'));
     expect(run(['status', '--session', dir])).toBe(0);
+  });
+  it('internal errors (uncaught exceptions) exit 2', () => {
+    // a corrupted state.json throws inside loadState's JSON.parse, uncaught until the top-level
+    // try/catch in runCommand — this is a genuine 'internal' error path, not a manufactured one.
+    const dir = mkdtempSync(join(tmpdir(), 'exit-internal-'));
+    writeFileSync(join(dir, 'state.json'), '{not valid json');
+    expect(run(['status', '--session', dir])).toBe(2);
   });
 }, 60000);

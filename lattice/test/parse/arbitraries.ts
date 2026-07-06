@@ -1,11 +1,8 @@
 import fc from 'fast-check';
 import type { DomainModel, AggregateDef, Field, EventDef } from '../../src/ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Cmp } from '../../src/ast/invariant.js';
+import { RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
 
-const RESERVED = new Set(['context', 'enum', 'entity', 'aggregate', 'event', 'machine', 'region', 'states',
-  'transition', 'from', 'to', 'when', 'invariant', 'on', 'where', 'unique', 'while', 'by', 'refs', 'resolve',
-  'count', 'terminal', 'monotonic', 'conserve', 'leads', 'under', 'fairness', 'state', 'now', 'ref', 'List',
-  'key', 'ticksPerDay', 'in']);
 const lower = 'abcdefghijklmnopqrstuvwxyz';
 const ident = (first: string) => fc.tuple(
   fc.constantFrom(...first.split('')),

@@ -129,6 +129,35 @@ describe('reconcile', () => {
     }
   });
 
+  it('unmatched --rename confirmation refuses instead of poisoning the ledger', () => {
+    // nothing changed in the model/invariants — --rename Job.units=chairs does not correspond to
+    // any detected rename proposal (there is no removed 'units' + added 'chairs' pair)
+    const r = reconcile(base({
+      confirmedRenames: [{ scope: 'field', path: 'Job.units', from: 'units', to: 'chairs' }] }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      const f = r.refusals.find(x => x.code === 'unmatched-rename-confirmation')!;
+      expect(f).toBeDefined();
+      expect(f.message).toContain('--rename Job.units=chairs');
+      expect(f.message).toContain('does not correspond to any detected rename');
+    }
+  });
+
+  it('structure-implied additions get no adopted ledger ceremony', () => {
+    // add a Money field to Job — this makes nonNegativeJobFee a NEW implied invariant (spec §3.4);
+    // it must NOT get a hand-edited 'adopted' entry, even though verdict replay still covers it.
+    const withMoney: DomainModel = JSON.parse(JSON.stringify(model));
+    withMoney.aggregates[0]!.fields.push({ name: 'fee', type: { kind: 'prim', prim: 'Money' } });
+    const r = reconcile(base({ parsed: { model: withMoney, invariants: [nonNeg] } }));
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const adoptedForFee = r.ledgerAppends.find(e => e.kind === 'adopted'
+        && (e as any).invariant.name === 'nonNegativeJobFee');
+      expect(adoptedForFee).toBeUndefined();
+      expect(r.applied.some(a => a.includes('nonNegativeJobFee') && a.includes('derived from structure'))).toBe(true);
+    }
+  });
+
   it('rejects new hand-written leadsTo', () => {
     const lt: CandidateInvariant = { id: 'hand-lt', name: 'lt', prior: 1, source: 'template',
       candidate: { kind: 'leadsTo', aggregate: 'Job',

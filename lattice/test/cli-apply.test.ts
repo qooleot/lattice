@@ -127,4 +127,14 @@ describe('engine apply', () => {
     expect(r.error).toBe('unknown-rename-path');
     expect(readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8')).toBe(ledgerBefore);
   });
+
+  it('unmatched --rename confirmation on an unchanged file refuses without poisoning the ledger', async () => {
+    // the .lat is applied UNCHANGED — accruedUnits is still called accruedUnits, so this --rename
+    // does not correspond to any detected rename proposal and must be refused, not ledgered.
+    const ledgerBefore = readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8');
+    const r: any = await apply(['--rename', 'Subscription.accruedUnits=usedUnits']);
+    expect(r.error).toBe('refused');
+    expect(JSON.stringify(r.refusals)).toContain('unmatched-rename-confirmation');
+    expect(readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8')).toBe(ledgerBefore);
+  });
 });

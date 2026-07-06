@@ -85,3 +85,18 @@ describe('ID terminal matches the AST identifier rule (single source, spec §3.3
     expect(`^${m[1]}$`).toBe(IDENT_RE.source);
   });
 });
+
+describe('RESERVED_WORDS matches the grammar keywords (single source enforced by test)', () => {
+  it('every RESERVED_WORDS member is a quoted keyword in lat.langium, and vice versa', async () => {
+    const { readFileSync } = await import('node:fs');
+    const g = readFileSync(new URL('../../src/parse/lat.langium', import.meta.url), 'utf8');
+    // strip terminal/regex definitions (bottom of the grammar) — only rule bodies contain keywords
+    const rulesOnly = g.slice(0, g.indexOf('\nhidden terminal WS'));
+    const grammarKeywords = new Set(
+      [...rulesOnly.matchAll(/'([A-Za-z_][A-Za-z0-9_]*)'/g)].map(m => m[1]!));
+    const { RESERVED_WORDS } = await import('../../src/ast/reserved.js');
+    for (const w of RESERVED_WORDS) expect(grammarKeywords.has(w), `'${w}' not found as a quoted keyword in lat.langium`).toBe(true);
+    for (const w of grammarKeywords) if (/^[a-z]/i.test(w))
+      expect(RESERVED_WORDS.has(w), `grammar keyword '${w}' missing from RESERVED_WORDS`).toBe(true);
+  });
+});
