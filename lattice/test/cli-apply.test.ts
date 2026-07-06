@@ -120,4 +120,11 @@ describe('engine apply', () => {
     expect(r.dryRun).toBe(true);
     expect(readFileSync(join(sessionDir, 'model.json'), 'utf8')).toBe(modelBefore);
   });
+
+  it('typo in --rename bare name errors instead of silently ledgering', async () => {
+    const ledgerBefore = readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8');
+    const r: any = await apply(['--rename', 'noSuchInvariant=whatever']);
+    expect(r.error).toBe('unknown-rename-path');
+    expect(readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8')).toBe(ledgerBefore);
+  });
 });

@@ -58,7 +58,7 @@ function writeProjections(latPath: string, model: DomainModel, adopted: Candidat
   return [lat, prose];
 }
 
-function inferRenameSpec(path: string, to: string, m: DomainModel): RenameSpec | null {
+function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
   const segs = path.split('.');
   const from = segs[segs.length - 1]!;
   const scope = ((): RenameScope | null => {
@@ -67,7 +67,7 @@ function inferRenameSpec(path: string, to: string, m: DomainModel): RenameSpec |
       if (m.entities.some(e => e.name === from)) return 'entity';
       if (m.enums.some(e => e.name === from)) return 'enum';
       if (m.events.some(e => e.name === from)) return 'event';
-      return 'invariant';   // bare name defaults to invariant rename
+      return invariantNames.has(from) ? 'invariant' : null;
     }
     const owner = m.aggregates.find(a => a.name === segs[0]) ?? m.entities.find(e => e.name === segs[0]);
     if (segs.length === 2) {
@@ -251,11 +251,18 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         const storedExplicit = sessionExists
           ? s.candidates.filter(c => c.status === 'adopted').map(c => c.inv) : [];
 
+        const invariantNames = storedModel
+          ? new Set([
+              ...storedExplicit.map(i => i.name),
+              ...impliedInvariants(storedModel).map(d => d.name)
+            ])
+          : new Set<string>();
+
         const renames: RenameSpec[] = [];
         for (const rv of values.rename ?? []) {
           const m2 = rv.match(/^([A-Za-z_][\w.]*)=([A-Za-z_]\w*)$/);
           if (!m2) return { error: 'bad-rename-flag', flag: rv, hint: 'use --rename Owner.oldName=newName' };
-          const spec = inferRenameSpec(m2[1]!, m2[2]!, storedModel ?? loaded.model);
+          const spec = inferRenameSpec(m2[1]!, m2[2]!, storedModel ?? loaded.model, invariantNames);
           if (!spec) return { error: 'unknown-rename-path', flag: rv };
           renames.push(spec);
         }
