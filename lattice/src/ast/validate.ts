@@ -1,7 +1,7 @@
 import type { Diagnostic } from './invariant.js';
 import type { DomainModel, Field, TypeRef } from './domain.js';
 
-const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function validateModel(m: DomainModel): Diagnostic[] {
   const out: Diagnostic[] = [];

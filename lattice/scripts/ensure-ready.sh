@@ -30,4 +30,6 @@ if [ ! -e vendor/alloy.jar ] || [ ! -e vendor/jdk ]; then
   bash scripts/fetch-solvers.sh
 fi
 
+[ -d src/parse/generated ] || { echo ">> generating langium parser"; npx langium generate; }
+
 npx tsx src/solvers/doctor.ts
