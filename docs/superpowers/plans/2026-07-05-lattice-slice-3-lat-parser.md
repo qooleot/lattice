@@ -1841,7 +1841,7 @@ git commit -m "test(lattice): round-trip identity property over generated + real
 **Interfaces:**
 - Consumes: `DomainModel`, `CandidateInvariant`, `RenameSpec` (Task 2), `LedgerEntry`.
 - Produces:
-  - `ledgerReferences(scopeRef: RenameSpec, ledger: LedgerEntry[]): string[]` — witness ids / entry descriptions that mention the OLD name (fields: witness field keys on entities of the owner type; states: `<region>.state` values; enumValues: enum-typed field values — pass the stored model; aggregates/entities: witness entity types; invariants: adopted/declined entry names). Transitions/regions/enums/events return `[]` from witnesses (not witness-visible) but invariant/adopted references still count for `invariant`.
+  - `ledgerReferences(scopeRef: RenameSpec, ledger: LedgerEntry[], storedModel: DomainModel): string[]` — witness ids / entry descriptions that mention the OLD name (fields: witness field keys on entities of the owner type; states: `<region>.state` values; enumValues: enum-typed field values — pass the stored model; aggregates/entities: witness entity types; invariants: adopted/declined entry names). Transitions/regions/enums/events return `[]` from witnesses (not witness-visible) but invariant/adopted references still count for `invariant`.
   - `diffModels(before: { model: DomainModel; canonical: CandidateInvariant[] }, after: { model: DomainModel; canonical: CandidateInvariant[] }, ledger: LedgerEntry[], storedModel: DomainModel): ModelDiff` where
 
 ```ts
@@ -1890,15 +1890,15 @@ const ledger: LedgerEntry[] = [
 describe('ledgerReferences', () => {
   const stored = mk('Job', 'units');
   it('finds field references in witnesses', () => {
-    expect(ledgerReferences({ scope: 'field', path: 'Job.units', from: 'units', to: 'n' }, ledger)).toEqual(['w1']);
-    expect(ledgerReferences({ scope: 'field', path: 'Job.other', from: 'other', to: 'n' }, ledger)).toEqual([]);
+    expect(ledgerReferences({ scope: 'field', path: 'Job.units', from: 'units', to: 'n' }, ledger, stored)).toEqual(['w1']);
+    expect(ledgerReferences({ scope: 'field', path: 'Job.other', from: 'other', to: 'n' }, ledger, stored)).toEqual([]);
   });
   it('finds state and type and invariant references', () => {
-    expect(ledgerReferences({ scope: 'state', path: 'Job.r.s1', from: 's1', to: 'x' }, ledger)).toEqual(['w1']);
-    expect(ledgerReferences({ scope: 'aggregate', path: 'Job', from: 'Job', to: 'Task' }, ledger)).toEqual(['w1']);
-    expect(ledgerReferences({ scope: 'invariant', path: 'unitsSane', from: 'unitsSane', to: 'x' }, ledger))
+    expect(ledgerReferences({ scope: 'state', path: 'Job.r.s1', from: 's1', to: 'x' }, ledger, stored)).toEqual(['w1']);
+    expect(ledgerReferences({ scope: 'aggregate', path: 'Job', from: 'Job', to: 'Task' }, ledger, stored)).toEqual(['w1']);
+    expect(ledgerReferences({ scope: 'invariant', path: 'unitsSane', from: 'unitsSane', to: 'x' }, ledger, stored))
       .toEqual(['adopted:unitsSane']);
-    expect(ledgerReferences({ scope: 'transition', path: 'Job.t', from: 't', to: 'x' }, ledger)).toEqual([]);
+    expect(ledgerReferences({ scope: 'transition', path: 'Job.t', from: 't', to: 'x' }, ledger, stored)).toEqual([]);
   });
 });
 
@@ -1958,6 +1958,7 @@ import type { DomainModel, AggregateDef, EntityDef } from '../ast/domain.js';
 import type { CandidateInvariant } from '../ast/invariant.js';
 import type { LedgerEntry } from '../engine/session.js';
 import type { RenameSpec } from '../engine/renames.js';
+import { canonicalCandidate } from '../engine/implied.js';
 
 export interface InvariantChange { name: string; before: CandidateInvariant; after: CandidateInvariant }
 export interface ModelDiff {
@@ -1968,12 +1969,15 @@ export interface ModelDiff {
   structuralNotes: string[];
 }
 
-const cjson = (v: unknown) => JSON.stringify(v);
+// key-order-insensitive equality (Task 5/7 review follow-up): stored and parsed candidates/types
+// come from different construction sites; raw JSON.stringify is key-order sensitive.
+const cjson = (v: unknown) => canonicalCandidate(v);
 type Owner = AggregateDef | EntityDef;
 const owners = (m: DomainModel): Owner[] => [...m.aggregates, ...m.entities];
 
-/** Ledger entries that mention the old name (spec P4 — witness keys/values + invariant records). */
-export function ledgerReferences(r: RenameSpec, ledger: LedgerEntry[]): string[] {
+/** Ledger entries that mention the old name (spec P4 — witness keys/values + invariant records).
+ *  storedModel discriminates enum-typed fields for enumValue scans. */
+export function ledgerReferences(r: RenameSpec, ledger: LedgerEntry[], storedModel: DomainModel): string[] {
   const hits: string[] = [];
   const owner = r.path.split('.')[0]!;
   for (const e of ledger) {
@@ -1989,7 +1993,16 @@ export function ledgerReferences(r: RenameSpec, ledger: LedgerEntry[]): string[]
             const region = r.path.split('.')[1]!;
             return ent.type === owner && ent.fields[`${region}.state`] === r.from;
           }
-          case 'enumValue': return Object.values(ent.fields).includes(r.from);
+          case 'enumValue': {
+            // only fields whose declared type IS this enum count — value-string collisions with
+            // unrelated fields must not fabricate ledger references (Task 7 review fix)
+            const def = storedModel.aggregates.find(a => a.name === ent.type)
+              ?? storedModel.entities.find(x => x.name === ent.type);
+            return Object.entries(ent.fields).some(([k, v]) => {
+              const f = def?.fields.find(x => x.name === k);
+              return f?.type.kind === 'enum' && f.type.enum === owner && v === r.from;
+            });
+          }
           default: return false;
         }
       });
@@ -2038,7 +2051,7 @@ export function diffModels(
   before: { model: DomainModel; canonical: CandidateInvariant[] },
   after: { model: DomainModel; canonical: CandidateInvariant[] },
   ledger: LedgerEntry[],
-  _storedModel: DomainModel,
+  storedModel: DomainModel,
 ): ModelDiff {
   const notes: string[] = [];
   const proposals: RenameSpec[] = [];
@@ -2054,7 +2067,7 @@ export function diffModels(
     const candidates = added.filter(x => !consumedAdds.has(x) && x.scope === r.scope && x.owner === r.owner && x.region === r.region
       && (r.scope === 'aggregate' || r.scope === 'entity' ? ownerShapeMatch(r, x) : x.shape === r.shape));
     const spec: RenameSpec = { scope: r.scope, path: qualify(r), from: r.name, to: candidates[0]?.name ?? '' };
-    if (candidates.length && ledgerReferences(spec, ledger).length) {
+    if (candidates.length && ledgerReferences(spec, ledger, storedModel).length) {
       proposals.push(spec);
       consumedAdds.add(candidates[0]!);
     } else {
@@ -2077,7 +2090,7 @@ export function diffModels(
     const match = addedInvariants.find(ad => cjson(ad.candidate) === cjson(rem.candidate));
     if (!match) continue;
     const spec: RenameSpec = { scope: 'invariant', path: rem.name, from: rem.name, to: match.name };
-    if (ledgerReferences(spec, ledger).length) {
+    if (ledgerReferences(spec, ledger, storedModel).length) {
       proposals.push(spec);
       addedInvariants = addedInvariants.filter(x => x !== match);
       removedInvariants = removedInvariants.filter(x => x !== rem);
@@ -2310,7 +2323,7 @@ import type { DomainModel } from '../ast/domain.js';
 import type { CandidateInvariant } from '../ast/invariant.js';
 import type { LedgerEntry } from './session.js';
 import { evaluateCandidate, type CaseState } from './evaluate.js';
-import { impliedInvariants } from './implied.js';
+import { impliedInvariants, canonicalCandidate } from './implied.js';
 import { renameEntries, resolveWitness, applyRenamesToModel, applyRenamesToInvariant,
   type RenameSpec } from './renames.js';
 import { diffModels } from '../parse/diff.js';
@@ -2334,7 +2347,7 @@ export type ReconcileOutcome =
       applied: string[]; warnings: string[] }
   | { ok: false; refusals: Refusal[]; warnings: string[] };
 
-const cjson = (v: unknown) => JSON.stringify(v);
+const cjson = (v: unknown) => canonicalCandidate(v);   // key-order-insensitive (review follow-up)
 /** explicit ∪ implied under DERIVED names: explicit entries whose candidate matches an implied
  *  rule are replaced by the derived-name version. Without this, the pre-migration session (whose
  *  state.json still lists the 13 template invariants under old names) would diff as 13 renames
@@ -2710,7 +2723,8 @@ Add the two helpers near the top of cli.ts (module scope):
 function writeProjections(latPath: string, model: DomainModel, adopted: CandidateInvariant[],
     ledger: LedgerEntry[]): string[] {
   const outDir = dirname(latPath);
-  const derived = impliedInvariants(model).filter(d => !adopted.some(a => JSON.stringify(a.candidate) === JSON.stringify(d.candidate)));
+  const shapes = new Set(adopted.map(a => canonicalCandidate(a.candidate)));
+  const derived = impliedInvariants(model).filter(d => !shapes.has(canonicalCandidate(d.candidate)));
   const lat = join(outDir, 'spec.lat'), prose = join(outDir, 'spec.prose.md');
   writeFileSync(lat, astToCode(model, adopted));
   writeFileSync(prose, astToProse(model, [...adopted, ...derived], ledger));
