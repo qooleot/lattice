@@ -16,7 +16,7 @@ import { runAlloy } from './solvers/alloy-adapter.js';
 import { runQuint } from './solvers/quint-adapter.js';
 import { astToProse } from './emit/prose.js';
 import { astToCode } from './emit/code.js';
-import { impliedInvariants } from './engine/implied.js';
+import { impliedInvariants, canonicalCandidate } from './engine/implied.js';
 
 export const realDeps: SolverDeps = {
   alloy: async (m, q, max) => runAlloy(astToAlloy(m, q), max),
@@ -178,7 +178,8 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       case 'emit': {
         const adopted = s.candidates.filter(c => c.status === 'adopted').map(c => c.inv);
         const ledger = readLedger(dir);
-        const derived = impliedInvariants(model()).filter(d => !adopted.some(a => JSON.stringify(a.candidate) === JSON.stringify(d.candidate)));
+        const shapes = new Set(adopted.map(a => canonicalCandidate(a.candidate)));
+        const derived = impliedInvariants(model()).filter(d => !shapes.has(canonicalCandidate(d.candidate)));
         mkdirSync(values.out!, { recursive: true });
         const prose = join(values.out!, 'spec.prose.md'), lat = join(values.out!, 'spec.lat');
         writeFileSync(prose, astToProse(model(), [...adopted, ...derived], ledger));

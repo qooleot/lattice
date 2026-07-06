@@ -36,8 +36,8 @@ function sortDeep(v: unknown): unknown {
     return Object.fromEntries(Object.keys(v as object).sort().map(k => [k, sortDeep((v as Record<string, unknown>)[k])]));
   return v;
 }
-const canonical = (c: Candidate) => JSON.stringify(sortDeep(c));
+export const canonicalCandidate = (v: unknown): string => JSON.stringify(sortDeep(v));
 export function isImplied(c: Candidate, m: DomainModel): boolean {
-  const mine = canonical(c);
-  return impliedInvariants(m).some(d => canonical(d.candidate) === mine);
+  const mine = canonicalCandidate(c);
+  return impliedInvariants(m).some(d => canonicalCandidate(d.candidate) === mine);
 }

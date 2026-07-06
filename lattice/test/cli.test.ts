@@ -184,6 +184,24 @@ describe('engine CLI', () => {
     expect(out.written.length).toBe(2);
   });
 
+  it('emit lists an adopted implied-shape rule once in prose even with jumbled key order', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'emit-dedup-'));
+    const model = {
+      context: 'Dedup', enums: [], events: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Box', fields: [
+        { name: 'boxId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }],
+    };
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(model));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    // init template-adopts NonNegative_Box_amount whose candidate matches the implied rule
+    const r: any = await runCommand(['emit', '--session', dir, '--out', dir], fakeDeps);
+    expect(r.written).toBeDefined();
+    const prose = readFileSync(join(dir, 'spec.prose.md'), 'utf8');
+    const hits = prose.split('\n').filter(l => l.includes('amount') && l.includes('never') === false && l.includes('≥ 0'));
+    expect(hits.length).toBe(1);
+  });
+
   it('rejects an invalid --judge without touching state or ledger', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cli-'));
     writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
