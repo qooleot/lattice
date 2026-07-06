@@ -61,7 +61,9 @@ export function evaluateCandidate(c: Candidate, s: CaseState): Verdict {
     case 'unique': {
       const seen = new Set<string>();
       for (const e of subjects().filter(e => inStates(e, c.whileStates))) {
-        const key = c.by.map(p => String(resolveValue(s, e, p))).join('|');
+        const vals = c.by.map(p => resolveValue(s, e, p));
+        if (vals.some(v => v === undefined)) continue;   // unknown facts don't convict (matches cmp)
+        const key = vals.map(String).join('|');
         if (seen.has(key)) return 'forbid';
         seen.add(key);
       }

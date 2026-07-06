@@ -118,8 +118,21 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
   const agg = ownerDef(m, c.aggregate);
   if (!agg) return [{ code: 'unknown-aggregate', message: `no aggregate/entity named ${c.aggregate}` }];
 
+  // Both emitters drop key and Text/Id fields from the solver-facing model (alloy.ts
+  // emitOwnerSig, quint.ts fieldQType — atom identity suffices), so a path terminating in one is
+  // unrepresentable: emission references a nonexistent field and the TS judge resolves undefined
+  // on every witness. Reject here — the single choke point both `propose` and `admit` pass
+  // through — instead of letting the engine silently misjudge or the solver hard-fail.
+  const SOLVER_INT_PRIMS = ['Int', 'Money', 'Date', 'Duration'];
   const checkPath = (p: Path, at: string) => {
-    if (!resolveFieldPath(m, c.aggregate, p)) out.push({ code: 'unknown-path', message: `path ${p.join('.')} not found on ${c.aggregate}`, at });
+    const f = resolveFieldPath(m, c.aggregate, p);
+    if (!f) { out.push({ code: 'unknown-path', message: `path ${p.join('.')} not found on ${c.aggregate}`, at }); return; }
+    if (/^\w+\.state$/.test(p[p.length - 1]!)) return;   // machine-state accessor — representable
+    if (f.key) out.push({ code: 'key-path', message: p.length === 1
+      ? `path ${p.join('.')} is a key field — keys are unique by construction and dropped from the solver-facing model, so comparing them is vacuous`
+      : `path ${p.join('.')} ends at a key field — refs already compare by identity; use '${p.slice(0, -1).join('.')}' instead`, at });
+    else if (f.type.kind === 'prim' && !SOLVER_INT_PRIMS.includes(f.type.prim))
+      out.push({ code: 'unrepresentable-path', message: `path ${p.join('.')} ends in a ${f.type.prim} field — Text/Id fields are dropped from the solver-facing model`, at });
   };
   const checkStates = (region: string, states: string[], at: string) => {
     const machine = agg.kind === 'aggregate' ? agg.machine : undefined;

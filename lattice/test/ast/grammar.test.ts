@@ -14,7 +14,8 @@ const model: any = {
       { name: 'customer', type: { kind: 'ref', target: 'Customer' } },
       { name: 'grace', type: { kind: 'prim', prim: 'Duration' } },
       { name: 'dueDate', type: { kind: 'prim', prim: 'Date' } },
-      { name: 'status', type: { kind: 'enum', enum: 'Status' } }
+      { name: 'status', type: { kind: 'enum', enum: 'Status' } },
+      { name: 'note', type: { kind: 'prim', prim: 'Text' } }
     ],
     machine: { regions: [{ name: 'Access', initial: 'Trialing', states: [{ name: 'Trialing' }, { name: 'Active', tags: ['active'] }, { name: 'Ended', tags: ['terminal'] }] }], transitions: [] }
   }],
@@ -58,6 +59,35 @@ describe('validateCandidate', () => {
     const bad: Candidate = JSON.parse(JSON.stringify(graceCand));
     (bad as any).body.left.args[1].right.value = 'Bogus';
     expect(validateCandidate(bad, model).map(d => d.code)).toContain('unknown-enum-value');
+  });
+});
+
+describe('validateCandidate — solver-dropped field paths', () => {
+  // Both emitters drop key and Text/Id fields from the solver-facing model (atom identity
+  // suffices), so a candidate path terminating in one is unrepresentable: Alloy/Quint emission
+  // references a nonexistent field, and the TS judge resolves it to undefined on every witness.
+  it('rejects unique by the aggregate\'s own key as a key-path', () => {
+    const bad: Candidate = { ...uniqueCand, by: [['id']] };
+    expect(validateCandidate(bad, model).map(d => d.code)).toContain('key-path');
+  });
+  it('rejects a ref-hop path terminating at the referenced entity\'s key, suggesting the bare ref', () => {
+    const bad: Candidate = { ...uniqueCand, by: [['customer', 'id']] };
+    const diags = validateCandidate(bad, model);
+    expect(diags.map(d => d.code)).toContain('key-path');
+    expect(diags.find(d => d.code === 'key-path')!.message).toContain("'customer'");
+  });
+  it('rejects a statePredicate term path ending in a key field', () => {
+    const bad: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['customer', 'id'] }, right: { kind: 'field', owner: 'self', path: ['customer', 'id'] } } };
+    expect(validateCandidate(bad, model).map(d => d.code)).toContain('key-path');
+  });
+  it('rejects a path ending in a Text field as unrepresentable', () => {
+    const bad: Candidate = { ...uniqueCand, by: [['note']] };
+    expect(validateCandidate(bad, model).map(d => d.code)).toContain('unrepresentable-path');
+  });
+  it('still accepts ref, enum, and numeric-prim paths', () => {
+    const ok: Candidate = { ...uniqueCand, by: [['customer'], ['status'], ['grace']] };
+    expect(validateCandidate(ok, model)).toEqual([]);
   });
 });
 

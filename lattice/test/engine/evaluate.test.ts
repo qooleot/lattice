@@ -46,6 +46,16 @@ describe('evaluateCandidate', () => {
     expect(evaluateCandidate(uniqueByCustomerFamily, dpsf)).toBe('forbid'));
   it('unique: permits two active in different families', () =>
     expect(evaluateCandidate(uniqueByCustomerFamily, dpdf)).toBe('permit'));
+  it('unique: a by-tuple with an unresolvable component never convicts (unknown facts)', () => {
+    // Witnesses never carry key fields (emitters drop them — atom identity suffices), so a
+    // by-path like ['id'] resolves undefined on every subject. That must not read as a collision.
+    const byKey: Candidate = { kind: 'unique', aggregate: 'Subscription',
+      whileStates: { region: 'Access', states: ['Active'] }, by: [['id']] };
+    expect(evaluateCandidate(byKey, dpsf)).toBe('permit');
+    const composite: Candidate = { kind: 'unique', aggregate: 'Subscription',
+      whileStates: { region: 'Access', states: ['Active'] }, by: [['customer'], ['id']] };
+    expect(evaluateCandidate(composite, dpsf)).toBe('permit');
+  });
   it('statePredicate: forbids unpaid beyond grace (5 days = 120 ticks past due, grace 72)', () =>
     expect(evaluateCandidate(graceRule, mkGraceCase(220))).toBe('forbid'));
   it('statePredicate: permits unpaid within grace (5 hours past due)', () =>
