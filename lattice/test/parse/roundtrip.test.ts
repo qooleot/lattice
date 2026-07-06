@@ -20,14 +20,27 @@ function roundTrip(model: DomainModel, invariants: CandidateInvariant[]) {
   expect(r.model).toEqual(model);
   const explicit = invariants.filter(i => !isImplied(i.candidate, model));
   // parse assigns hand-<name> ids and prior 1/source template; compare name+doc+candidate (spec §7.1).
-  // Order is NOT part of the round-trip identity: the printer groups invariants by owning aggregate
-  // (spec: invariants live textually inside their aggregate block), so an input list whose invariants
-  // interleave across aggregates (as real adoption order can) is legitimately re-grouped on print;
-  // parsing it back yields aggregate-grouped order, not original list order. Compare as a set keyed by name.
+  // Order is NOT fully part of the round-trip identity: the printer groups invariants by owning
+  // aggregate (spec: invariants live textually inside their aggregate block, context-level owners
+  // last — see src/emit/code.ts), so an input list whose invariants interleave across aggregates (as
+  // real adoption order can) is legitimately re-grouped on print; parsing it back yields
+  // aggregate-grouped order, not original list order. But WITHIN one aggregate's group the printer's
+  // filter is stable, so intra-aggregate order is preserved and IS part of the identity. Group both
+  // sides by owning aggregate (model.aggregates order, context-level owners last) and compare each
+  // group as an ordered array — strictly stronger than a fully-unordered compare, while still
+  // tolerating cross-aggregate regrouping.
   const shape = (i: CandidateInvariant) => ({ name: i.name, doc: i.doc, candidate: i.candidate });
-  const byName = (xs: CandidateInvariant[]) =>
-    new Map(xs.map(i => [i.name, shape(i)]));
-  expect(byName(r.invariants)).toEqual(byName(explicit));
+  const groupByAggregate = (xs: CandidateInvariant[]) => {
+    const owners = [...model.aggregates.map(a => a.name), ''];
+    const groups = new Map<string, ReturnType<typeof shape>[]>(owners.map(o => [o, []]));
+    for (const i of xs) {
+      const key = groups.has(i.candidate.aggregate) ? i.candidate.aggregate : '';
+      groups.get(key)!.push(shape(i));
+    }
+    return groups;
+  };
+  // generator's `used` Set guarantees invariant names are unique, so name-based grouping below is unambiguous.
+  expect(groupByAggregate(r.invariants)).toEqual(groupByAggregate(explicit));
   // normalization idempotence: one more print∘parse is a fixed point
   expect(astToCode(r.model, r.invariants)).toBe(text);
 }

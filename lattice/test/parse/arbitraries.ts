@@ -1,5 +1,5 @@
 import fc from 'fast-check';
-import type { DomainModel, AggregateDef, Field } from '../../src/ast/domain.js';
+import type { DomainModel, AggregateDef, Field, EventDef } from '../../src/ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Cmp } from '../../src/ast/invariant.js';
 
 const RESERVED = new Set(['context', 'enum', 'entity', 'aggregate', 'event', 'machine', 'region', 'states',
@@ -79,6 +79,11 @@ function candidateArb(agg: AggregateDef, enums: { name: string; values: string[]
     fc.tuple(fc.option(predArb(agg, enums, 1), { nil: null }), fc.integer({ min: 0, max: 9 }))
       .map(([where, atMost]) => ({ kind: 'cardinality' as const, aggregate: agg.name, where, atMost })),
     fc.constantFrom(...paths).map(field => ({ kind: 'monotonic' as const, aggregate: agg.name, field })),
+    // refsResolve is round-trippable as an EXPLICIT invariant only when the aggregate has no ref
+    // fields (fieldArb never generates 'ref' types, so every aggregate qualifies today); otherwise
+    // loadLatText would drop it as structure-implied (implied.ts) and the round-trip helper would
+    // compare against a filtered-out invariant.
+    fc.constant({ kind: 'refsResolve' as const, aggregate: agg.name }),
   ];
   if (paths.length >= 3) arbs.push(fc.constant({ kind: 'conservation' as const, aggregate: agg.name,
     parts: [paths[0]!, paths[1]!], total: paths[2]! }));
@@ -90,9 +95,26 @@ function candidateArb(agg: AggregateDef, enums: { name: string; values: string[]
           whileStates: { region: r.name, states }, by: by.map(s => s.split('.')) }))));
     arbs.push(fc.tuple(predArb(agg, enums, 1), predArb(agg, enums, 1), docText)
       .map(([from, to, fairness]) => ({ kind: 'leadsTo' as const, aggregate: agg.name, from, to, fairness })));
+    // terminal is only round-trippable (as explicit) on a state NOT already tagged terminal — the
+    // machine arb below tags exactly the LAST state 'terminal', so pick among the others (always
+    // >=1 since states has minLength 2). Property order matches src/engine/templates.ts's { kind, aggregate, region, state }.
+    const nonTerminal = r.states.slice(0, -1).map(s => s.name);
+    arbs.push(fc.constantFrom(...nonTerminal).map(state =>
+      ({ kind: 'terminal' as const, aggregate: agg.name, region: r.name, state })));
   }
   return fc.oneof(...arbs);
 }
+
+// event field: simple prim-typed field, no ref/enum wiring (validateModel only checks `when`
+// references, which we never generate — see events below).
+const eventFieldArb = (name: string): fc.Arbitrary<Field> =>
+  fc.constantFrom('Int', 'Money', 'Date', 'Duration', 'Text', 'Id')
+    .map(prim => ({ name, type: { kind: 'prim' as const, prim: prim as any } }));
+
+const eventArb = (name: string): fc.Arbitrary<EventDef> =>
+  uniqNames(camel, 0, 2).chain(fieldNames =>
+    fc.tuple(...fieldNames.map(fn => eventFieldArb(fn))))
+    .map(fields => ({ name, fields }));
 
 export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateInvariant[] }> =
   fc.tuple(pascal, uniqNames(pascal, 0, 2), fc.option(docText, { nil: undefined }))
@@ -121,9 +143,17 @@ export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateIn
                       }) }],
                       transitions: [{ name: transName, region: regionName, from: stateNames[0]!, to: stateNames[1]! }] } } as AggregateDef));
                 }))))
-        .chain(aggs => {
-          const model: DomainModel = { context, enums, entities: [], aggregates: [...aggs], events: [] };
+        .chain(aggs =>
+          fc.tuple(
+            uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)), 0, 2),
+            fc.option(fc.integer({ min: 1, max: 100 }), { nil: undefined }))
+          .chain(([eventNames, ticksPerDay]) =>
+            fc.tuple(...eventNames.map(name => eventArb(name)))
+              .map((events): [AggregateDef[], EventDef[], number | undefined] => [aggs, events, ticksPerDay])))
+        .chain(([aggs, events, ticksPerDay]) => {
+          const model: DomainModel = { context, enums, entities: [], aggregates: [...aggs], events };
           if (doc) model.doc = doc;
+          if (ticksPerDay !== undefined) model.ticksPerDay = ticksPerDay;
           return fc.tuple(...aggs.map(a =>
             fc.array(fc.tuple(camel, fc.option(docText, { nil: undefined }), candidateArb(a, enums)), { maxLength: 2 })))
             .map(perAgg => {
