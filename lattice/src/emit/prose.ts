@@ -58,7 +58,8 @@ export function astToProse(m: DomainModel, adopted: CandidateInvariant[], ledger
   lines.push('## Always true', '');
   const provenance = new Map(ledger.filter(e => e.kind === 'adopted').map(e => [(e as any).invariant.id, (e as any).provenance]));
   for (const inv of adopted.filter(i => i.candidate.kind !== 'leadsTo'))
-    lines.push(`- ${renderCandidateEnglish(inv.candidate)}  (${provenance.get(inv.id) ?? inv.source}: ${inv.name})`);
+    lines.push(`- ${renderCandidateEnglish(inv.candidate)}  (${
+      inv.id.startsWith('implied-') ? 'implied by structure' : provenance.get(inv.id) ?? inv.source}: ${inv.name})`);
   const live = adopted.filter(i => i.candidate.kind === 'leadsTo');
   if (live.length) { lines.push('', '## Eventually', ''); live.forEach(i => lines.push(`- ${renderCandidateEnglish(i.candidate)}`)); }
   const open = ledger.filter(e => e.kind === 'open-decision');
