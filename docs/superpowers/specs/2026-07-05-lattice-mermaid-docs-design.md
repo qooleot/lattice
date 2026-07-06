@@ -84,6 +84,26 @@ later slice; including them now as unchecked strings would be decoration, not sp
 
 ## 4. Language growth (all in `lat.langium` + `fromLangium.ts` + the `code.ts` printer)
 
+### 4.0 Growing a closed grammar is a versioned act
+
+None of the constructs below exist in the language today — `lat.langium`'s `ContextItem` is
+enum/entity/aggregate/event/ticksPerDay/invariant only, and the grammar is deliberately closed
+(`invariant.ts`: "growing it is a versioned act, not implicit"). Every construct this slice adds
+therefore ships the full set: grammar rule, `RESERVED_WORDS` additions (`src/ast/reserved.ts`,
+enforced both directions by the grammar-sync test in `test/parse/parse.test.ts`), AST mapping in
+`fromLangium.ts`, printer support in `code.ts` with round-trip identity, and diff/reconcile
+treatment.
+
+New keywords (all become reserved, i.e. **illegal as identifiers everywhere**): `service`,
+`command`, `result`, `emits`, `contextMap`, `contains`, `upstream`, `downstream`, `of`, `roles`,
+`exposes`, `partnership`, `sharedKernel`, `with`, `openHost`, `publishedLanguage`,
+`anticorruption`, `conformist` (`from` is already reserved). This is a real cost — `result`,
+`command`, and `upstream` are plausible domain field names — accepted to keep one lexer and the
+grammar-sync discipline. The migration check: no committed spec or fixture uses any of these as
+an identifier (verified for `specs/subscriptions` during implementation; `validateModel` starts
+rejecting them via the existing reserved-word rule, which is the versioned-act breakage made
+loud, not silent).
+
 ### 4.1 `service` (per-context construct)
 
 New `ContextItem` alternative:
@@ -307,7 +327,9 @@ institutional checklist).
 ## 11. Testing
 
 - **Grammar/round-trip**: slice-3 round-trip property tests extended over `service`, qualified
-  refs, and `contextMap` files; parse-error tests for malformed map syntax.
+  refs, and `contextMap` files; parse-error tests for malformed map syntax; the grammar-sync test
+  passes with the §4.0 keyword additions, and `validateModel` rejects each new reserved word used
+  as an identifier.
 - **Golden emitter tests** (vitest, alongside existing suites): fixture models → exact expected
   mermaid, covering: no machine (no statechart emitted), multiple regions, terminal/initial
   states, `List<ref>` multiplicity, enums, services with/without result, qualified refs, empty
