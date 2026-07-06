@@ -47,8 +47,13 @@ Explicitly **out**: invariant overlays/annotations on diagrams (user decision).
 - **Mermaid is an unfilled gap in Context Mapper** — they have PlantUML + a Freemarker escape
   hatch, no dedicated mermaid generator.
 - In CML, **context relationships live in a `ContextMap { }` block, not inside bounded contexts**,
-  authored in the same DSL as everything else. We mirror this: relationships live in a workspace
-  `context-map.lat` (§4.3), not in per-context specs.
+  authored in the same DSL as everything else, and **the mapping detail sits on the relationship
+  itself**: the upstream declares `exposedAggregates` (plus `implementationTechnology`,
+  `downstreamRights`) in the relationship body — not on a module or application service. We mirror
+  this: relationships live in a workspace `context-map.lat` (§4.3) and carry `exposes` there.
+- CML's bracket codes (`[U,OHS,PL]->[D,ACL]`) have keyword-form equivalents in CML itself
+  (`Upstream-Downstream`). We adopt keyword-only syntax (user decision): `.lat` favors readable,
+  self-documenting forms, and one canonical spelling keeps `parse ∘ print = id` trivial.
 - Invocation: their CLI (`cm generate -i file.cml -g plantuml -o dir`) is a thin wrapper over the
   same generator classes as the IDE plugins. We similarly put everything behind the existing
   JSON-out CLI.
@@ -129,14 +134,26 @@ contextMap AcmeBilling {
   contains Subscriptions
   contains Catalog from "catalog"        // path optional; default = decapitalized context name
 
-  Catalog [U, OHS, PL] -> [D] Subscriptions { exposes Plan }
-  // symmetric kinds:  A [P] <-> [P] B   (partnership),   A [SK] <-> [SK] B   (shared kernel)
+  /// Subscriptions consumes plan definitions from the catalog.
+  Catalog upstream of Subscriptions {
+    upstream roles openHost, publishedLanguage      // optional
+    downstream roles anticorruption                  // optional; or: conformist
+    exposes Plan                                     // published types (comma-separated)
+  }
+
+  // symmetric kinds (no roles/exposes direction — exposes optional, bidirectional):
+  // Billing partnership with Ordering { }
+  // Billing sharedKernel with Ordering { }
 }
 ```
 
-- Role tokens follow CML: upstream `OHS`, `PL`; downstream `ACL`, `CF`; `U`/`D` mark direction;
-  `P`/`SK` the symmetric kinds. `exposes` lists the published types a downstream may reference;
-  `///` docs attach to the map and to each relationship as everywhere else (slice-3 P5).
+- **Keyword-only syntax (user decision)** — no CML bracket codes; one canonical spelling. Role
+  vocabulary maps 1:1 to CML's: upstream `openHost` (OHS), `publishedLanguage` (PL); downstream
+  `anticorruption` (ACL), `conformist` (CF). `exposes` mirrors CML's `exposedAggregates` — it
+  belongs to the relationship, declared by the upstream — generalized to accept aggregates *and*
+  entities (Lattice refs legitimately target entities); each listed type must exist in the
+  upstream context. `///` docs attach to the map and to each relationship as everywhere else
+  (slice-3 P5).
 - AST: `ContextMapModel { name, contexts: [{ name, path }], relationships: [...] , doc? }` — new
   `src/ast/contextmap.ts`. In-memory only.
 - Printed by `code.ts` like every construct (round-trip property extends to map files).
@@ -162,9 +179,9 @@ Identifier discipline: mermaid node ids are sanitized (`[^A-Za-z0-9_]` → `_`),
 carry the real names.
 
 1. **`contextMap.ts`** — `contextMapToMermaid(map, models) → string`. `flowchart LR`; one node
-   per context; one labeled edge per relationship, e.g.
-   `Catalog -- "[U: OHS,PL] → [D] exposes Plan" --> Subscriptions`; partnership/shared-kernel as
-   undirected-styled edges with their kind as label. Additionally, dashed edges for *observed*
+   per context; one labeled edge per relationship using the keyword vocabulary, e.g.
+   `Catalog -- "upstream (openHost, publishedLanguage) exposes Plan" --> Subscriptions`;
+   partnership/shared-kernel as undirected-styled edges with their kind as label. Additionally, dashed edges for *observed*
    qualified-ref usage (`Subscriptions -.Plan.-> Catalog`) when not already implied by a declared
    relationship's label — the map shows both the declared strategy and the actual import graph.
 2. **`domainDiagram.ts`** — `domainToMermaid(model) → string`. `classDiagram` with
@@ -206,12 +223,20 @@ Workspace level (written by `docs`):
 - **`writeProjections`** (existing, slice 3) additionally writes the per-spec diagram outputs;
   `written[]` in the JSON results of `emit`/`apply` lists them. Diagrams are thereby projections
   in the full slice-3 sense: hand-edit `spec.lat` → `apply`/`sync` → diagrams re-render.
-- **`docs`** (new command): `engine docs --workspace specs`. Parses
-  `<workspace>/context-map.lat` and every member `spec.lat` **directly via the slice-3 parser**
-  (no sessions involved — `.lat` is canonical), runs workspace validation (§4.4), and on success
-  writes the workspace outputs and each member's diagram set. Errors use the established JSON
-  error contract (`{ error: 'workspace-invalid', diagnostics: [...] }`), diagnostics carrying
-  file:line:col where the parser provides them.
+- **Workspace regeneration is part of compilation, not a separate generator step (user
+  decision).** After writing per-spec projections, `apply` checks whether a `context-map.lat`
+  exists in the workspace root (discovered from the spec path: `dirname(dirname(latPath))`); if
+  so, it re-runs workspace validation and regenerates the workspace outputs. `sync` additionally
+  watches `context-map.lat` itself, so editing the map re-renders the map docs. Workspace
+  diagnostics from this hook are reported in the `apply`/`sync` result but do not block the
+  per-spec apply (the spec edit already reconciled; a broken sibling must not hold it hostage).
+- **`docs`** (new command, the on-demand/CI entry point): `engine docs --workspace specs`.
+  Parses `<workspace>/context-map.lat` and every member `spec.lat` **directly via the slice-3
+  parser** (no sessions involved — `.lat` is canonical), runs workspace validation (§4.4), and on
+  success writes the workspace outputs and each member's diagram set. Errors use the established
+  JSON error contract (`{ error: 'workspace-invalid', diagnostics: [...] }`), diagnostics
+  carrying file:line:col where the parser provides them. Same routine as the `apply`/`sync` hook
+  — one workspace compile, three invocation surfaces.
 - **`init --lat <spec.lat>`** (small addition): bootstrap a session from a canonical `.lat`
   instead of model JSON — parse, validate, then proceed exactly as `init --model`. Needed so new
   contexts (Catalog, below) are born from `.lat`, keeping the AST an intermediate everywhere.
@@ -242,7 +267,8 @@ loop:
    `--force-remove` path deliberately; the migration task documents the exact invocation and the
    ledger entries affected. Nothing is deleted from the Subscriptions ledger; migrated invariants'
    provenance notes point at Catalog.
-3. Author `specs/context-map.lat` (Catalog `[U, OHS, PL] -> [D]` Subscriptions, exposes `Plan`).
+3. Author `specs/context-map.lat` (`Catalog upstream of Subscriptions { upstream roles openHost,
+   publishedLanguage; exposes Plan }`).
 4. Run `docs`; commit generated outputs; verify rendering on GitHub.
 
 ## 10. Testing
@@ -261,6 +287,8 @@ loop:
   (dev-dependency; fall back to `mmdc` only if the parser package proves insufficient) so we never
   commit diagrams GitHub can't render.
 - **CLI tests**: `emit`/`apply` write the new files; `docs` happy path + each error contract;
+  `apply` inside a workspace regenerates the map (and reports, without blocking, workspace
+  diagnostics from a broken sibling); `apply` outside any workspace skips the hook silently;
   `init --lat` happy path + parse-error path; generated headers present.
 - **Invariant-machinery exclusion tests**: a model with a qualified ref → no derived refs-resolve
   for that field; a candidate naming a qualified-ref path → `cross-context-ref-unsupported`.
