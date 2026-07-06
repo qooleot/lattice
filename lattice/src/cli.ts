@@ -344,5 +344,9 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
 
 const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 if (isMain) runCommand(process.argv.slice(2), realDeps)
-  .then(o => console.log(JSON.stringify(o, null, 2)))
-  .catch(err => { console.log(JSON.stringify({ error: 'internal', message: String(err) }, null, 2)); process.exitCode = 1; });
+  .then(o => {
+    console.log(JSON.stringify(o, null, 2));
+    const err = (o as any)?.error;
+    if (err) process.exitCode = err === 'internal' ? 2 : 1;
+  })
+  .catch(err => { console.log(JSON.stringify({ error: 'internal', message: String(err) }, null, 2)); process.exitCode = 2; });
