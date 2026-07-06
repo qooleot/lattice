@@ -2571,7 +2571,7 @@ describe('engine apply', () => {
     // w5 is forbidden ONLY by the one-draft-per-subscription unique rule (see plan preamble analysis)
     const text = readFileSync(latFile, 'utf8')
       .replace('unique while settlement in {draft} by (subscription)',
-        'unique while settlement in {draft} by (invoiceId)');
+        'unique while settlement in {draft} by (totalDue)');   // totalDue is witness-visible; key fields are not (Task 9 finding)
     writeFileSync(latFile, text);
     const r: any = await apply();
     expect(r.error).toBe('refused');
@@ -3117,13 +3117,14 @@ describe('definition of done (brief): rename + new transition + contradicting in
 
     // Edit 1 (rename): accruedUnits → usedUnits (ledger-referenced field)
     // Edit 2 (new transition): pastDue → expired grace exhaustion
-    // Edit 3 (invariant change contradicting w5): unique by (invoiceId) instead of by (subscription)
+    // Edit 3 (invariant change contradicting w5): unique by (totalDue) instead of by (subscription)
+    // (totalDue distinguishes w5's two draft invoices; key fields like invoiceId are witness-invisible → always-forbid)
     const edited = original
       .replaceAll('accruedUnits', 'usedUnits')
       .replace('transition recover { region lifecycle; from pastDue to active }',
         'transition recover { region lifecycle; from pastDue to active }\n      transition graceToExpired { region lifecycle; from pastDue to expired }')
       .replace('unique while settlement in {draft} by (subscription)',
-        'unique while settlement in {draft} by (invoiceId)');
+        'unique while settlement in {draft} by (totalDue)');   // totalDue is witness-visible; key fields are not (Task 9 finding)
     writeFileSync(lat, edited);
 
     // The contradicting edit must be rejected — atomically: nothing applies
@@ -3139,7 +3140,7 @@ describe('definition of done (brief): rename + new transition + contradicting in
       .toBe(readFileSync(join(SESSION_SRC, 'ledger.jsonl'), 'utf8'));   // atomic: no appends
 
     // Revert edit 3; the rename + transition now apply with provenance
-    writeFileSync(lat, edited.replace('by (invoiceId)', 'by (subscription)'));
+    writeFileSync(lat, edited.replace('by (totalDue)', 'by (subscription)'));
     const r2: any = await runCommand(['apply', '--session', sessionDir, '--lat', lat,
       '--rename', 'Subscription.accruedUnits=usedUnits'], realDeps);
     expect(r2.ok).toBe(true);
