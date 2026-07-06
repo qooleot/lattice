@@ -194,6 +194,14 @@ describe('engine CLI', () => {
     };
     writeFileSync(join(dir, 'm.json'), JSON.stringify(model));
     await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    // jumble the stored adopted candidate's key order so raw JSON.stringify comparison would differ
+    const statePath = join(dir, 'state.json');
+    const state = JSON.parse(readFileSync(statePath, 'utf8'));
+    const adoptedEntry = state.candidates.find((c: any) => c.status === 'adopted' && c.inv.candidate.kind === 'statePredicate');
+    const reorder = (o: any): any => Array.isArray(o) ? o.map(reorder)
+      : o && typeof o === 'object' ? Object.fromEntries(Object.keys(o).reverse().map(k => [k, reorder(o[k])])) : o;
+    adoptedEntry.inv.candidate = reorder(adoptedEntry.inv.candidate);
+    writeFileSync(statePath, JSON.stringify(state));
     // init template-adopts NonNegative_Box_amount whose candidate matches the implied rule
     const r: any = await runCommand(['emit', '--session', dir, '--out', dir], fakeDeps);
     expect(r.written).toBeDefined();

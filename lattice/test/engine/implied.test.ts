@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { impliedInvariants, isImplied } from '../../src/engine/implied.js';
+import { impliedInvariants, isImplied, canonicalCandidate } from '../../src/engine/implied.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 
 const m: DomainModel = {
@@ -52,5 +52,14 @@ describe('impliedInvariants', () => {
     expect(isImplied({ kind: 'statePredicate', aggregate: 'Invoice',
       body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['totalDue'] },
         right: { kind: 'int', value: 0 } } }, m)).toBe(true);
+  });
+
+  it('canonicalCandidate is key-order-insensitive (raw JSON compare was not)', () => {
+    const ordered: any = { kind: 'statePredicate', aggregate: 'Box',
+      body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['amount'] }, right: { kind: 'int', value: 0 } } };
+    const jumbled: any = { body: { right: { value: 0, kind: 'int' }, left: { path: ['amount'], owner: 'self', kind: 'field' }, op: 'ge', kind: 'cmp' },
+      aggregate: 'Box', kind: 'statePredicate' };
+    expect(JSON.stringify(ordered)).not.toBe(JSON.stringify(jumbled));
+    expect(canonicalCandidate(ordered)).toBe(canonicalCandidate(jumbled));
   });
 });
