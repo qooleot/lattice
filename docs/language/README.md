@@ -8,18 +8,18 @@ its enums, entities, aggregates, events, state machines, and invariants — and 
 
 | Group | Pages |
 |---|---|
-| Overview | `README.md` (this page: index + tour) |
+| Overview | `README.md` (this page: index + tour), [`projections.md`](projections.md) (generated files: `spec.prose.md`, `spec.diagrams.md`, `diagrams/*.mmd`, `context-map.generated.md`) |
 | Strategic | [`context-map.md`](context-map.md) (`contextMap`, `contains`/`from`), [`upstream-downstream.md`](upstream-downstream.md) (incl. `exposes`), [`open-host.md`](open-host.md), [`published-language.md`](published-language.md), [`anticorruption.md`](anticorruption.md), [`conformist.md`](conformist.md), [`partnership.md`](partnership.md), [`shared-kernel.md`](shared-kernel.md) |
-
-Structure, Behavior, Invariants, and Meta pages (`context.md`, `enum.md`, `entity.md`,
-`aggregate.md`, `field-types.md`, `event.md`, `machine.md`, `transition.md`, `invariant.md`,
-`invariant-forms.md`, `derived-invariants.md`, `doc-comments.md`, `naming-conventions.md`,
-`tags.md`, `editing.md`) land in later reference batches.
+| Structure | [`context.md`](context.md), [`enum.md`](enum.md), [`entity.md`](entity.md), [`aggregate.md`](aggregate.md), [`field-types.md`](field-types.md), [`event.md`](event.md) |
+| Behavior | [`machine.md`](machine.md), [`transition.md`](transition.md) |
+| Invariants | [`invariant.md`](invariant.md), [`invariant-forms.md`](invariant-forms.md), [`derived-invariants.md`](derived-invariants.md) |
+| Meta | [`doc-comments.md`](doc-comments.md), [`naming-conventions.md`](naming-conventions.md), [`tags.md`](tags.md), [`editing.md`](editing.md) |
 
 ## A 10-line tour
 
-A context declares its vocabulary — enums and entities — and its consistency boundaries as
-aggregates with an optional state machine and invariants:
+A [context](context.md) declares its vocabulary — [enums](enum.md) and [entities](entity.md) — and
+its consistency boundaries as [aggregates](aggregate.md) with an optional
+[state machine](machine.md) and [invariants](invariant.md):
 
 ```lat
 /// A tiny billing context.
@@ -33,6 +33,12 @@ context Billing {
   }
 }
 ```
+
+`total >= 0` above is actually redundant here — a `Money` field implies non-negativity on its own
+(see [derived invariants](derived-invariants.md)) — but it is a clear first example of the
+[predicate form](invariant-forms.md). Once a spec exists, it is hand-edited in place and
+reconciled by [`engine apply`](editing.md), which re-renders every generated
+[projection](projections.md).
 
 Multiple contexts are tied together by a [context map](context-map.md), which declares the
 roster of contexts and their [strategic relationships](upstream-downstream.md) — who is
