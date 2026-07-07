@@ -49,4 +49,21 @@ describe('validateWorkspace', () => {
     const ms = clone(members); ms[0]!.model.context = 'Katalog';
     expect(validateWorkspace(map, ms).some(d => d.code === 'context-name-mismatch')).toBe(true);
   });
+  it('flags an uncovered qualified ref carried only on an event field', () => {
+    const ms = clone(members);
+    // Move the qualified ref off the aggregate field and onto an event field instead,
+    // so the aggregate no longer carries any qualified ref itself.
+    ms[1]!.model.aggregates[0]!.fields[1] = { name: 'planId', type: { kind: 'prim', prim: 'Id' } };
+    ms[1]!.model.events = [{ name: 'PlanChanged', fields: [
+      { name: 'plan', type: { kind: 'ref', target: 'Catalog.Plan' } }] }];
+    const m = clone(map); m.relationships = [];
+    expect(validateWorkspace(m, ms).some(d => d.code === 'uncovered-cross-context-ref')).toBe(true);
+  });
+  it('accepts a covered qualified ref carried only on an event field', () => {
+    const ms = clone(members);
+    ms[1]!.model.aggregates[0]!.fields[1] = { name: 'planId', type: { kind: 'prim', prim: 'Id' } };
+    ms[1]!.model.events = [{ name: 'PlanChanged', fields: [
+      { name: 'plan', type: { kind: 'ref', target: 'Catalog.Plan' } }] }];
+    expect(validateWorkspace(map, ms)).toEqual([]);
+  });
 });

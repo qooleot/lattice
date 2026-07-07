@@ -70,6 +70,7 @@ export function validateWorkspace(map: ContextMapModel, members: WorkspaceMember
     const fieldSets: { fields: Field[]; ownerAt: string }[] = [
       ...mem.model.entities.map(e => ({ fields: e.fields, ownerAt: e.name })),
       ...mem.model.aggregates.map(a => ({ fields: a.fields, ownerAt: a.name })),
+      ...mem.model.events.map(ev => ({ fields: ev.fields, ownerAt: ev.name })),
     ];
     for (const { fields, ownerAt } of fieldSets) {
       for (const f of fields) {
