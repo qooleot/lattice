@@ -1,23 +1,10 @@
 /// Subscriptions API: hybrid license-fee + usage-based billing
 context Subscriptions {
 
-  enum BillingPeriod { monthly, annual }
-  enum UsagePricing { overage, allUnits }
-
-  /// Pricing definition: per-seat license fee plus usage billing in one of two modes
-  entity Plan {
-    planId        : Id key
-    licenseFee    : Money
-    usageRate     : Money
-    includedUnits : Int
-    pricingMode   : UsagePricing
-    period        : BillingPeriod
-  }
-
   /// A customer's subscription to a Plan; usage accrues per billing period and resets at rollover
   aggregate Subscription {
     subId        : Id key
-    plan         : ref Plan
+    plan         : ref Catalog.Plan
     seats        : Int
     periodStart  : Date
     periodEnd    : Date
@@ -66,7 +53,4 @@ context Subscriptions {
     /// At most one draft invoice exists per subscription at any time.
     invariant oneDraftInvoicePerSubscription { unique while settlement in {draft} by (subscription) }
   }
-
-  /// Overage pricing only makes sense with a real included-units allowance.
-  invariant overageImpliesRealAllowance on Plan { includedUnits >= 0 && (pricingMode == UsagePricing.overage => includedUnits >= 1) }
 }

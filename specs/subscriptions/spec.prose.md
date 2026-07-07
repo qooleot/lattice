@@ -20,8 +20,6 @@ Period invoice: license-fee portion plus usage portion; partial payments accrue
 - On every Invoice: totalDue ≤ licenseFeeAmount + usageAmount.  (elicited (w1, w2): totalDueAtMostParts)
 - On every Invoice: amountPaid ≤ totalDue and if it is paid, then amountPaid is totalDue.  (elicited (w1, w2, w3): neverOverpaidAndPaidExact)
 - Only one Invoice may be draft per (subscription).  (elicited (w1, w2, w3, w4, w5): oneDraftInvoicePerSubscription)
-- On every Plan: includedUnits ≥ 0 and if pricingMode is overage, then includedUnits ≥ 1.  (elicited (w1, w2, w3, w4, w5): overageImpliesRealAllowance)
-- Every reference on Subscription resolves to an existing record.  (implied by structure: refsResolveSubscription)
 - Once Subscription is canceled, it stays canceled.  (implied by structure: terminalSubscriptionLifecycleCanceled)
 - Once Subscription is expired, it stays expired.  (implied by structure: terminalSubscriptionLifecycleExpired)
 - On every Invoice: licenseFeeAmount ≥ 0.  (implied by structure: nonNegativeInvoiceLicenseFeeAmount)
@@ -32,8 +30,6 @@ Period invoice: license-fee portion plus usage portion; partial payments accrue
 - Once Invoice is paid, it stays paid.  (implied by structure: terminalInvoiceSettlementPaid)
 - Once Invoice is void, it stays void.  (implied by structure: terminalInvoiceSettlementVoid)
 - Once Invoice is uncollectible, it stays uncollectible.  (implied by structure: terminalInvoiceSettlementUncollectible)
-- On every Plan: licenseFee ≥ 0.  (implied by structure: nonNegativePlanLicenseFee)
-- On every Plan: usageRate ≥ 0.  (implied by structure: nonNegativePlanUsageRate)
 
 ## ⚠️ Open decisions
 

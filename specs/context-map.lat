@@ -1,0 +1,11 @@
+/// Acme billing: catalog-driven subscriptions.
+contextMap AcmeBilling {
+  contains Subscriptions
+  contains Catalog
+
+  /// Subscriptions consumes plan definitions from the catalog.
+  Catalog upstream of Subscriptions {
+    upstream roles openHost, publishedLanguage
+    exposes Plan
+  }
+}
