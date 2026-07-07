@@ -3,6 +3,8 @@ import type { DomainModel, AggregateDef, EntityDef, Field, EventDef, Machine, St
   TransitionDef, TypeRef } from '../../src/ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Cmp } from '../../src/ast/invariant.js';
 import { RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
+import type { ContextMapModel, Relationship, RelationshipKind, Role } from '../../src/ast/contextmap.js';
+import { defaultPath } from '../../src/ast/contextmap.js';
 
 const lower = 'abcdefghijklmnopqrstuvwxyz';
 const ident = (first: string) => fc.tuple(
@@ -230,3 +232,36 @@ export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateIn
                   return { model, invariants };
                 });
             })))));
+
+export const arbContextMap: fc.Arbitrary<ContextMapModel> = (() => {
+  const name = (i: number) => `Ctx${i}`;
+  return fc.tuple(
+    fc.integer({ min: 2, max: 5 }),                      // context count
+    fc.array(fc.record({
+      li: fc.nat(4), ri: fc.nat(4),
+      kind: fc.constantFrom<RelationshipKind>('upstreamDownstream', 'partnership', 'sharedKernel'),
+      up: fc.subarray<Role>(['openHost', 'publishedLanguage']),
+      down: fc.subarray<Role>(['anticorruption', 'conformist']),
+      exposes: fc.subarray(['Alpha', 'Beta', 'Gamma']),
+      doc: fc.option(fc.constant('a relationship doc'), { nil: undefined }),
+    }), { maxLength: 4 }),
+    fc.array(fc.boolean(), { minLength: 5, maxLength: 5 }),   // explicit-path flags
+  ).map(([n, rels, explicit]) => ({
+    name: 'MapUnderTest',
+    contexts: Array.from({ length: n }, (_, i) => ({
+      name: name(i), path: explicit[i] ? `custom/p${i}` : defaultPath(name(i)) })),
+    relationships: rels
+      .map(r => ({ ...r, li: r.li % n, ri: r.ri % n }))
+      .filter(r => r.li !== r.ri)
+      .map(r => {
+        const rel: Relationship = { kind: r.kind, left: name(r.li), right: name(r.ri) };
+        if (r.kind === 'upstreamDownstream') {
+          if (r.up.length) rel.upstreamRoles = r.up;
+          if (r.down.length) rel.downstreamRoles = r.down;
+        }
+        if (r.exposes.length) rel.exposes = r.exposes;
+        if (r.doc) rel.doc = r.doc;
+        return rel;
+      }),
+  }));
+})();
