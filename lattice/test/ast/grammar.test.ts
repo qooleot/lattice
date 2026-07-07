@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { validateCandidate, routeCandidate } from '../../src/ast/grammar.js';
 import type { Candidate } from '../../src/ast/invariant.js';
+import type { DomainModel } from '../../src/ast/domain.js';
 
 // Minimal model stub — real DomainModel arrives in Task 2; grammar.ts only reads these arrays.
 const model: any = {
@@ -170,5 +171,32 @@ describe('resolveFieldPath — ref-hop machine-state paths', () => {
         left: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['period', 'Lifecycle.state'] }, right: { kind: 'enumval', enum: 'PeriodState', value: 'Closed' } },
         right: { kind: 'cmp', op: 'le', left: { kind: 'field', owner: 'self', path: ['postedAt'] }, right: { kind: 'field', owner: 'self', path: ['period', 'closedAt'] } } } };
     expect(validateCandidate(c, revrecModel)).toEqual([]);
+  });
+});
+
+// Local fixture (tests don't import across test files): an Order aggregate with a qualified
+// cross-context ref field `plan: ref Catalog.Plan` (spec §4.2).
+const base = (target: string): DomainModel => ({
+  context: 'Billing', ticksPerDay: 24,
+  enums: [],
+  entities: [],
+  aggregates: [{
+    kind: 'aggregate', name: 'Order',
+    fields: [
+      { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'plan', type: { kind: 'ref', target } }
+    ]
+  }],
+  events: []
+});
+
+describe('validateCandidate — cross-context ref exclusion (spec §4.2)', () => {
+  it('validateCandidate rejects paths traversing a qualified ref', () => {
+    const m = base('Catalog.Plan');
+    const c: Candidate = { kind: 'statePredicate', aggregate: 'Order',
+      body: { kind: 'cmp', op: 'ge',
+        left: { kind: 'field', owner: 'self', path: ['plan', 'licenseFee'] },
+        right: { kind: 'int', value: 0 } } };
+    expect(validateCandidate(c, m).some(d => d.code === 'cross-context-ref-unsupported')).toBe(true);
   });
 });

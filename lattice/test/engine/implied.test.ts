@@ -84,3 +84,33 @@ describe('impliedInvariants', () => {
     expect(canonicalCandidate(ordered)).toBe(canonicalCandidate(jumbled));
   });
 });
+
+// Local fixture (tests don't import across test files): an Order aggregate whose only ref
+// field is a qualified cross-context ref to `target` (e.g. 'Catalog.Plan', spec §4.2).
+const base = (target: string): DomainModel => ({
+  context: 'Billing', ticksPerDay: 24,
+  enums: [],
+  entities: [],
+  aggregates: [{
+    kind: 'aggregate', name: 'Order',
+    fields: [
+      { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'plan', type: { kind: 'ref', target } }
+    ]
+  }],
+  events: []
+});
+
+describe('impliedInvariants — qualified-ref exclusion (spec §4.2)', () => {
+  it('impliedInvariants skips refs-resolve when the only ref is qualified', () => {
+    const m = base('Catalog.Plan');
+    expect(impliedInvariants(m).some(i => i.candidate.kind === 'refsResolve')).toBe(false);
+  });
+
+  it('impliedInvariants still derives refs-resolve for a local ref', () => {
+    const m = base('Catalog.Plan');
+    m.entities.push({ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] });
+    m.aggregates[0]!.fields.push({ name: 'who', type: { kind: 'ref', target: 'Customer' } });
+    expect(impliedInvariants(m).some(i => i.candidate.kind === 'refsResolve')).toBe(true);
+  });
+});

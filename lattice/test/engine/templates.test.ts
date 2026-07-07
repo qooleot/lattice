@@ -47,3 +47,27 @@ describe('matchTemplates', () => {
     expect(r.seeds.some(s => s.candidate.kind === 'unique')).toBe(true);
   });
 });
+
+describe('matchTemplates — qualified-ref exclusion (spec §4.2)', () => {
+  // Local fixture (tests don't import across test files): an Order aggregate whose only ref
+  // field is a qualified cross-context ref.
+  const base = (target: string): DomainModel => ({
+    context: 'Billing', ticksPerDay: 24,
+    enums: [],
+    entities: [],
+    aggregates: [{
+      kind: 'aggregate', name: 'Order',
+      fields: [
+        { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'plan', type: { kind: 'ref', target } }
+      ]
+    }],
+    events: []
+  });
+
+  it('adopts no tpl-9 (refsResolve) invariant when the only ref field is qualified', () => {
+    const m = base('Catalog.Plan');
+    const { adopt } = matchTemplates(m);
+    expect(adopt.some(a => a.candidate.kind === 'refsResolve')).toBe(false);
+  });
+});

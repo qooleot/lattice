@@ -1,4 +1,5 @@
 import type { DomainModel, AggregateDef, EntityDef } from '../ast/domain.js';
+import { isQualifiedRef } from '../ast/domain.js';
 import type { Candidate, Path, Predicate, Term } from '../ast/invariant.js';
 import type { SalientFact } from '../engine/session.js';
 
@@ -30,7 +31,11 @@ function emitOwnerSig(o: AggregateDef | EntityDef): string {
   const fields: string[] = [];
   for (const f of o.fields) {
     if (f.key) continue;
-    if (f.type.kind === 'ref') fields.push(`  ${f.name}: one ${f.type.target}`);
+    if (f.type.kind === 'ref') {
+      const target = f.type.target;
+      if (isQualifiedRef(f.type)) continue;   // cross-context ref (spec §4.2) — the target sig is never declared here
+      fields.push(`  ${f.name}: one ${target}`);
+    }
     else if (f.type.kind === 'enum') fields.push(`  ${f.name}: one ${f.type.enum}`);
     else if (f.type.kind === 'prim' && isIntPrim(f.type.prim)) fields.push(`  ${f.name}: one Int`);
     // Text/Id dropped — atom identity suffices
@@ -162,7 +167,9 @@ function extraComparisonPaths(m: DomainModel, aggName: string, exclude: Path[]):
   const out: Path[] = [];
   for (const f of owner.fields) {
     if (f.type.kind !== 'ref') continue;
-    const target = byName.get(f.type.target);
+    const refTarget = f.type.target;
+    if (isQualifiedRef(f.type)) continue;
+    const target = byName.get(refTarget);
     // Comparable one-hop-further fields (ref or data — atom identity compares fine either way,
     // same as `extractSalient`/`shapeToPred` already do for `by` paths).
     const deeper: Path[] = (target?.fields ?? [])

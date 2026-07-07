@@ -1,4 +1,5 @@
 import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
+import { isQualifiedRef } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant } from '../ast/invariant.js';
 
 const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
@@ -10,7 +11,7 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
   const seeds: CandidateInvariant[] = [];
 
   for (const o of owners(m)) {
-    const refs = o.fields.filter(f => f.type.kind === 'ref');
+    const refs = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type));
     const machine = (o as AggregateDef).machine;
 
     // #1 conservation: >=2 @balance + a @total
@@ -71,7 +72,7 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
 function findDatePath(m: DomainModel, o: AggregateDef | EntityDef): string[] | null {
   const direct = o.fields.find(f => f.type.kind === 'prim' && f.type.prim === 'Date');
   if (direct) return [direct.name];
-  for (const f of o.fields) if (f.type.kind === 'ref') {
+  for (const f of o.fields) if (f.type.kind === 'ref' && !isQualifiedRef(f.type)) {
     const t = owners(m).find(x => x.name === (f.type as any).target);
     const d = t?.fields.find(x => x.type.kind === 'prim' && x.type.prim === 'Date');
     if (d) return [f.name, d.name];

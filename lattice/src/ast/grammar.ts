@@ -1,5 +1,6 @@
 import type { Candidate, Diagnostic, Engine, Path, Predicate, Term } from './invariant.js';
 import type { DomainModel, AggregateDef, EntityDef, Field } from './domain.js';
+import { isQualifiedRef } from './domain.js';
 
 type Owner = AggregateDef | EntityDef;
 
@@ -7,8 +8,14 @@ function ownerDef(m: DomainModel, name: string): Owner | undefined {
   return m.aggregates.find(a => a.name === name) ?? m.entities.find(e => e.name === name);
 }
 
-/** Resolve a field path from an owner, following refs across entities/aggregates. Returns the terminal field or null. */
-export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path): Field | null {
+/**
+ * Resolve a field path from an owner, following refs across entities/aggregates. Returns the
+ * terminal field or null. When the path hops through a qualified (cross-context) ref field, the
+ * hop is refused: a `cross-context-ref-unsupported` diagnostic is pushed onto `out` (when given)
+ * and resolution stops there, returning null — cross-context fields cannot appear in invariants
+ * (spec §4.2).
+ */
+export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path, out?: Diagnostic[]): Field | null {
   let def = ownerDef(m, ownerName);
   for (let i = 0; i < path.length; i++) {
     if (!def) return null;
@@ -24,7 +31,16 @@ export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path):
     const f = def.fields.find(x => x.name === seg);
     if (!f) return null;
     if (i === path.length - 1) return f;
-    def = f.type.kind === 'ref' ? ownerDef(m, f.type.target) : undefined;
+    if (f.type.kind === 'ref') {
+      const target = f.type.target;
+      if (isQualifiedRef(f.type)) {
+        out?.push({ code: 'cross-context-ref-unsupported',
+          message: `path '${path.join('.')}' crosses the cross-context ref '${f.name}: ref ${target}' — cross-context fields cannot appear in invariants (spec §4.2)`,
+          at: path.join('.') });
+        return null;
+      }
+      def = ownerDef(m, target);
+    } else def = undefined;
   }
   return null;
 }
@@ -125,8 +141,12 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
   // through — instead of letting the engine silently misjudge or the solver hard-fail.
   const SOLVER_INT_PRIMS = ['Int', 'Money', 'Date', 'Duration'];
   const checkPath = (p: Path, at: string) => {
-    const f = resolveFieldPath(m, c.aggregate, p);
-    if (!f) { out.push({ code: 'unknown-path', message: `path ${p.join('.')} not found on ${c.aggregate}`, at }); return; }
+    const before = out.length;
+    const f = resolveFieldPath(m, c.aggregate, p, out);
+    if (!f) {
+      if (out.length === before) out.push({ code: 'unknown-path', message: `path ${p.join('.')} not found on ${c.aggregate}`, at });
+      return;
+    }
     if (/^\w+\.state$/.test(p[p.length - 1]!)) return;   // machine-state accessor — representable
     if (f.key) out.push({ code: 'key-path', message: p.length === 1
       ? `path ${p.join('.')} is a key field — keys are unique by construction and dropped from the solver-facing model, so comparing them is vacuous`

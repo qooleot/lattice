@@ -1,4 +1,5 @@
 import type { AggregateDef, DomainModel, EntityDef } from '../ast/domain.js';
+import { isQualifiedRef } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant } from '../ast/invariant.js';
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -19,7 +20,7 @@ export function impliedInvariants(m: DomainModel): CandidateInvariant[] {
         out.push(mk(`nonNegative${cap(o.name)}${cap(f.name)}`, { kind: 'statePredicate', aggregate: o.name,
           body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [f.name] },
             right: { kind: 'int', value: 0 } } }));
-    if (o.fields.some(f => f.type.kind === 'ref'))
+    if (o.fields.some(f => f.type.kind === 'ref' && !isQualifiedRef(f.type)))
       out.push(mk(`refsResolve${cap(o.name)}`, { kind: 'refsResolve', aggregate: o.name }));
     const machine = o.kind === 'aggregate' ? o.machine : undefined;
     for (const r of machine?.regions ?? [])
