@@ -4,7 +4,7 @@ The most common strategic relationship: one context's model influences another's
 reverse. The **upstream** context changes on its own schedule; the **downstream** context must
 react to those changes. Declared inside a [context map](context-map.md) with `upstream of`, it
 may carry role annotations — [open host](open-host.md), [published language](published-language.md)
-on the upstream side; [anticonruption layer](anticorruption.md), [conformist](conformist.md) on
+on the upstream side; [anticorruption layer](anticorruption.md), [conformist](conformist.md) on
 the downstream side — and an `exposes` list naming the types the upstream publishes.
 
 ## Syntax
