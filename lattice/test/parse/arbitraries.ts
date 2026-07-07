@@ -246,8 +246,10 @@ export const arbContextMap: fc.Arbitrary<ContextMapModel> = (() => {
       doc: fc.option(fc.constant('a relationship doc'), { nil: undefined }),
     }), { maxLength: 4 }),
     fc.array(fc.boolean(), { minLength: 5, maxLength: 5 }),   // explicit-path flags
-  ).map(([n, rels, explicit]) => ({
+    fc.option(docText, { nil: undefined }),                   // top-level map doc
+  ).map(([n, rels, explicit, mapDoc]) => ({
     name: 'MapUnderTest',
+    ...(mapDoc ? { doc: mapDoc } : {}),
     contexts: Array.from({ length: n }, (_, i) => ({
       name: name(i), path: explicit[i] ? `custom/p${i}` : defaultPath(name(i)) })),
     relationships: rels
