@@ -184,15 +184,18 @@ Same never-throw, file:line:col-capable diagnostics style as slice 3. Given a pa
 
 One creator module per diagram type (§2), each a pure function `AST → string` returning mermaid
 source with **no filesystem access** (I/O stays in the CLI layer, as with existing emitters).
-Identifier discipline: mermaid node ids are sanitized (`[^A-Za-z0-9_]` → `_`), display labels
-carry the real names.
+Identifier discipline: every name reaching the emitters is grammar-`ID`-constrained
+(`/[A-Za-z_][A-Za-z0-9_]*/`), hence already mermaid-safe — no sanitizer needed. The one
+exception is qualified names (`Catalog.Plan`), whose `.` is replaced with `_` for the node id
+with the qualified name kept as the display label.
 
-1. **`contextMap.ts`** — `contextMapToMermaid(map, models) → string`. `flowchart LR`; one node
+1. **`contextMap.ts`** — `contextMapToMermaid(map) → string`. `flowchart LR`; one node
    per context; one labeled edge per relationship using the keyword vocabulary, e.g.
    `Catalog -- "upstream (openHost, publishedLanguage) exposes Plan" --> Subscriptions`;
-   partnership/shared-kernel as undirected-styled edges with their kind as label. Additionally, dashed edges for *observed*
-   qualified-ref usage (`Subscriptions -.Plan.-> Catalog`) when not already implied by a declared
-   relationship's label — the map shows both the declared strategy and the actual import graph.
+   partnership/shared-kernel as undirected-styled edges with their kind as label. (No separate
+   "observed usage" edges — planning finding 2026-07-06: workspace validation requires every
+   qualified ref to be covered by a declared relationship, so in any workspace that generates
+   docs the declared edges already ARE the import graph.)
 2. **`domainDiagram.ts`** — `domainToMermaid(model) → string`. `classDiagram` with
    `namespace <Context>` as the module box. Classes: aggregates and entities with typed fields
    (`key` marked), `<<enumeration>>` classes listing values. Associations from `ref` fields:
@@ -245,9 +248,10 @@ Workspace level (written by `docs`):
   JSON error contract (`{ error: 'workspace-invalid', diagnostics: [...] }`), diagnostics
   carrying file:line:col where the parser provides them. Same routine as the `apply`/`sync` hook
   — one workspace compile, three invocation surfaces.
-- **`init --lat <spec.lat>`** (small addition): bootstrap a session from a canonical `.lat`
-  instead of model JSON — parse, validate, then proceed exactly as `init --model`. Needed so new
-  contexts (Catalog, below) are born from `.lat`, keeping the AST an intermediate everywhere.
+- **No `init --lat` needed** (planning finding, 2026-07-06): slice 3's `apply` already has a
+  fresh-session path ("hand-authored new spec", spec §5.8) — running `apply` against a session
+  dir with no `state.json` parses the `.lat`, adopts its invariants with `hand-authored`
+  provenance, and creates the session. New contexts (Catalog, below) bootstrap through it.
 
 ## 8. Migration & compatibility
 
@@ -262,7 +266,7 @@ Grow the live subscriptions spec into a real two-context workspace, dogfooding t
 loop:
 
 1. **New `Catalog` context**: author `specs/catalog/spec.lat` by hand (context `Catalog`, owning
-   `Plan` moved from Subscriptions); `init --lat` creates its session; template invariants
+   `Plan` moved from Subscriptions); `apply` (fresh-session path, §7) creates its session; template invariants
    (non-negative Money via P9, etc.) derive there. The elicited `overageImpliesRealAllowance`
    invariant concerns Plan fields only — its ledger witnesses are copied into the Catalog ledger
    as append-only entries with an explicit migration provenance note (judgments preserved, the
@@ -299,11 +303,12 @@ Page inventory:
 Like CML's role pages (Open Host Service, Conformist, …), each role keyword gets its own page:
 the DDD pattern in a paragraph, then the Lattice spelling.
 
-**Docs are held to the code's standard:** every ` ```lat ` block in `docs/language/` is extracted
-and parsed in tests (context files, map files, and — for fragment examples — wrapped in a minimal
-valid context first), so a grammar change that invalidates an example fails CI, and examples can
-never rot into pseudo-code. A grammar change therefore ships with its page update (added to the
-institutional checklist).
+**Docs are held to the code's standard:** every ` ```lat ` block in `docs/language/` must be a
+**complete, parseable file** (a `context` or `contextMap`), and a test extracts and parses each
+one — so a grammar change that invalidates an example fails CI, and examples can never rot into
+pseudo-code. Deliberately-invalid examples (e.g. the `//` ban) use plain fences with the
+diagnostic shown, never ` ```lat `. A grammar change therefore ships with its page update (added
+to the institutional checklist).
 
 ## 11. Testing
 
@@ -319,13 +324,15 @@ institutional checklist).
 - **Workspace validation tests**: missing/unparseable member, name mismatch, undeclared
   relationship endpoint, qualified ref without covering relationship, `exposes` of a type the
   upstream doesn't declare, duplicate context names, self-relationship.
-- **Mermaid syntax gate**: every generated diagram in tests is parsed with `@mermaid-js/parser`
-  (dev-dependency; fall back to `mmdc` only if the parser package proves insufficient) so we never
-  commit diagrams GitHub can't render.
+- **Mermaid syntax gate**: every generated diagram in tests is validated with `mermaid.parse()`
+  under jsdom (dev-deps `mermaid` + `jsdom`; planning finding 2026-07-06: `@mermaid-js/parser`
+  v1.2.0 covers only mermaid's newer langium-based diagram types, not
+  flowchart/classDiagram/stateDiagram — and `mmdc` would drag in puppeteer) so we never commit
+  diagrams GitHub can't render.
 - **CLI tests**: `emit`/`apply` write the new files; `docs` happy path + each error contract;
   `apply` inside a workspace regenerates the map (and reports, without blocking, workspace
   diagnostics from a broken sibling); `apply` outside any workspace skips the hook silently;
-  `init --lat` happy path + parse-error path; generated headers present.
+  apply's fresh-session path bootstraps a new context from `.lat`; generated headers present.
 - **Invariant-machinery exclusion tests**: a model with a qualified ref → no derived refs-resolve
   for that field; a candidate naming a qualified-ref path → `cross-context-ref-unsupported`.
 - **Docs parse gate**: every ` ```lat ` block under `docs/language/` parses (fragments wrapped in
