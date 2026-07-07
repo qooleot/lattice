@@ -22,6 +22,7 @@ import { loadLatText } from './parse/fromLangium.js';
 import { reconcile } from './engine/reconcile.js';
 import type { RenameSpec, RenameScope } from './engine/renames.js';
 import { renameEntries, currentInvariantName } from './engine/renames.js';
+import { compileWorkspace } from './engine/workspace.js';
 
 export const realDeps: SolverDeps = {
   alloy: async (m, q, max) => runAlloy(astToAlloy(m, q), max),
@@ -74,6 +75,17 @@ function writeProjections(latPath: string, model: DomainModel, adopted: Candidat
   return [lat, prose, ...diagramPaths];
 }
 
+/** Apply's workspace hook (spec §6): if `latPath` lives inside a workspace (a `context-map.lat`
+ *  sits at `dirname(dirname(latPath))`), recompile the whole workspace's diagram docs after the
+ *  member spec itself was written. Diagnostics from a broken SIBLING member are reported but never
+ *  block this apply — the edit here already reconciled successfully. */
+function workspaceHook(latPath: string): { written: string[] } | { diagnostics: object[] } | undefined {
+  const wsDir = dirname(dirname(latPath));
+  if (!existsSync(join(wsDir, 'context-map.lat'))) return undefined;
+  const w = compileWorkspace(wsDir);
+  return w.ok ? { written: w.written } : { diagnostics: w.diagnostics };
+}
+
 function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
   const segs = path.split('.');
   const from = segs[segs.length - 1]!;
@@ -111,11 +123,11 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       question: { type: 'string' }, answer: { type: 'string' },
       lat: { type: 'string' }, 'dry-run': { type: 'boolean' },
       rename: { type: 'string', multiple: true }, 'force-remove': { type: 'string', multiple: true },
-      name: { type: 'string' }
+      name: { type: 'string' }, workspace: { type: 'string' }
     }});
 
-    if (!values.session) return { error: 'missing-arg', arg: 'session' };
-    const dir = values.session;
+    if (cmd !== 'docs' && !values.session) return { error: 'missing-arg', arg: 'session' };
+    const dir = values.session!;
 
     switch (cmd) {
       case 'init': if (!values.model) return { error: 'missing-arg', arg: 'model' }; break;
@@ -134,11 +146,18 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         break;
       case 'apply': if (!values.lat) return { error: 'missing-arg', arg: 'lat' }; break;
       case 'sync': if (!values.lat) return { error: 'missing-arg', arg: 'lat' }; break;
+      case 'docs': if (!values.workspace) return { error: 'missing-arg', arg: 'workspace' }; break;
+    }
+
+    if (cmd === 'docs') {
+      const w = compileWorkspace(values.workspace!);
+      return w.ok ? { written: w.written } : { error: 'workspace-invalid', diagnostics: w.diagnostics };
     }
 
     if (cmd === 'sync') {
+      const mapPath = join(dirname(dirname(values.lat!)), 'context-map.lat');
       const { startSync } = await import('./engine/sync.js');
-      startSync({ lat: values.lat!, session: dir, deps,
+      startSync({ lat: values.lat!, mapPath, session: dir, deps,
         onOutcome: o => console.log(JSON.stringify(o)) });
       await new Promise(() => {});   // run until SIGINT
     }
@@ -297,11 +316,16 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           s.model = loaded.model;
           s.phase = 'converged';
           s.candidates = loaded.invariants.map(inv => ({ inv, status: 'adopted' as const }));
+          // mkdir up front: a spec with zero invariants (e.g. an entity-only context) skips the
+          // appendLedger loop below, which is otherwise what creates `dir` before this write.
+          mkdirSync(dir, { recursive: true });
           for (const inv of loaded.invariants)
             appendLedger(dir, { kind: 'adopted', at, invariant: inv, provenance: `hand-authored ${isoDay(at)}` });
           writeFileSync(join(dir, 'model.json'), JSON.stringify(loaded.model, null, 2));
           const written = writeProjections(latPath, loaded.model, loaded.invariants, readLedger(dir));
-          return done({ ok: true, applied: ['fresh session', ...loaded.invariants.map(i => `invariant ${i.name}`)], written, ...outcomeBase });
+          const workspace = workspaceHook(latPath);
+          return done({ ok: true, applied: ['fresh session', ...loaded.invariants.map(i => `invariant ${i.name}`)], written,
+            ...outcomeBase, ...(workspace ? { workspace } : {}) });
         }
 
         const r = reconcile({ parsed: { model: loaded.model, invariants: loaded.invariants },
@@ -324,7 +348,8 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         for (const e of r.ledgerAppends) appendLedger(dir, e);
         writeFileSync(join(dir, 'model.json'), JSON.stringify(r.model, null, 2));
         const written = writeProjections(latPath, r.model, r.adopted, readLedger(dir));
-        return done({ ok: true, applied: r.applied, written, warnings });
+        const workspace = workspaceHook(latPath);
+        return done({ ok: true, applied: r.applied, written, warnings, ...(workspace ? { workspace } : {}) });
       }
       case 'explain': {
         const ledger = readLedger(dir);

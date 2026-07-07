@@ -160,3 +160,72 @@ describe('engine apply', () => {
     expect(readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8')).toBe(ledgerBefore);
   });
 });
+
+describe('engine apply: workspace context-map hook', () => {
+  const MAP = `contextMap Acme {
+  contains Catalog
+  contains Subscriptions
+
+  Catalog upstream of Subscriptions {
+    exposes Plan
+  }
+}
+`;
+  const CATALOG_SPEC = `context Catalog {
+  entity Plan {
+    planId : Id key
+    name : Text
+  }
+}
+`;
+  const SUBSCRIPTIONS_SPEC = `context Subscriptions {
+  aggregate Subscription {
+    subId : Id key
+    plan : ref Catalog.Plan
+  }
+}
+`;
+
+  const writeMember = (wsDir: string, path: string, text: string) => {
+    mkdirSync(join(wsDir, path), { recursive: true });
+    writeFileSync(join(wsDir, path, 'spec.lat'), text);
+  };
+
+  it('apply inside a workspace attaches workspace.written', async () => {
+    const wsDir = mkdtempSync(join(tmpdir(), 'lat-apply-ws-'));
+    writeFileSync(join(wsDir, 'context-map.lat'), MAP);
+    writeMember(wsDir, 'catalog', CATALOG_SPEC);
+    writeMember(wsDir, 'subscriptions', SUBSCRIPTIONS_SPEC);
+
+    const fresh = join(wsDir, 'catalog-session');
+    const r: any = await runCommand(
+      ['apply', '--session', fresh, '--lat', join(wsDir, 'catalog', 'spec.lat')], realDeps);
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(r.workspace).toBeDefined();
+    expect(r.workspace.written).toBeDefined();
+    expect(r.workspace.diagnostics).toBeUndefined();
+    expect(existsSync(join(wsDir, 'context-map.generated.md'))).toBe(true);
+  });
+
+  it('apply with a broken sibling member: ok:true AND workspace.diagnostics non-empty', async () => {
+    const wsDir = mkdtempSync(join(tmpdir(), 'lat-apply-ws-broken-'));
+    writeFileSync(join(wsDir, 'context-map.lat'), MAP);
+    writeMember(wsDir, 'catalog', CATALOG_SPEC);
+    // subscriptions member spec.lat intentionally absent -> sibling is broken
+
+    const fresh = join(wsDir, 'catalog-session');
+    const r: any = await runCommand(
+      ['apply', '--session', fresh, '--lat', join(wsDir, 'catalog', 'spec.lat')], realDeps);
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(r.workspace).toBeDefined();
+    expect(r.workspace.diagnostics).toBeDefined();
+    expect(r.workspace.diagnostics.length).toBeGreaterThan(0);
+    expect(r.workspace.written).toBeUndefined();
+  });
+
+  it('apply outside any workspace has no workspace key', async () => {
+    const r: any = await apply();
+    expect(r.ok).toBe(true);
+    expect(r.workspace).toBeUndefined();
+  });
+});
