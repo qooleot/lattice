@@ -5,9 +5,15 @@ import type { Candidate, CandidateInvariant, Predicate, Term, Path } from '../as
 import { validateModel } from '../ast/validate.js';
 import { validateCandidate } from '../ast/grammar.js';
 import { isImplied } from '../engine/implied.js';
+import type { ContextMapModel, Relationship, Role } from '../ast/contextmap.js';
+import { defaultPath, validateContextMap } from '../ast/contextmap.js';
 
 export type LoadResult =
   | { ok: true; model: DomainModel; invariants: CandidateInvariant[]; warnings: ParseDiagnostic[] }
+  | { ok: false; diagnostics: ParseDiagnostic[] };
+
+export type ContextMapLoadResult =
+  | { ok: true; map: ContextMapModel; warnings: ParseDiagnostic[] }
   | { ok: false; diagnostics: ParseDiagnostic[] };
 
 const PRIMS = new Set(['Int', 'Text', 'Date', 'Duration', 'Money', 'Id']);
@@ -270,4 +276,39 @@ export function loadLatText(text: string): LoadResult {
   warnings.push(...namingWarnings(model, invariants.map(i => i.name),
     k => locs.get(k) ?? { line: 1, col: 1 }));
   return { ok: true, model, invariants, warnings };
+}
+
+export function loadContextMapText(text: string): ContextMapLoadResult {
+  const parsed = parseLat(text);
+  if (!parsed.ok) return parsed;
+  const file = parsed.cst;
+  if (!file.map)
+    return { ok: false, diagnostics: [{ code: 'wrong-file-kind', line: 1, col: 1,
+      message: 'expected a contextMap file, got a context — the workspace map lives in context-map.lat' }] };
+  const m = file.map;
+  const map: ContextMapModel = {
+    name: m.name,
+    contexts: m.contains.map(c => ({ name: c.name, path: c.path ?? defaultPath(c.name) })),
+    relationships: m.relationships.map(r => {
+      const rel: Relationship = {
+        kind: r.kind === 'upstream' ? 'upstreamDownstream' : r.kind as 'partnership' | 'sharedKernel',
+        left: r.left, right: r.right,
+      };
+      if (r.upstreamRoles.length) rel.upstreamRoles = [...r.upstreamRoles] as Role[];
+      if (r.downstreamRoles.length) rel.downstreamRoles = [...r.downstreamRoles] as Role[];
+      if (r.exposes.length) rel.exposes = [...r.exposes];
+      const d = joinDocs([...r.docs]); if (d) rel.doc = d;
+      return rel;
+    }),
+  };
+  const topDoc = joinDocs([...file.docs]); if (topDoc) map.doc = topDoc;
+  const diags = validateContextMap(map).map(d =>
+    ({ code: d.code, message: d.at ? `${d.message} (at ${d.at})` : d.message, line: 1, col: 1 }));
+  if (diags.length) return { ok: false, diagnostics: diags };
+  const warnings: ParseDiagnostic[] = [];
+  if (!PASCAL.test(map.name)) warnings.push({ code: 'naming-convention', ...at(file.map),
+    message: `contextMap '${map.name}' should be PascalCase (spec P8)` });
+  for (const c of m.contains) if (!PASCAL.test(c.name)) warnings.push({ code: 'naming-convention',
+    ...at(c), message: `context '${c.name}' should be PascalCase (spec P8)` });
+  return { ok: true, map, warnings };
 }
