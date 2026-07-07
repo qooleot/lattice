@@ -18,7 +18,7 @@
 
 Build the **diagram projection** — the third of the three projections over the one AST — as
 generated **Mermaid** docs, plus the **structural** language growth the desired diagrams require:
-`service`, qualified cross-context refs, and a workspace **context map file** — all authored in
+qualified cross-context refs and a workspace **context map file** — all authored in
 the Lattice language (`.lat`), parsed by the slice-3 Langium parser. The AST (`DomainModel`, new
 `ContextMapModel`) is an in-memory intermediate between `.lat` and every projection; it is never
 an authored or git-facing artifact (slice-3 P1; the session dir's `model.json` remains engine
@@ -27,11 +27,16 @@ working state only).
 Three diagram types, per the user's scoping decisions:
 
 1. **Context map** — CML-style strategic diagram across bounded contexts (one mermaid flowchart).
-2. **Domain relationship diagram** — per context: aggregates/entities, enums, and **application
-   services inside the context module** (one mermaid classDiagram).
+2. **Domain relationship diagram** — per context: aggregates/entities and enums inside the
+   context module (one mermaid classDiagram).
 3. **Lifecycle statecharts** — per aggregate machine region (mermaid stateDiagram-v2).
 
-Explicitly **out**: invariant overlays/annotations on diagrams (user decision).
+Explicitly **out**: invariant overlays/annotations on diagrams (user decision). Also out (user
+decision, 2026-07-06): the **`service` construct** — its surface syntax (plan §5.2's
+`command`/`result` vocabulary) is pending the user's review and belongs to the generation slice's
+design, which defines what a service *is* (verified command). Service boxes join the domain
+diagram as a small follow-up once that construct lands; nothing in this slice's diagram
+architecture depends on it.
 
 Also in scope (user decision, 2026-07-06): a **whole-language reference** under `docs/language/`
 in the style of Context Mapper's per-pattern doc pages — one short page per construct, covering
@@ -79,8 +84,8 @@ cross-context reference is only legal over published/imported types."
 **Depth (user-approved): structural-first.** New constructs are real language citizens — parsed,
 printed (round-trip `parse ∘ print = id`, extending slice 3's property tests), validated for
 well-formedness, and rendered into prose and mermaid projections — but do **not** enter the
-invariant/solver grammar. Verification of services (`requires`/`ensures`/`saga`, plan §5.3) is a
-later slice; including them now as unchecked strings would be decoration, not spec.
+invariant/solver grammar. Relationship semantics beyond structure (checked translations, plan
+§5.4) are a later slice; including them now as unchecked strings would be decoration, not spec.
 
 ## 4. Language growth (all in `lat.langium` + `fromLangium.ts` + the `code.ts` printer)
 
@@ -94,44 +99,24 @@ enforced both directions by the grammar-sync test in `test/parse/parse.test.ts`)
 `fromLangium.ts`, printer support in `code.ts` with round-trip identity, and diff/reconcile
 treatment.
 
-New keywords (all become reserved, i.e. **illegal as identifiers everywhere**): `service`,
-`command`, `result`, `emits`, `contextMap`, `contains`, `upstream`, `downstream`, `of`, `roles`,
-`exposes`, `partnership`, `sharedKernel`, `with`, `openHost`, `publishedLanguage`,
-`anticorruption`, `conformist` (`from` is already reserved). This is a real cost — `result`,
-`command`, and `upstream` are plausible domain field names — accepted to keep one lexer and the
-grammar-sync discipline. The migration check: no committed spec or fixture uses any of these as
-an identifier (verified for `specs/subscriptions` during implementation; `validateModel` starts
-rejecting them via the existing reserved-word rule, which is the versioned-act breakage made
-loud, not silent).
+New keywords (all become reserved, i.e. **illegal as identifiers everywhere**): `contextMap`,
+`contains`, `upstream`, `downstream`, `of`, `roles`, `exposes`, `partnership`, `sharedKernel`,
+`with`, `openHost`, `publishedLanguage`, `anticorruption`, `conformist` (`from` is already
+reserved). This is a real cost — `upstream`/`downstream` are plausible domain field names —
+accepted to keep one lexer and the grammar-sync discipline. (Cutting `service` from this slice
+also cut its riskiest reservations: `command` and `result`.) The migration check: no committed
+spec or fixture uses any of these as an identifier (verified for `specs/subscriptions` during
+implementation; `validateModel` starts rejecting them via the existing reserved-word rule, which
+is the versioned-act breakage made loud, not silent).
 
-### 4.1 `service` (per-context construct)
+### 4.1 `service` — cut from this slice (user decision, 2026-07-06)
 
-New `ContextItem` alternative:
-
-```
-/// Cancels an active or trialing subscription at period end.
-service CancelSubscription {
-  command { subscription: ref Subscription }
-  result  { subscription: ref Subscription }      // optional
-  emits SubscriptionCanceled                       // optional, repeatable; names declared events
-}
-```
-
-AST: `ServiceDef { name, command: Field[], result?: Field[], emits?: string[], doc? }`;
-`DomainModel` gains `services: ServiceDef[]` (default `[]` at load boundaries so existing session
-state and fixtures load unchanged). Service names are PascalCase (matching plan §5.2's
-`UpgradePlan`; warning-level `naming-convention` diagnostic like slice-3 P8).
-
-`validateModel`: unique valid service names; command/result field types resolve like entity
-fields; every `emits` entry names a declared event in the same context.
-
-**Reconciliation class:** services are never ledger-referenced (no witness mentions them), so
-service edits are structural — `apply` applies them without ceremony. Renames of
-aggregates/entities/enums/events referenced from service fields or `emits` rewrite those
-references (extend `renames.ts` reference-rewrite and `inferRenameSpec` accordingly; a `service`
-rename scope is added, tracked like transition renames).
-
-Deliberately deferred: `requires`, `ensures`, `saga` (verification slice, plan §5.3).
+The user is reviewing the service surface syntax (plan §5.2's `command`/`result` vocabulary reads
+wrong to him) before any implementation, and the construct's semantics belong to the generation
+slice's design (service = verified command, plan §5.3). Rather than bake in provisional keywords,
+the whole construct moves out of this slice. When it lands, adding `<<service>>` boxes to the
+domain diagram is a small, isolated emitter change; nothing in this slice's architecture assumes
+services exist.
 
 ### 4.2 Qualified cross-context refs
 
@@ -210,10 +195,9 @@ carry the real names.
    relationship's label — the map shows both the declared strategy and the actual import graph.
 2. **`domainDiagram.ts`** — `domainToMermaid(model) → string`. `classDiagram` with
    `namespace <Context>` as the module box. Classes: aggregates and entities with typed fields
-   (`key` marked), `<<enumeration>>` classes listing values, `<<service>>` classes listing command
-   fields (and result if present). Associations from `ref` fields:
-   `Invoice --> Subscription : subscription`; `List<ref>` gets `"*"` multiplicity;
-   service→aggregate edges from `ref` fields in command/result. Cross-context refs render as a
+   (`key` marked), `<<enumeration>>` classes listing values. Associations from `ref` fields:
+   `Invoice --> Subscription : subscription`; `List<ref>` gets `"*"` multiplicity.
+   Cross-context refs render as a
    class stub outside the namespace named with the qualified name and stereotyped `<<external>>`,
    plus a dashed dependency to it (`Subscription ..> Catalog_Plan : plan`), keeping foreign types
    visually distinct from local ones.
@@ -267,9 +251,7 @@ Workspace level (written by `docs`):
 
 ## 8. Migration & compatibility
 
-- `DomainModel.services` defaults to `[]` at load boundaries; existing session state, fixtures,
-  and golden traces load unchanged.
-- `astToCode` and `astToProse` learn `service` blocks and qualified refs; `.lat` output for models
+- `astToCode` and `astToProse` learn qualified refs; `.lat` output for models
   without them is byte-identical to today (golden parseback protocol unaffected). The round-trip
   property (`parse ∘ print = id`) extends over the new constructs and map files.
 - Existing `emit`/`apply` consumers see strictly more files written, no changed semantics.
@@ -285,9 +267,8 @@ loop:
    invariant concerns Plan fields only — its ledger witnesses are copied into the Catalog ledger
    as append-only entries with an explicit migration provenance note (judgments preserved, the
    human is not re-asked, history is not rewritten).
-2. **Subscriptions**: hand-edit `spec.lat` — remove `Plan`, change to `plan : ref Catalog.Plan`,
-   add 2–3 real services (`ActivateSubscription`, `CancelSubscription`, `RecordUsage`) — and run
-   `apply`. Plan-related removals are ledger-referenced, so this exercises the slice-3
+2. **Subscriptions**: hand-edit `spec.lat` — remove `Plan`, change to `plan : ref Catalog.Plan`
+   — and run `apply`. Plan-related removals are ledger-referenced, so this exercises the slice-3
    `--force-remove` path deliberately; the migration task documents the exact invocation and the
    ledger entries affected. Nothing is deleted from the Subscriptions ledger; migrated invariants'
    provenance notes point at Catalog.
@@ -310,7 +291,7 @@ Page inventory:
 |---|---|
 | Overview | `README.md` (index + 10-line tour), `projections.md` (prose/diagrams are generated; do-not-edit) |
 | Strategic | `context-map.md` (contextMap, contains/from), `upstream-downstream.md` (incl. `exposes`), `open-host.md`, `published-language.md`, `anticorruption.md`, `conformist.md`, `partnership.md`, `shared-kernel.md` |
-| Structure | `context.md`, `enum.md`, `entity.md`, `aggregate.md`, `field-types.md` (primitives, `List<>`, `ref`, qualified refs), `event.md`, `service.md` |
+| Structure | `context.md`, `enum.md`, `entity.md`, `aggregate.md`, `field-types.md` (primitives, `List<>`, `ref`, qualified refs), `event.md` (`service.md` follows the construct in the generation slice) |
 | Behavior | `machine.md` (regions, states, `@initial`/`@active`/`@terminal`), `transition.md` |
 | Invariants | `invariant.md` (declaration, predicates, operators), `invariant-forms.md` (all 8 bodies: predicate, unique, refs resolve, count, terminal, monotonic, conserve, leads-to), `derived-invariants.md` (slice-3 P9: what is implied, not printed) |
 | Meta | `doc-comments.md` (`///`, the `//` ban), `naming-conventions.md`, `tags.md`, `editing.md` (apply/sync, rename ceremony, ledger reconciliation from the engineer's seat) |
@@ -326,13 +307,13 @@ institutional checklist).
 
 ## 11. Testing
 
-- **Grammar/round-trip**: slice-3 round-trip property tests extended over `service`, qualified
-  refs, and `contextMap` files; parse-error tests for malformed map syntax; the grammar-sync test
+- **Grammar/round-trip**: slice-3 round-trip property tests extended over qualified
+  refs and `contextMap` files; parse-error tests for malformed map syntax; the grammar-sync test
   passes with the §4.0 keyword additions, and `validateModel` rejects each new reserved word used
   as an identifier.
 - **Golden emitter tests** (vitest, alongside existing suites): fixture models → exact expected
   mermaid, covering: no machine (no statechart emitted), multiple regions, terminal/initial
-  states, `List<ref>` multiplicity, enums, services with/without result, qualified refs, empty
+  states, `List<ref>` multiplicity, enums, qualified refs, empty
   relationship roles, partnership/shared-kernel rendering, id sanitization (names that would
   break mermaid).
 - **Workspace validation tests**: missing/unparseable member, name mismatch, undeclared
@@ -347,17 +328,16 @@ institutional checklist).
   `init --lat` happy path + parse-error path; generated headers present.
 - **Invariant-machinery exclusion tests**: a model with a qualified ref → no derived refs-resolve
   for that field; a candidate naming a qualified-ref path → `cross-context-ref-unsupported`.
-- **Reconcile tests**: service add/edit/rename applies without ceremony; renaming an aggregate
-  referenced from a service command rewrites the reference.
 - **Docs parse gate**: every ` ```lat ` block under `docs/language/` parses (fragments wrapped in
   a minimal context; see §10).
 
 ## 12. Slice boundaries (what this is NOT)
 
 - No invariant overlays on diagrams (user decision).
-- No `requires`/`ensures`/`saga` on services; no `acl`/`translate`/`external` constructs — the
-  demo needs none of them (no Stripe), and they belong to the verification-depth slice.
+- No `service` construct at all (§4.1 — surface syntax under user review; the construct belongs
+  to the generation slice); no `acl`/`translate`/`external` constructs — the demo needs none of
+  them (no Stripe), and they belong to the verification-depth slice.
 - No changes to `machine`/`TransitionDef` (slice 4's territory), the invariant grammar,
   `evaluateCandidate`, solver emitters, or session/ledger machinery beyond the exclusion
-  diagnostics in §4.2 and the reconcile/rename extensions in §4.1.
+  diagnostics in §4.2.
 - No LSP/editor work for the new constructs (slice-3 P2 stands; the grammar makes it cheap later).
