@@ -25,8 +25,8 @@ contextMap Acme {
 
 ## Semantic Rules
 
-- `openHost` is only valid in `upstream roles` (the grammar's `RoleName` rule); using it under
-  `downstream roles` is a syntax error, not a semantic diagnostic.
+- `openHost` is only valid in `upstream roles` (the grammar's `UpstreamRoleName` rule); using it
+  under `downstream roles` is a syntax error, not a semantic diagnostic.
 - Like any upstream role, it does not change how `exposes` is checked: each exposed name must
   still be a real entity or aggregate in the upstream context (`unknown-exposed-type`).
 - Multiple upstream roles may combine, e.g. `openHost, publishedLanguage` — see

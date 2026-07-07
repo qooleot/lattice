@@ -129,6 +129,37 @@ contextMap AcmeBilling {
     const docs = Array.from({ length: 8 }, (_, i) => `/// line ${i}`).join('\n');
     expect(parseLat(`${docs}\ncontextMap M {\n}\n`).ok).toBe(true);
   });
+
+  it('rejects a downstream role keyword under upstream roles (positional vocabulary)', () => {
+    const r = parseLat(`contextMap M {
+  contains Catalog
+  contains Subscriptions
+
+  Catalog upstream of Subscriptions {
+    upstream roles anticorruption
+  }
+}
+`);
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects an upstream role keyword under downstream roles (positional vocabulary)', () => {
+    const r = parseLat(`contextMap M {
+  contains Catalog
+  contains Subscriptions
+
+  Catalog upstream of Subscriptions {
+    downstream roles openHost
+  }
+}
+`);
+    expect(r.ok).toBe(false);
+  });
+
+  it('still parses correct positional role usage', () => {
+    const r = parseLat(MAP);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+  });
 });
 
 describe('RESERVED_WORDS matches the grammar keywords (single source enforced by test)', () => {

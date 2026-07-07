@@ -27,8 +27,8 @@ contextMap Acme {
 ## Semantic Rules
 
 - `anticorruption` is only valid in `downstream roles`; using it under `upstream roles` is a
-  syntax error (the grammar's `RoleName` rule is shared but position-bound by `upstream`/
-  `downstream` keywords).
+  syntax error — the grammar's `upstream roles` clause accepts only `openHost`/`publishedLanguage`
+  (`UpstreamRoleName`), a separate rule from the `downstream roles` clause's vocabulary.
 - The role itself does not relax `exposes` checking — the downstream still may only reference
   types the relationship exposes (`unknown-exposed-type`, `uncovered-cross-context-ref`); the
   translation the pattern describes is a modeling discipline in the downstream's own spec, not a

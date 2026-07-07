@@ -15,8 +15,8 @@ ContainsDecl:
 RelationshipDecl:
     docs+=DOC* left=ID
     ( kind='upstream' 'of' right=ID '{'
-        ('upstream' 'roles' upstreamRoles+=RoleName (',' upstreamRoles+=RoleName)*)?
-        ('downstream' 'roles' downstreamRoles+=RoleName (',' downstreamRoles+=RoleName)*)?
+        ('upstream' 'roles' upstreamRoles+=UpstreamRoleName (',' upstreamRoles+=UpstreamRoleName)*)?
+        ('downstream' 'roles' downstreamRoles+=DownstreamRoleName (',' downstreamRoles+=DownstreamRoleName)*)?
         ('exposes' exposes+=ID (',' exposes+=ID)*)?
       '}'
     | kind='partnership' 'with' right=ID '{'
@@ -26,8 +26,11 @@ RelationshipDecl:
         ('exposes' exposes+=ID (',' exposes+=ID)*)?
       '}' );
 
-RoleName returns string:
-    'openHost' | 'publishedLanguage' | 'anticorruption' | 'conformist';
+UpstreamRoleName returns string:
+    'openHost' | 'publishedLanguage';
+
+DownstreamRoleName returns string:
+    'anticorruption' | 'conformist';
 
 ContextItem:
     EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl;
