@@ -4,7 +4,6 @@ import { loadContextMapText, loadLatText } from '../parse/fromLangium.js';
 import { validateWorkspace, type WorkspaceMemberModel } from '../ast/workspace.js';
 import type { ContextMapModel } from '../ast/contextmap.js';
 import type { DomainModel } from '../ast/domain.js';
-import type { CandidateInvariant } from '../ast/invariant.js';
 import { specDiagramFiles, workspaceDiagramFiles } from '../emit/mermaid/docs.js';
 
 export interface WorkspaceMember {
@@ -12,7 +11,6 @@ export interface WorkspaceMember {
   path: string;
   dir: string;   // absolute member dir
   model: DomainModel;
-  invariants: CandidateInvariant[];
 }
 
 export type WorkspaceResult =
@@ -63,7 +61,7 @@ export function loadWorkspace(wsDir: string): WorkspaceResult {
     }
 
     warnings.push(...loaded.warnings.map(w => w.message));
-    members.push({ name: ctx.name, path: ctx.path, dir: memberDir, model: loaded.model, invariants: loaded.invariants });
+    members.push({ name: ctx.name, path: ctx.path, dir: memberDir, model: loaded.model });
   }
 
   if (diagnostics.length) return { ok: false, diagnostics };
