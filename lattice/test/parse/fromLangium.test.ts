@@ -136,3 +136,28 @@ describe('loadLatText', () => {
     }
   });
 });
+
+describe('qualified cross-context refs', () => {
+  const SPEC = `context Shop {
+  entity Customer {
+    id : Id key
+  }
+  aggregate Order {
+    orderId : Id key
+    plan    : ref Catalog.Plan
+    who     : ref Customer
+  }
+}
+`;
+  it('parses a qualified ref target into TypeRef.target verbatim', () => {
+    const r = loadLatText(SPEC);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    const f = r.model.aggregates[0]!.fields.find(f => f.name === 'plan')!;
+    expect(f.type).toEqual({ kind: 'ref', target: 'Catalog.Plan' });
+  });
+  it('rejects a malformed qualified target (three segments) at parse time', () => {
+    const r = loadLatText(SPEC.replace('Catalog.Plan', 'A.B.C'));
+    expect(r.ok).toBe(false);
+  });
+});

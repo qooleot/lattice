@@ -26,8 +26,11 @@ FieldDecl:
 
 LatType:
     {infer ListType} 'List' '<' of=LatType '>'
-  | {infer RefType} 'ref' target=ID
+  | {infer RefType} 'ref' target=QualifiedName
   | {infer NamedType} name=ID;
+
+QualifiedName returns string:
+    ID ('.' ID)?;
 
 Tag:
     '@' name=TagName;

@@ -46,7 +46,15 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   const events = new Set(m.events.map(e => e.name));
 
   const checkType = (t: TypeRef, at: string) => {
-    if (t.kind === 'ref' && !owners.has(t.target)) out.push({ code: 'unresolved-ref', message: `ref target ${t.target} not declared`, at });
+    if (t.kind === 'ref') {
+      if (t.target.includes('.')) {
+        const segs = t.target.split('.');
+        // shape only — resolution happens at workspace level (spec §4.4)
+        for (const s of segs) checkName('cross-context ref segment', s, at);
+      } else if (!owners.has(t.target)) {
+        out.push({ code: 'unresolved-ref', message: `ref target ${t.target} not declared`, at });
+      }
+    }
     if (t.kind === 'enum' && !enums.has(t.enum)) out.push({ code: 'unresolved-enum', message: `enum ${t.enum} not declared`, at });
     if (t.kind === 'list') checkType(t.of, at);
   };

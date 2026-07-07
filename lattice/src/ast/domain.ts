@@ -30,3 +30,8 @@ export interface DomainModel {
   aggregates: AggregateDef[];
   events: EventDef[];
 }
+
+/** Cross-context reference (spec §4.2): target is 'Context.Type'. Structural only —
+ *  excluded from NoOrphan/refs-resolve derivation and all solver encodings. */
+export const isQualifiedRef = (t: TypeRef): t is TypeRef & { kind: 'ref' } =>
+  t.kind === 'ref' && t.target.includes('.');

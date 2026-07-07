@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { validateModel } from '../../src/ast/validate.js';
+import { isQualifiedRef } from '../../src/ast/domain.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 
 const good: DomainModel = {
@@ -95,5 +96,27 @@ describe('validateModel', () => {
     m.entities[0]!.fields.push({ name: 'all_units', type: { kind: 'prim', prim: 'Int' } });
     m.enums.push({ name: 'PaymentState', values: ['Trialing', 'PaymentSucceeded'] });
     expect(validateModel(m).map(d => d.code)).not.toContain('invalid-name');
+  });
+});
+
+const base = (target: string): DomainModel => ({
+  context: 'Shop', enums: [], entities: [], events: [],
+  aggregates: [{ kind: 'aggregate', name: 'Order', fields: [
+    { name: 'orderId', type: { kind: 'prim', prim: 'Id' }, key: true },
+    { name: 'plan', type: { kind: 'ref', target } }] }],
+});
+
+describe('qualified ref shape validation', () => {
+  it('accepts Context.Type without unresolved-ref', () => {
+    expect(validateModel(base('Catalog.Plan'))).toEqual([]);
+  });
+  it('rejects a reserved word segment', () => {
+    const d = validateModel(base('Catalog.machine'));
+    expect(d.some(x => x.code === 'reserved-word')).toBe(true);
+  });
+  it('isQualifiedRef distinguishes local from qualified', () => {
+    expect(isQualifiedRef({ kind: 'ref', target: 'Catalog.Plan' })).toBe(true);
+    expect(isQualifiedRef({ kind: 'ref', target: 'Plan' })).toBe(false);
+    expect(isQualifiedRef({ kind: 'prim', prim: 'Id' })).toBe(false);
   });
 });
