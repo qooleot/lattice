@@ -5,7 +5,7 @@ import { machineToMermaid } from '../../src/emit/mermaid/statechart.js';
 import { domainToMermaid } from '../../src/emit/mermaid/domainDiagram.js';
 import { contextMapToMermaid } from '../../src/emit/mermaid/contextMap.js';
 import { specDiagramFiles, workspaceDiagramFiles } from '../../src/emit/mermaid/docs.js';
-import { order, model, map } from './mermaid.test.js';
+import { order, model, map, keywordMap } from './mermaid.test.js';
 
 mermaid.initialize({ startOnLoad: false });
 // mermaid.parse with suppressErrors:false never resolves to `false` — it resolves to a
@@ -22,6 +22,8 @@ describe('generated mermaid parses (the GitHub-renderability gate)', () => {
     expect(await valid(domainToMermaid(model))).toBe(true));
   it('context map (incl. label edges and ---|kind| edges)', async () =>
     expect(await valid(contextMapToMermaid(map))).toBe(true));
+  it('context map with contexts named after flowchart keywords (end, subgraph)', async () =>
+    expect(await valid(contextMapToMermaid(keywordMap))).toBe(true));
 });
 
 /** Extracts every ```mermaid ... ``` fenced block from a markdown document. */

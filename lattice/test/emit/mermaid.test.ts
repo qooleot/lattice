@@ -102,7 +102,25 @@ describe('contextMapToMermaid', () => {
       relationships: [{ kind: 'upstreamDownstream', left: 'A', right: 'B' }] };
     expect(contextMapToMermaid(bareMap)).toContain('  A -- "upstream" --> B');
   });
+  it('escapes node ids that collide with mermaid flowchart keywords, keeping labels exact', () => {
+    expect(contextMapToMermaid(keywordMap)).toBe(
+`flowchart LR
+  end_["end"]
+  subgraph_["subgraph"]
+  Billing["Billing"]
+  end_ -- "upstream" --> Billing
+  Billing ---|sharedKernel| subgraph_
+`);
+  });
 });
+
+/** Contexts named after mermaid flowchart keywords — legal .lat identifiers that must still render. */
+export const keywordMap: ContextMapModel = { name: 'KeywordClash',
+  contexts: [{ name: 'end', path: 'end' }, { name: 'subgraph', path: 'subgraph' },
+             { name: 'Billing', path: 'billing' }],
+  relationships: [
+    { kind: 'upstreamDownstream', left: 'end', right: 'Billing' },
+    { kind: 'sharedKernel', left: 'Billing', right: 'subgraph' }] };
 
 describe('specDiagramFiles', () => {
   it('assembles spec.diagrams.md + one CD + one SD per aggregate-region', () => {
