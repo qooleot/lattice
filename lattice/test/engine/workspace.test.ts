@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadWorkspace } from '../../src/engine/workspace.js';
+import { loadWorkspace, compileWorkspace } from '../../src/engine/workspace.js';
 
 const MAP = `contextMap Acme {
   contains Catalog
@@ -113,5 +113,34 @@ describe('loadWorkspace', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.diagnostics.some((x: any) => x.code === 'uncovered-cross-context-ref')).toBe(true);
+  });
+});
+
+describe('compileWorkspace', () => {
+  it('writes workspace context-map diagrams + each member\'s spec diagrams, all under the workspace/member dirs', () => {
+    writeHappyWorkspace(dir);
+    const r = compileWorkspace(dir);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+
+    const wsMd = join(dir, 'context-map.generated.md');
+    const wsMmd = join(dir, 'diagrams', 'context-map.mmd');
+    const catalogMd = join(dir, 'catalog', 'spec.diagrams.md');
+    const catalogCd = join(dir, 'catalog', 'diagrams', 'CD_Catalog.mmd');
+    const subsMd = join(dir, 'subscriptions', 'spec.diagrams.md');
+    const subsCd = join(dir, 'subscriptions', 'diagrams', 'CD_Subscriptions.mmd');
+
+    for (const p of [wsMd, wsMmd, catalogMd, catalogCd, subsMd, subsCd]) {
+      expect(r.written).toContain(p);
+      expect(existsSync(p)).toBe(true);
+    }
+  });
+
+  it('propagates loadWorkspace failure as diagnostics without writing anything', () => {
+    const r = compileWorkspace(dir);   // no context-map.lat at all
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.diagnostics[0]).toMatchObject({ code: 'missing-member' });
+    expect(existsSync(join(dir, 'context-map.generated.md'))).toBe(false);
   });
 });

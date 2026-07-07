@@ -16,6 +16,7 @@ import { runAlloy } from './solvers/alloy-adapter.js';
 import { runQuint } from './solvers/quint-adapter.js';
 import { astToProse, renderCandidateEnglish } from './emit/prose.js';
 import { astToCode } from './emit/code.js';
+import { specDiagramFiles } from './emit/mermaid/docs.js';
 import { impliedInvariants, canonicalCandidate } from './engine/implied.js';
 import { loadLatText } from './parse/fromLangium.js';
 import { reconcile } from './engine/reconcile.js';
@@ -61,7 +62,16 @@ function writeProjections(latPath: string, model: DomainModel, adopted: Candidat
   const lat = latPath, prose = join(outDir, 'spec.prose.md');
   writeFileSync(lat, astToCode(model, adopted));
   writeFileSync(prose, astToProse(model, [...adopted, ...derived], ledger));
-  return [lat, prose];
+
+  const diagramPaths: string[] = [];
+  for (const f of specDiagramFiles(model)) {
+    const p = join(outDir, f.relPath);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, f.content);
+    diagramPaths.push(p);
+  }
+
+  return [lat, prose, ...diagramPaths];
 }
 
 function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
@@ -239,13 +249,10 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       case 'emit': {
         const adopted = s.candidates.filter(c => c.status === 'adopted').map(c => c.inv);
         const ledger = readLedger(dir);
-        const shapes = new Set(adopted.map(a => canonicalCandidate(a.candidate)));
-        const derived = impliedInvariants(model()).filter(d => !shapes.has(canonicalCandidate(d.candidate)));
         mkdirSync(values.out!, { recursive: true });
-        const prose = join(values.out!, 'spec.prose.md'), lat = join(values.out!, 'spec.lat');
-        writeFileSync(prose, astToProse(model(), [...adopted, ...derived], ledger));
-        writeFileSync(lat, astToCode(model(), adopted));
-        return { written: [prose, lat] };
+        const latPath = join(values.out!, 'spec.lat');
+        const written = writeProjections(latPath, model(), adopted, ledger);
+        return { written };
       }
       case 'apply': {
         const latPath = values.lat!;

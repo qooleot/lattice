@@ -31,6 +31,21 @@ describe('engine apply', () => {
     expect(r.ok).toBe(true);
     expect(readFileSync(latFile, 'utf8')).toBe(before);
     expect(existsSync(join(specDir, 'spec.prose.md'))).toBe(true);
+
+    // diagrams are projections too: writeProjections also writes spec.diagrams.md + .mmd files
+    const diagramsMd = join(specDir, 'spec.diagrams.md');
+    const cdMmd = join(specDir, 'diagrams', 'CD_Subscriptions.mmd');
+    expect(r.written).toContain(diagramsMd);
+    expect(r.written).toContain(cdMmd);
+    expect(existsSync(diagramsMd)).toBe(true);
+    expect(existsSync(cdMmd)).toBe(true);
+    // both member aggregates (Subscription/lifecycle, Invoice/settlement) get their own SD file
+    const sdSubscription = join(specDir, 'diagrams', 'SD_Subscription_lifecycle.mmd');
+    const sdInvoice = join(specDir, 'diagrams', 'SD_Invoice_settlement.mmd');
+    expect(r.written).toContain(sdSubscription);
+    expect(r.written).toContain(sdInvoice);
+    expect(existsSync(sdSubscription)).toBe(true);
+    expect(existsSync(sdInvoice)).toBe(true);
   });
 
   it('parse errors refuse and write nothing', async () => {

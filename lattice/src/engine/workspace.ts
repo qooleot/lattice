@@ -1,10 +1,11 @@
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
 import { loadContextMapText, loadLatText } from '../parse/fromLangium.js';
 import { validateWorkspace, type WorkspaceMemberModel } from '../ast/workspace.js';
 import type { ContextMapModel } from '../ast/contextmap.js';
 import type { DomainModel } from '../ast/domain.js';
 import type { CandidateInvariant } from '../ast/invariant.js';
+import { specDiagramFiles, workspaceDiagramFiles } from '../emit/mermaid/docs.js';
 
 export interface WorkspaceMember {
   name: string;
@@ -72,4 +73,28 @@ export function loadWorkspace(wsDir: string): WorkspaceResult {
   if (workspaceDiags.length) return { ok: false, diagnostics: workspaceDiags };
 
   return { ok: true, map, members, warnings };
+}
+
+/** Compiles diagram projections for an entire workspace: loads it, then writes
+ *  `workspaceDiagramFiles(map)` under `wsDir` and `specDiagramFiles(member.model)` under each
+ *  member's own dir. Never throws — a load failure is reported as diagnostics, matching
+ *  `loadWorkspace`'s contract. */
+export function compileWorkspace(wsDir: string): { ok: true; written: string[] } | { ok: false; diagnostics: object[] } {
+  const loaded = loadWorkspace(wsDir);
+  if (!loaded.ok) return loaded;
+
+  const written: string[] = [];
+  const write = (baseDir: string, files: ReturnType<typeof workspaceDiagramFiles>) => {
+    for (const f of files) {
+      const p = resolve(baseDir, f.relPath);
+      mkdirSync(dirname(p), { recursive: true });
+      writeFileSync(p, f.content);
+      written.push(p);
+    }
+  };
+
+  write(wsDir, workspaceDiagramFiles(loaded.map));
+  for (const member of loaded.members) write(member.dir, specDiagramFiles(member.model));
+
+  return { ok: true, written };
 }
