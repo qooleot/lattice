@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { machineToMermaid } from '../../src/emit/mermaid/statechart.js';
+import { domainToMermaid } from '../../src/emit/mermaid/domainDiagram.js';
 import type { AggregateDef, DomainModel } from '../../src/ast/domain.js';
 
 export const order: AggregateDef = { kind: 'aggregate', name: 'Order', doc: 'A customer order',
@@ -34,6 +35,41 @@ describe('machineToMermaid', () => {
   [*] --> open
   shipped --> [*]
   lost --> [*]
+`);
+  });
+});
+
+export const model: DomainModel = { context: 'Shop',
+  enums: [{ name: 'Color', values: ['red', 'blue'] }],
+  entities: [{ kind: 'entity', name: 'Customer',
+    fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
+  aggregates: [order], events: [] };
+
+describe('domainToMermaid', () => {
+  it('renders namespace, enum class, external stub, and associations', () => {
+    expect(domainToMermaid(model)).toBe(
+`classDiagram
+  namespace Shop {
+    class Customer {
+      +id : Id «key»
+    }
+    class Order {
+      +orderId : Id «key»
+      +color : Color
+      +total : Money
+    }
+    class Color {
+      <<enumeration>>
+      red
+      blue
+    }
+  }
+  class Catalog_Plan["Catalog.Plan"] {
+    <<external>>
+  }
+  Order --> Customer : customer
+  Order "1" --> "*" Customer : tags
+  Order ..> Catalog_Plan : plan
 `);
   });
 });
