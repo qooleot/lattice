@@ -1,0 +1,75 @@
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { loadContextMapText, loadLatText } from '../parse/fromLangium.js';
+import { validateWorkspace, type WorkspaceMemberModel } from '../ast/workspace.js';
+import type { ContextMapModel } from '../ast/contextmap.js';
+import type { DomainModel } from '../ast/domain.js';
+import type { CandidateInvariant } from '../ast/invariant.js';
+
+export interface WorkspaceMember {
+  name: string;
+  path: string;
+  dir: string;   // absolute member dir
+  model: DomainModel;
+  invariants: CandidateInvariant[];
+}
+
+export type WorkspaceResult =
+  | { ok: true; map: ContextMapModel; members: WorkspaceMember[]; warnings: string[] }
+  | { ok: false; diagnostics: object[] };
+
+/** Loads a workspace: parses `<wsDir>/context-map.lat`, then each `contains` entry's
+ *  `<wsDir>/<path>/spec.lat`, then runs `validateWorkspace` for cross-spec checks.
+ *  Never throws — I/O and parse failures are reported as diagnostics. */
+export function loadWorkspace(wsDir: string): WorkspaceResult {
+  const mapPath = join(wsDir, 'context-map.lat');
+  let mapText: string;
+  try { mapText = readFileSync(mapPath, 'utf8'); }
+  catch {
+    return { ok: false, diagnostics: [{ code: 'missing-member',
+      message: `missing workspace context map: ${mapPath}` }] };
+  }
+
+  const mapLoaded = loadContextMapText(mapText);
+  if (!mapLoaded.ok) return { ok: false, diagnostics: mapLoaded.diagnostics };
+  const { map } = mapLoaded;
+
+  const warnings: string[] = mapLoaded.warnings.map(w => w.message);
+  const members: WorkspaceMember[] = [];
+  const diagnostics: object[] = [];
+
+  for (const ctx of map.contexts) {
+    const memberDir = resolve(wsDir, ctx.path);
+    const memberPath = join(memberDir, 'spec.lat');
+    let text: string;
+    try { text = readFileSync(memberPath, 'utf8'); }
+    catch {
+      diagnostics.push({ code: 'missing-member', message: `missing member spec: ${memberPath}` });
+      continue;
+    }
+
+    const loaded = loadLatText(text);
+    if (!loaded.ok) {
+      diagnostics.push({ code: 'parse-failed', message: `failed to parse ${memberPath}`,
+        diagnostics: loaded.diagnostics });
+      continue;
+    }
+
+    if (loaded.model.context !== ctx.name) {
+      diagnostics.push({ code: 'context-name-mismatch',
+        message: `member '${ctx.name}' (${memberPath}) declares context '${loaded.model.context}' — names must match` });
+      continue;
+    }
+
+    warnings.push(...loaded.warnings.map(w => w.message));
+    members.push({ name: ctx.name, path: ctx.path, dir: memberDir, model: loaded.model, invariants: loaded.invariants });
+  }
+
+  if (diagnostics.length) return { ok: false, diagnostics };
+
+  const memberModels: WorkspaceMemberModel[] = members.map(m => ({ name: m.name, model: m.model }));
+  const workspaceDiags = validateWorkspace(map, memberModels);
+  if (workspaceDiags.length) return { ok: false, diagnostics: workspaceDiags };
+
+  return { ok: true, map, members, warnings };
+}
