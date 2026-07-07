@@ -5,7 +5,7 @@ import { machineToMermaid } from '../../src/emit/mermaid/statechart.js';
 import { domainToMermaid } from '../../src/emit/mermaid/domainDiagram.js';
 import { contextMapToMermaid } from '../../src/emit/mermaid/contextMap.js';
 import { specDiagramFiles, workspaceDiagramFiles } from '../../src/emit/mermaid/docs.js';
-import { order, model, map } from './mermaid.test.js';
+import { order, model, map } from './fixtures.js';
 
 mermaid.initialize({ startOnLoad: false });
 // mermaid.parse with suppressErrors:false never resolves to `false` — it resolves to a
