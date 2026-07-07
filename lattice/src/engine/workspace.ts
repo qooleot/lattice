@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, relative, dirname, isAbsolute } from 'node:path';
 import { loadContextMapText, loadLatText } from '../parse/fromLangium.js';
 import { validateWorkspace, type WorkspaceMemberModel } from '../ast/workspace.js';
 import type { ContextMapModel } from '../ast/contextmap.js';
@@ -41,6 +41,14 @@ export function loadWorkspace(wsDir: string): WorkspaceResult {
 
   for (const ctx of map.contexts) {
     const memberDir = resolve(wsDir, ctx.path);
+    // compileWorkspace writes generated files under memberDir, so a path escaping
+    // wsDir would let a cloned context map read/write outside the workspace
+    const rel = relative(resolve(wsDir), memberDir);
+    if (isAbsolute(ctx.path) || rel.startsWith('..') || isAbsolute(rel)) {
+      diagnostics.push({ code: 'invalid-member-path',
+        message: `member '${ctx.name}' path '${ctx.path}' resolves outside the workspace directory — member paths must be relative and stay within the workspace` });
+      continue;
+    }
     const memberPath = join(memberDir, 'spec.lat');
     let text: string;
     try { text = readFileSync(memberPath, 'utf8'); }
