@@ -33,4 +33,28 @@ describe('engine sync', () => {
       expect(outcomes[1].ok).toBe(true);
     } finally { await watcher.close(); }
   }, 30000);
+
+  it('a change to mapPath triggers an apply of the unchanged spec', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lat-sync-map-'));
+    const sessionDir = join(dir, 'session'); const specDir = join(dir, 'spec');
+    cpSync(SESSION_SRC, sessionDir, { recursive: true });
+    mkdirSync(specDir);
+    await runCommand(['emit', '--session', sessionDir, '--out', specDir], realDeps);
+    const lat = join(specDir, 'spec.lat');
+    const mapPath = join(dir, 'context-map.lat');
+    writeFileSync(mapPath, 'contextMap M {\n}\n');
+
+    const outcomes: any[] = [];
+    const seen = (n: number) => new Promise<void>((res, rej) => {
+      const t = setInterval(() => { if (outcomes.length >= n) { clearInterval(t); res(); } }, 50);
+      setTimeout(() => { clearInterval(t); rej(new Error(`timeout waiting for outcome ${n}: ${JSON.stringify(outcomes)}`)); }, 15000);
+    });
+    const watcher = startSync({ lat, mapPath, session: sessionDir, onOutcome: o => outcomes.push(o), deps: realDeps });
+    try {
+      // a map edit re-runs the same apply on the unchanged spec → no-op reconcile, ok outcome
+      writeFileSync(mapPath, 'contextMap M {\n  // edited\n}\n');
+      await seen(1);
+      expect(outcomes[0].ok).toBe(true);
+    } finally { await watcher.close(); }
+  }, 30000);
 });
