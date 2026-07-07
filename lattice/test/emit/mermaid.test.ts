@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { machineToMermaid } from '../../src/emit/mermaid/statechart.js';
 import { domainToMermaid } from '../../src/emit/mermaid/domainDiagram.js';
+import { contextMapToMermaid } from '../../src/emit/mermaid/contextMap.js';
 import type { AggregateDef, DomainModel } from '../../src/ast/domain.js';
+import type { ContextMapModel } from '../../src/ast/contextmap.js';
 
 export const order: AggregateDef = { kind: 'aggregate', name: 'Order', doc: 'A customer order',
   fields: [
@@ -71,5 +73,32 @@ describe('domainToMermaid', () => {
   Order "1" --> "*" Customer : tags
   Order ..> Catalog_Plan : plan
 `);
+  });
+});
+
+export const map: ContextMapModel = { name: 'AcmeBilling',
+  contexts: [{ name: 'Subscriptions', path: 'subscriptions' }, { name: 'Catalog', path: 'catalog' },
+             { name: 'Billing', path: 'billing' }],
+  relationships: [
+    { kind: 'upstreamDownstream', left: 'Catalog', right: 'Subscriptions',
+      upstreamRoles: ['openHost', 'publishedLanguage'], downstreamRoles: ['anticorruption'], exposes: ['Plan'] },
+    { kind: 'sharedKernel', left: 'Billing', right: 'Subscriptions' }] };
+
+describe('contextMapToMermaid', () => {
+  it('renders contexts and keyword-labeled relationship edges', () => {
+    expect(contextMapToMermaid(map)).toBe(
+`flowchart LR
+  Subscriptions["Subscriptions"]
+  Catalog["Catalog"]
+  Billing["Billing"]
+  Catalog -- "upstream (openHost, publishedLanguage) exposes Plan / downstream (anticorruption)" --> Subscriptions
+  Billing ---|sharedKernel| Subscriptions
+`);
+  });
+  it('renders a bare upstream edge without roles or exposes', () => {
+    const bareMap: ContextMapModel = { name: 'M',
+      contexts: [{ name: 'A', path: 'a' }, { name: 'B', path: 'b' }],
+      relationships: [{ kind: 'upstreamDownstream', left: 'A', right: 'B' }] };
+    expect(contextMapToMermaid(bareMap)).toContain('  A -- "upstream" --> B');
   });
 });
