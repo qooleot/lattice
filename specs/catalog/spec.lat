@@ -1,0 +1,19 @@
+/// Product catalog: plan definitions consumed by Subscriptions.
+context Catalog {
+
+  enum BillingPeriod { monthly, annual }
+  enum UsagePricing { overage, allUnits }
+
+  /// Pricing definition: per-seat license fee plus usage billing in one of two modes
+  entity Plan {
+    planId        : Id key
+    licenseFee    : Money
+    usageRate     : Money
+    includedUnits : Int
+    pricingMode   : UsagePricing
+    period        : BillingPeriod
+  }
+
+  /// Overage pricing only makes sense with a real included-units allowance.
+  invariant overageImpliesRealAllowance on Plan { includedUnits >= 0 && (pricingMode == UsagePricing.overage => includedUnits >= 1) }
+}

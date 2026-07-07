@@ -1,6 +1,8 @@
 import type { DomainModel, Field, Machine } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term } from '../ast/invariant.js';
 import { isImplied } from '../engine/implied.js';
+import type { ContextMapModel } from '../ast/contextmap.js';
+import { defaultPath } from '../ast/contextmap.js';
 
 const typeStr = (f: Field): string =>
   f.type.kind === 'prim' ? f.type.prim : f.type.kind === 'enum' ? f.type.enum
@@ -120,6 +122,28 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
     out.push('');
   }
   while (out[out.length - 1] === '') out.pop();
+  out.push('}');
+  return out.join('\n') + '\n';
+}
+
+export function contextMapToCode(map: ContextMapModel): string {
+  const out: string[] = [];
+  doc(map.doc, '', out);
+  out.push(`contextMap ${map.name} {`);
+  for (const c of map.contexts)
+    out.push(`  contains ${c.name}${c.path === defaultPath(c.name) ? '' : ` from "${c.path}"`}`);
+  for (const r of map.relationships) {
+    out.push('');
+    doc(r.doc, '  ', out);
+    const head = r.kind === 'upstreamDownstream'
+      ? `${r.left} upstream of ${r.right}`
+      : `${r.left} ${r.kind === 'partnership' ? 'partnership' : 'sharedKernel'} with ${r.right}`;
+    out.push(`  ${head} {`);
+    if (r.upstreamRoles?.length) out.push(`    upstream roles ${r.upstreamRoles.join(', ')}`);
+    if (r.downstreamRoles?.length) out.push(`    downstream roles ${r.downstreamRoles.join(', ')}`);
+    if (r.exposes?.length) out.push(`    exposes ${r.exposes.join(', ')}`);
+    out.push('  }');
+  }
   out.push('}');
   return out.join('\n') + '\n';
 }

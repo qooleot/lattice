@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { arbSpec, fieldArb } from './arbitraries.js';
-import { astToCode } from '../../src/emit/code.js';
-import { loadLatText } from '../../src/parse/fromLangium.js';
+import { arbSpec, arbContextMap, fieldArb } from './arbitraries.js';
+import { astToCode, contextMapToCode } from '../../src/emit/code.js';
+import { loadLatText, loadContextMapText } from '../../src/parse/fromLangium.js';
 import { isImplied } from '../../src/engine/implied.js';
 import type { DomainModel, TypeRef } from '../../src/ast/domain.js';
 import type { CandidateInvariant } from '../../src/ast/invariant.js';
@@ -73,5 +73,18 @@ describe('round-trip: parse ∘ print = id (spec §7.1)', () => {
     const adopted: CandidateInvariant[] = state.candidates
       .filter((c: any) => c.status === 'adopted').map((c: any) => c.inv);
     roundTrip(model, adopted);
+  });
+});
+
+describe('contextMap round-trip: parse ∘ print = id', () => {
+  it('holds on generated maps (property)', () => {
+    fc.assert(fc.property(arbContextMap, map => {
+      const text = contextMapToCode(map);
+      const r = loadContextMapText(text);
+      expect(r.ok, `parse failed:\n${text}\n${JSON.stringify(!r.ok && r.diagnostics)}`).toBe(true);
+      if (!r.ok) return;
+      expect(r.map).toEqual(map);
+      expect(contextMapToCode(r.map)).toBe(text);        // idempotent normalization
+    }), { numRuns: 200 });
   });
 });

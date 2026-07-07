@@ -181,7 +181,11 @@ describe('engine CLI', () => {
     const out: any = await runCommand(['emit', '--session', dir, '--out', dir], fakeDeps);
     expect(existsSync(join(dir, 'spec.prose.md'))).toBe(true);
     expect(readFileSync(join(dir, 'spec.lat'), 'utf8')).toContain('context Billing {');
-    expect(out.written.length).toBe(2);
+    // spec.lat, spec.prose.md, spec.diagrams.md, diagrams/CD_Billing.mmd, diagrams/SD_Subscription_Access.mmd
+    expect(out.written.length).toBe(5);
+    expect(existsSync(join(dir, 'spec.diagrams.md'))).toBe(true);
+    expect(existsSync(join(dir, 'diagrams', 'CD_Billing.mmd'))).toBe(true);
+    expect(existsSync(join(dir, 'diagrams', 'SD_Subscription_Access.mmd'))).toBe(true);
   });
 
   it('emit lists an adopted implied-shape rule once in prose even with jumbled key order', async () => {

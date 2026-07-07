@@ -1,8 +1,8 @@
 import { createLatServices } from './lat-services.js';
-import type { LatContext } from './generated/ast.js';
+import type { LatFile } from './generated/ast.js';
 
 export interface ParseDiagnostic { code: string; message: string; line: number; col: number }
-export type LatParseResult = { ok: true; cst: LatContext } | { ok: false; diagnostics: ParseDiagnostic[] };
+export type LatParseResult = { ok: true; cst: LatFile } | { ok: false; diagnostics: ParseDiagnostic[] };
 
 /** `//` is banned (spec P5); `///` is the only comment form. Skips string literals. */
 export function scanBannedComments(text: string): ParseDiagnostic[] {
@@ -30,7 +30,7 @@ const services = createLatServices();
 export function parseLat(text: string): LatParseResult {
   const banned = scanBannedComments(text);
   if (banned.length) return { ok: false, diagnostics: banned };
-  const r = services.parser.LangiumParser.parse<LatContext>(text);
+  const r = services.parser.LangiumParser.parse<LatFile>(text);
   const diagnostics: ParseDiagnostic[] = [
     ...r.lexerErrors.map(e => ({ code: 'syntax-error', message: e.message,
       line: e.line ?? 1, col: e.column ?? 1 })),

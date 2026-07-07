@@ -1,73 +1,7 @@
 {
   "context": "Subscriptions",
-  "enums": [
-    {
-      "name": "BillingPeriod",
-      "values": [
-        "monthly",
-        "annual"
-      ]
-    },
-    {
-      "name": "UsagePricing",
-      "values": [
-        "overage",
-        "allUnits"
-      ]
-    }
-  ],
-  "entities": [
-    {
-      "kind": "entity",
-      "name": "Plan",
-      "fields": [
-        {
-          "name": "planId",
-          "type": {
-            "kind": "prim",
-            "prim": "Id"
-          },
-          "key": true
-        },
-        {
-          "name": "licenseFee",
-          "type": {
-            "kind": "prim",
-            "prim": "Money"
-          }
-        },
-        {
-          "name": "usageRate",
-          "type": {
-            "kind": "prim",
-            "prim": "Money"
-          }
-        },
-        {
-          "name": "includedUnits",
-          "type": {
-            "kind": "prim",
-            "prim": "Int"
-          }
-        },
-        {
-          "name": "pricingMode",
-          "type": {
-            "kind": "enum",
-            "enum": "UsagePricing"
-          }
-        },
-        {
-          "name": "period",
-          "type": {
-            "kind": "enum",
-            "enum": "BillingPeriod"
-          }
-        }
-      ],
-      "doc": "Pricing definition: per-seat license fee plus usage billing in one of two modes"
-    }
-  ],
+  "enums": [],
+  "entities": [],
   "aggregates": [
     {
       "kind": "aggregate",
@@ -85,7 +19,7 @@
           "name": "plan",
           "type": {
             "kind": "ref",
-            "target": "Plan"
+            "target": "Catalog.Plan"
           }
         },
         {

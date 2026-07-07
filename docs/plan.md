@@ -356,7 +356,7 @@ The core is a **typed AST with formal semantics** (a transition system + relatio
 
 - **Prose** — literate markdown + tables + Mermaid. What domain experts read; where they judge cases.
 - **Code** — typed, diff-able, PR-able. What engineers read/write.
-- **Diagram** — statechart + context map, generated.
+- **Diagram** — statechart + context map, generated. *(Built: mermaid-docs slice, 2026-07 — statecharts, per-context class diagrams, and the workspace context map render on every apply/sync/emit/docs; see `docs/language/projections.md`.)*
 
 `code → prose` (pretty-print) and `code → diagram` are easy. **`prose → code` is the hard direction — it is autoformalization** (see §19, Risk 1/4).
 

@@ -24,6 +24,7 @@ const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregate
 
 function fieldQType(m: DomainModel, f: Field): string | null {
   if (f.key) return null;
+  // qualified refs (spec §4.2) also land here: opaque str, never traversed (validateCandidate rejects such paths)
   if (f.type.kind === 'ref') return 'str';
   if (f.type.kind === 'enum') return 'str';
   if (f.type.kind === 'prim') return isIntPrim(f.type.prim) ? 'int' : null;   // Text/Id dropped

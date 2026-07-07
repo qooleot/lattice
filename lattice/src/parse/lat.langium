@@ -1,7 +1,36 @@
 grammar Lat
 
-entry LatContext:
-    docs+=DOC* 'context' name=ID '{' items+=ContextItem* '}';
+entry LatFile:
+    docs+=DOC* (context=LatContext | map=ContextMapDecl);
+
+LatContext:
+    'context' name=ID '{' items+=ContextItem* '}';
+
+ContextMapDecl:
+    'contextMap' name=ID '{' contains+=ContainsDecl* relationships+=RelationshipDecl* '}';
+
+ContainsDecl:
+    'contains' name=ID ('from' path=STRING)?;
+
+RelationshipDecl:
+    docs+=DOC* left=ID
+    ( kind='upstream' 'of' right=ID '{'
+        ('upstream' 'roles' upstreamRoles+=UpstreamRoleName (',' upstreamRoles+=UpstreamRoleName)*)?
+        ('downstream' 'roles' downstreamRoles+=DownstreamRoleName (',' downstreamRoles+=DownstreamRoleName)*)?
+        ('exposes' exposes+=ID (',' exposes+=ID)*)?
+      '}'
+    | kind='partnership' 'with' right=ID '{'
+        ('exposes' exposes+=ID (',' exposes+=ID)*)?
+      '}'
+    | kind='sharedKernel' 'with' right=ID '{'
+        ('exposes' exposes+=ID (',' exposes+=ID)*)?
+      '}' );
+
+UpstreamRoleName returns string:
+    'openHost' | 'publishedLanguage';
+
+DownstreamRoleName returns string:
+    'anticorruption' | 'conformist';
 
 ContextItem:
     EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl;
@@ -26,8 +55,11 @@ FieldDecl:
 
 LatType:
     {infer ListType} 'List' '<' of=LatType '>'
-  | {infer RefType} 'ref' target=ID
+  | {infer RefType} 'ref' target=QualifiedName
   | {infer NamedType} name=ID;
+
+QualifiedName returns string:
+    ID ('.' ID)?;
 
 Tag:
     '@' name=TagName;

@@ -31,6 +31,21 @@ describe('engine apply', () => {
     expect(r.ok).toBe(true);
     expect(readFileSync(latFile, 'utf8')).toBe(before);
     expect(existsSync(join(specDir, 'spec.prose.md'))).toBe(true);
+
+    // diagrams are projections too: writeProjections also writes spec.diagrams.md + .mmd files
+    const diagramsMd = join(specDir, 'spec.diagrams.md');
+    const cdMmd = join(specDir, 'diagrams', 'CD_Subscriptions.mmd');
+    expect(r.written).toContain(diagramsMd);
+    expect(r.written).toContain(cdMmd);
+    expect(existsSync(diagramsMd)).toBe(true);
+    expect(existsSync(cdMmd)).toBe(true);
+    // both member aggregates (Subscription/lifecycle, Invoice/settlement) get their own SD file
+    const sdSubscription = join(specDir, 'diagrams', 'SD_Subscription_lifecycle.mmd');
+    const sdInvoice = join(specDir, 'diagrams', 'SD_Invoice_settlement.mmd');
+    expect(r.written).toContain(sdSubscription);
+    expect(r.written).toContain(sdInvoice);
+    expect(existsSync(sdSubscription)).toBe(true);
+    expect(existsSync(sdInvoice)).toBe(true);
   });
 
   it('parse errors refuse and write nothing', async () => {
@@ -41,6 +56,13 @@ describe('engine apply', () => {
     expect(r.error).toBe('parse-failed');
     expect(r.diagnostics[0]!.code).toBe('comment-banned');
     expect(readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8')).toBe(ledgerBefore);
+  });
+
+  it('applying a contextMap file refuses as wrong-file-kind', async () => {
+    writeFileSync(latFile, 'contextMap Acme {\n  contains Billing\n}\n');
+    const r: any = await apply();
+    expect(r.error).toBe('parse-failed');
+    expect(r.diagnostics.some((d: any) => d.code === 'wrong-file-kind')).toBe(true);
   });
 
   it('new transition applies with provenance-free structural note', async () => {
@@ -136,5 +158,74 @@ describe('engine apply', () => {
     expect(r.error).toBe('refused');
     expect(JSON.stringify(r.refusals)).toContain('unmatched-rename-confirmation');
     expect(readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8')).toBe(ledgerBefore);
+  });
+});
+
+describe('engine apply: workspace context-map hook', () => {
+  const MAP = `contextMap Acme {
+  contains Catalog
+  contains Subscriptions
+
+  Catalog upstream of Subscriptions {
+    exposes Plan
+  }
+}
+`;
+  const CATALOG_SPEC = `context Catalog {
+  entity Plan {
+    planId : Id key
+    name : Text
+  }
+}
+`;
+  const SUBSCRIPTIONS_SPEC = `context Subscriptions {
+  aggregate Subscription {
+    subId : Id key
+    plan : ref Catalog.Plan
+  }
+}
+`;
+
+  const writeMember = (wsDir: string, path: string, text: string) => {
+    mkdirSync(join(wsDir, path), { recursive: true });
+    writeFileSync(join(wsDir, path, 'spec.lat'), text);
+  };
+
+  it('apply inside a workspace attaches workspace.written', async () => {
+    const wsDir = mkdtempSync(join(tmpdir(), 'lat-apply-ws-'));
+    writeFileSync(join(wsDir, 'context-map.lat'), MAP);
+    writeMember(wsDir, 'catalog', CATALOG_SPEC);
+    writeMember(wsDir, 'subscriptions', SUBSCRIPTIONS_SPEC);
+
+    const fresh = join(wsDir, 'catalog-session');
+    const r: any = await runCommand(
+      ['apply', '--session', fresh, '--lat', join(wsDir, 'catalog', 'spec.lat')], realDeps);
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(r.workspace).toBeDefined();
+    expect(r.workspace.written).toBeDefined();
+    expect(r.workspace.diagnostics).toBeUndefined();
+    expect(existsSync(join(wsDir, 'context-map.generated.md'))).toBe(true);
+  });
+
+  it('apply with a broken sibling member: ok:true AND workspace.diagnostics non-empty', async () => {
+    const wsDir = mkdtempSync(join(tmpdir(), 'lat-apply-ws-broken-'));
+    writeFileSync(join(wsDir, 'context-map.lat'), MAP);
+    writeMember(wsDir, 'catalog', CATALOG_SPEC);
+    // subscriptions member spec.lat intentionally absent -> sibling is broken
+
+    const fresh = join(wsDir, 'catalog-session');
+    const r: any = await runCommand(
+      ['apply', '--session', fresh, '--lat', join(wsDir, 'catalog', 'spec.lat')], realDeps);
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(r.workspace).toBeDefined();
+    expect(r.workspace.diagnostics).toBeDefined();
+    expect(r.workspace.diagnostics.length).toBeGreaterThan(0);
+    expect(r.workspace.written).toBeUndefined();
+  });
+
+  it('apply outside any workspace has no workspace key', async () => {
+    const r: any = await apply();
+    expect(r.ok).toBe(true);
+    expect(r.workspace).toBeUndefined();
   });
 });

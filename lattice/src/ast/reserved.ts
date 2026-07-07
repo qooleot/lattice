@@ -11,8 +11,10 @@
  * parse/ (parse/ already imports from ast/ — see fromLangium.ts, diff.ts).
  */
 export const RESERVED_WORDS: ReadonlySet<string> = new Set([
-  'aggregate', 'by', 'conserve', 'context', 'count', 'entity', 'enum', 'event', 'fairness',
-  'from', 'in', 'invariant', 'key', 'leads', 'List', 'machine', 'monotonic', 'now', 'on', 'ref',
-  'refs', 'region', 'resolve', 'state', 'states', 'terminal', 'ticksPerDay', 'to', 'transition',
-  'under', 'unique', 'when', 'where', 'while',
+  'aggregate', 'anticorruption', 'by', 'conformist', 'conserve', 'contains', 'context',
+  'contextMap', 'count', 'downstream', 'entity', 'enum', 'event', 'exposes', 'fairness', 'from',
+  'in', 'invariant', 'key', 'leads', 'List', 'machine', 'monotonic', 'now', 'of', 'on', 'openHost',
+  'partnership', 'publishedLanguage', 'ref', 'refs', 'region', 'resolve', 'roles', 'sharedKernel',
+  'state', 'states', 'terminal', 'ticksPerDay', 'to', 'transition', 'under', 'unique', 'upstream',
+  'when', 'where', 'while', 'with',
 ]);
