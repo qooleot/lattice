@@ -1,7 +1,33 @@
 grammar Lat
 
-entry LatContext:
-    docs+=DOC* 'context' name=ID '{' items+=ContextItem* '}';
+entry LatFile:
+    docs+=DOC* (context=LatContext | map=ContextMapDecl);
+
+LatContext:
+    'context' name=ID '{' items+=ContextItem* '}';
+
+ContextMapDecl:
+    'contextMap' name=ID '{' contains+=ContainsDecl* relationships+=RelationshipDecl* '}';
+
+ContainsDecl:
+    'contains' name=ID ('from' path=STRING)?;
+
+RelationshipDecl:
+    docs+=DOC* left=ID
+    ( kind='upstream' 'of' right=ID '{'
+        ('upstream' 'roles' upstreamRoles+=RoleName (',' upstreamRoles+=RoleName)*)?
+        ('downstream' 'roles' downstreamRoles+=RoleName (',' downstreamRoles+=RoleName)*)?
+        ('exposes' exposes+=ID (',' exposes+=ID)*)?
+      '}'
+    | kind='partnership' 'with' right=ID '{'
+        ('exposes' exposes+=ID (',' exposes+=ID)*)?
+      '}'
+    | kind='sharedKernel' 'with' right=ID '{'
+        ('exposes' exposes+=ID (',' exposes+=ID)*)?
+      '}' );
+
+RoleName returns string:
+    'openHost' | 'publishedLanguage' | 'anticorruption' | 'conformist';
 
 ContextItem:
     EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl;

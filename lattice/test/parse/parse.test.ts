@@ -28,7 +28,7 @@ describe('parseLat', () => {
   it('parses a well-formed file', () => {
     const r = parseLat(GOOD);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.cst.name).toBe('Demo');
+    if (r.ok) expect(r.cst.context?.name).toBe('Demo');
   });
 
   it('reports syntax errors with 1-based positions, never throws', () => {
@@ -95,6 +95,39 @@ describe('ID terminal matches the AST identifier rule (single source, spec §3.3
     const m = g.match(/terminal ID: \/(.+?)\/;/)!;
     const { IDENT_RE } = await import('../../src/ast/validate.js');
     expect(`^${m[1]}$`).toBe(IDENT_RE.source);
+  });
+});
+
+describe('contextMap files', () => {
+  const MAP = `/// Acme billing: catalog-driven subscriptions.
+contextMap AcmeBilling {
+  contains Subscriptions
+  contains Catalog from "catalog"
+
+  /// Subscriptions consumes plan definitions from the catalog.
+  Catalog upstream of Subscriptions {
+    upstream roles openHost, publishedLanguage
+    downstream roles anticorruption
+    exposes Plan
+  }
+
+  Billing partnership with Ordering {
+  }
+}
+`;
+  it('parses a contextMap file', () => {
+    const r = parseLat(MAP);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (r.ok) expect(r.cst.map?.name).toBe('AcmeBilling');
+  });
+  it('still parses a context file through the same entry', () => {
+    const r = parseLat('context A {\n  entity E {\n    id : Id key\n  }\n}\n');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.cst.context?.name).toBe('A');
+  });
+  it('many leading /// docs still disambiguate (docs hoisted to LatFile)', () => {
+    const docs = Array.from({ length: 8 }, (_, i) => `/// line ${i}`).join('\n');
+    expect(parseLat(`${docs}\ncontextMap M {\n}\n`).ok).toBe(true);
   });
 });
 

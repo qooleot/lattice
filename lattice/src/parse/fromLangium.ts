@@ -163,7 +163,11 @@ function namingWarnings(m: DomainModel, invNames: string[],
 export function loadLatText(text: string): LoadResult {
   const parsed = parseLat(text);
   if (!parsed.ok) return parsed;
-  const cst = parsed.cst;
+  const file = parsed.cst;
+  if (!file.context)
+    return { ok: false, diagnostics: [{ code: 'wrong-file-kind', line: 1, col: 1,
+      message: 'expected a context file, got a contextMap — apply/emit operate on spec.lat; use the docs command for the workspace map' }] };
+  const cst = file.context;
   const diags: ParseDiagnostic[] = [];
   // CST positions for naming warnings, keyed as in namingWarnings (enum values share their
   // enum's position — value tokens have no individual AST nodes)
@@ -181,7 +185,7 @@ export function loadLatText(text: string): LoadResult {
     enums: enumDecls.map(e => ({ name: e.name, values: [...e.values] }) as EnumDef),
     entities: [], aggregates: [], events: [],
   };
-  const topDoc = joinDocs([...cst.docs]);
+  const topDoc = joinDocs([...file.docs]);
   if (topDoc) model.doc = topDoc;
 
   for (const item of cst.items) {

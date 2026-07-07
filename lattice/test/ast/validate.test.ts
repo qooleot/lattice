@@ -119,4 +119,14 @@ describe('qualified ref shape validation', () => {
     expect(isQualifiedRef({ kind: 'ref', target: 'Plan' })).toBe(false);
     expect(isQualifiedRef({ kind: 'prim', prim: 'Id' })).toBe(false);
   });
+
+  it('rejects every new strategic keyword used as a field name', () => {
+    for (const w of ['contextMap', 'contains', 'upstream', 'downstream', 'of', 'roles', 'exposes',
+                     'partnership', 'sharedKernel', 'with', 'openHost', 'publishedLanguage',
+                     'anticorruption', 'conformist']) {
+      const m = base('Catalog.Plan');
+      m.aggregates[0]!.fields.push({ name: w, type: { kind: 'prim', prim: 'Int' } });
+      expect(validateModel(m).some(d => d.code === 'reserved-word'), w).toBe(true);
+    }
+  });
 });

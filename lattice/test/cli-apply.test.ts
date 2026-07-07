@@ -43,6 +43,13 @@ describe('engine apply', () => {
     expect(readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8')).toBe(ledgerBefore);
   });
 
+  it('applying a contextMap file refuses as wrong-file-kind', async () => {
+    writeFileSync(latFile, 'contextMap Acme {\n  contains Billing\n}\n');
+    const r: any = await apply();
+    expect(r.error).toBe('parse-failed');
+    expect(r.diagnostics.some((d: any) => d.code === 'wrong-file-kind')).toBe(true);
+  });
+
   it('new transition applies with provenance-free structural note', async () => {
     const text = readFileSync(latFile, 'utf8')
       .replace('transition recover { region lifecycle; from pastDue to active }',
