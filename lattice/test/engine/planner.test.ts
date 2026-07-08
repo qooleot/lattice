@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { nextQuestion, checkDistinct } from '../../src/engine/planner.js';
+import { nextQuestion, checkDistinct, expressibleAdopted } from '../../src/engine/planner.js';
 import { registerCandidates, pruneOnVerdict, admit } from '../../src/engine/hypothesis.js';
 import { newSession, type LedgerEntry, type SessionState } from '../../src/engine/session.js';
 import { extractSalient } from '../../src/engine/salient.js';
-import { traceAModel, traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap } from '../fixtures.js';
+import { traceAModel, traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, sumCandidate } from '../fixtures.js';
 import type { CandidateInvariant } from '../../src/ast/invariant.js';
 import type { CaseState } from '../../src/engine/evaluate.js';
 
@@ -283,5 +283,18 @@ describe('planner — trace A logic with fake solvers', () => {
     const q = await nextQuestion(s, ledger, traceAModel, deps);
     expect(q.type).toBe('question');
     expect((q as any).witness).toEqual(dpsf);
+  });
+});
+
+// Task 9: sumOverCollection must reach BOTH engines as an adopted constraint — it query-routes to
+// quint only (routeCandidate), but Alloy can still express it (candidateToPred's sumOverCollection
+// case, an adopted `sum` comprehension). Without this, a witness on either engine could show an
+// Invoice whose totalDue disagrees with its lines even after the human adopted the sum invariant.
+describe('expressibleAdopted — sumOverCollection reaches both engines', () => {
+  it('passes an adopted sum through to quint', () => {
+    expect(expressibleAdopted('quint', [sumCandidate])).toEqual([sumCandidate]);
+  });
+  it('passes an adopted sum through to alloy', () => {
+    expect(expressibleAdopted('alloy', [sumCandidate])).toEqual([sumCandidate]);
   });
 });

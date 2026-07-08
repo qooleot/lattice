@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { astToQuint } from '../../src/emit/quint.js';
-import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice } from '../fixtures.js';
+import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice, sumCandidate } from '../fixtures.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 
@@ -125,5 +125,25 @@ describe('astToQuint', () => {
     expect(em.source).toContain('nondet nd_invoice_lines_0_amount');
     expect(em.source).toContain('nondet nd_invoice_linesCount = oneOf(0.to(3))');
     expect(em.varTypes['invoices#lines']).toBe('InvoiceLine');
+  });
+
+  // Task 9: sum-over-collection (design §6.2) — adopted sums compile to a bounded fold over the
+  // owned-collection bounded map, conjoined the same way any other adopted constraint is.
+  it('compiles adopted sums to a bounded fold', () => {
+    const em = astToQuint(invoiceLinesModel, { kind: 'probe-permit', hi: someStatePredicateOnInvoice,
+      exclusions: [], adopted: [sumCandidate], maxSteps: 2 });
+    expect(em.source).toContain('range(0, 3).foldl(0, (acc, i) => if (i < x.linesCount) acc + x.lines.get(i).amount else acc)');
+  });
+
+  // Task 9: shapeToQuint rebuilds a sum witness's salient dims (count/sum/total — see salient.ts's
+  // extractSalient sumOverCollection branch) as quint conjuncts, so a prior sum verdict's witness
+  // shape can be excluded from later probes on the same aggregate.
+  it('rebuilds sum salient dims (count/sum/total) into quint exclusion conjuncts', () => {
+    const p = astToQuint(invoiceLinesModel, { kind: 'probe-forbid', hi: sumCandidate, exclusions: [[
+      { dim: 'lines.count', value: 2 }, { dim: 'sum(lines.amount)', value: 7 }, { dim: 'totalDue value', value: 7 },
+    ]], maxSteps: 2 });
+    expect(p.source).toContain('x.linesCount == 2');
+    expect(p.source).toContain('range(0, 3).foldl(0, (acc, i) => if (i < x.linesCount) acc + x.lines.get(i).amount else acc) == 7');
+    expect(p.source).toContain('x.totalDue == 7');
   });
 });

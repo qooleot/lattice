@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { astToAlloy } from '../../src/emit/alloy.js';
 import type { Candidate } from '../../src/ast/invariant.js';
-import { traceAModel, invoiceLinesModel, someStatePredicateOnInvoice } from '../fixtures.js';
+import { traceAModel, invoiceLinesModel, someStatePredicateOnInvoice, someUniqueOnInvoice, sumCandidate } from '../fixtures.js';
 
 const h1: Candidate = { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] };
 const h2: Candidate = { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer'], ['plan']] };
@@ -109,5 +109,31 @@ describe('astToAlloy', () => {
     expect(src).toContain('owner: one Invoice');
     expect(src).toContain('amount: one Int');
     expect(src).not.toContain('lines:');
+  });
+
+  // Task 9: sum-over-collection (design §6.2/§6.4) — adopted sums conjoin as an Alloy `sum`
+  // comprehension over the owned child sig, and raise the bitwidth (3 children × values summed
+  // can overflow the default 5-Int scope) to 7 Int.
+  it('conjoins adopted sums with alloy sum and raises bitwidth to 7 Int', () => {
+    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-forbid', hi: someUniqueOnInvoice,
+      exclusions: [], adopted: [sumCandidate], scope: 4 });
+    expect(src).toContain('x.totalDue = (sum l: { l: InvoiceLine | l.owner = x } | l.amount)');
+    expect(src).toContain('but 7 Int');
+  });
+  it('keeps 5 Int without sums', () => {
+    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-forbid', hi: someUniqueOnInvoice, exclusions: [], scope: 4 });
+    expect(src).toContain('but 5 Int');
+  });
+
+  // Task 9: shapeToPred rebuilds a sum witness's salient dims (count/sum/total) as Alloy conjuncts
+  // when the excluded shape's OWN subject is a sumOverCollection candidate — the child sig name
+  // (`subject.child`) is only available then; a non-sum Alloy subject never carries sum dims.
+  it('rebuilds sum salient dims (count/sum/total) into alloy exclusion conjuncts', () => {
+    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-forbid', hi: sumCandidate, exclusions: [[
+      { dim: 'lines.count', value: 2 }, { dim: 'sum(lines.amount)', value: 7 }, { dim: 'totalDue value', value: 7 },
+    ]], scope: 4 });
+    expect(src).toContain('#{ l: InvoiceLine | l.owner = a } = 2');
+    expect(src).toContain('(sum l: { l: InvoiceLine | l.owner = a } | l.amount) = 7');
+    expect(src).toContain('a.totalDue = 7');
   });
 });

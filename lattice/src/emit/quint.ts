@@ -162,6 +162,15 @@ function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
     const collides = [`${rec('k1')}.exists`, `${rec('k2')}.exists`, inS('k1'), inS('k2'), ...hops.map(h => `${h}.exists`), ...eqs].join(' and ');
     return `val ${name} = ${v}.keys().forall(k1 => ${v}.keys().forall(k2 => k1 == k2 or not(${collides})))`;
   }
+  if (c.kind === 'sumOverCollection') {
+    // Design §6.2: bounded fold over the owned-collection map (design §6.1's `f: int -> {…}` +
+    // `fCount: int` encoding) — walks every slot up to OWNED_BOUND, only counting slots below the
+    // live count. Mirrors evaluate.ts's sumOverCollection judge (sum of live children's field,
+    // compared with `total` on the left — see QuintQuery.adopted / the op-flip note there).
+    const fold = `range(0, ${OWNED_BOUND}).foldl(0, (acc, i) => if (i < x.${c.collection}Count) acc + x.${c.collection}.get(i).${c.field} else acc)`;
+    const ops = { eq: '==', le: '<=', ge: '>=' } as const;
+    return `val ${name} = ${v}.keys().forall(k => { val x = ${v}.get(k) not(x.exists) or (${pathToQuint(m, c.total, 'x', c.aggregate)} ${ops[c.op]} ${fold}) })`;
+  }
   throw new Error(`${c.kind} is never solver-queried on quint in slice-1 (template auto-adopt only)`);
 }
 
@@ -189,6 +198,15 @@ function shapeToQuint(m: DomainModel, facts: SalientFact[], cands: Candidate[], 
   const v = varName(agg);
   const conj: string[] = [];
   for (const f of facts) {
+    // Sum-over-collection dims (design §6.2/§6.4 — see salient.ts's extractSalient sumOverCollection
+    // branch) must be matched BEFORE the generic `<path> = <value>`/comparison branches below: e.g.
+    // `sum(lines.amount)` would otherwise mis-parse as a bare dotted path.
+    const mCount = f.dim.match(/^(\w+)\.count$/);
+    if (mCount) { conj.push(`x.${mCount[1]}Count == ${f.value}`); continue; }
+    const mSum = f.dim.match(/^sum\((\w+)\.(\w+)\)$/);
+    if (mSum) { conj.push(`range(0, ${OWNED_BOUND}).foldl(0, (acc, i) => if (i < x.${mSum[1]}Count) acc + x.${mSum[1]}.get(i).${mSum[2]} else acc) == ${f.value}`); continue; }
+    const mTot = f.dim.match(/^([\w.]+) value$/);
+    if (mTot) { conj.push(`${pathToQuint(m, splitPathStr(mTot[1]!), 'x', agg)} == ${f.value}`); continue; }
     const mVal = f.dim.match(/^([\w.]+) = (\w+)$/);
     if (mVal) { conj.push(`${pathToQuint(m, splitPathStr(mVal[1]!), 'x', agg)} == "${mVal[2]}"`); continue; }
     const mCmp = f.dim.match(/^(.+) (eq|ne|lt|le|gt|ge) (.+)$/);

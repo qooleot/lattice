@@ -7,7 +7,8 @@ import { nextQuestion } from '../../src/engine/planner.js';
 import { registerCandidates } from '../../src/engine/hypothesis.js';
 import { newSession } from '../../src/engine/session.js';
 import { realDeps } from '../../src/cli.js';
-import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice } from '../fixtures.js';
+import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice, sumCandidate } from '../fixtures.js';
+import type { Candidate } from '../../src/ast/invariant.js';
 
 describe('quint adapter (integration)', () => {
   it('finds a disagreement witness between grace-0 and grace-window rules', async () => {
@@ -102,5 +103,49 @@ describe('quint adapter (integration)', () => {
       expect(line.fields.owner).toBe(parent.id);
       expect(line.id.startsWith(`${parent.id}#lines`)).toBe(true);
     }
+  }, 180_000);
+
+  // Task 9 (design §6.2/§6.4): the sum form's propose→distinguish reality check, ahead of golden
+  // trace D. `total == sum` (sumCandidate) vs `total <= sum` (sumLe) genuinely differ whenever
+  // sum > total — real Apalache must find such a witness, and evaluateCandidate must SPLIT the
+  // pair on it (one permit, one forbid), not agree.
+  it('distinguishes total==sum from total<=sum with a real Apalache witness that splits the two candidates', async () => {
+    const sumLe: Candidate = { ...(sumCandidate as Extract<Candidate, { kind: 'sumOverCollection' }>), op: 'le' };
+    const em = astToQuint(invoiceLinesModelWithLifecycle,
+      { kind: 'distinguish', hi: sumCandidate, hj: sumLe, exclusions: [], maxSteps: 2 });
+    // Same liveness-forcing scaffolding as the owned-collection round-trip above: the plain
+    // `iff(Hi, Hj)` disjunction is satisfiable at the trivial empty-lines witness too (both
+    // candidates agree — vacuously — when linesCount is 0), so force any counterexample to also
+    // exhibit an Invoice with at least one live InvoiceLine, making the split witness non-vacuous.
+    const strengthened = em.source.replace(
+      /val q_inv = .*$/m,
+      'val q_inv = iff(Hi, Hj) or not(invoices.keys().exists(k => { val x = invoices.get(k) x.exists and x.linesCount >= 1 }))');
+    expect(strengthened).not.toBe(em.source);   // guard: the replace actually matched q_inv
+    const emForced = { ...em, source: strengthened };
+
+    const r = await runQuint(emForced, 2);
+    expect(r.violated).toBe(true);
+    const w = r.witness!;
+
+    const invoices = w.entities.filter(e => e.type === 'Invoice');
+    const withLines = invoices.filter(e => Number(e.fields['lines.count']) >= 1);
+    expect(withLines.length).toBeGreaterThan(0);   // guard: can never silently pass on an empty witness
+    const parent = withLines[0]!;
+    const lines = w.entities.filter(e => e.type === 'InvoiceLine' && String(e.fields.owner) === parent.id);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.length).toBe(Number(parent.fields['lines.count']));
+
+    const total = Number(parent.fields.totalDue);
+    const sum = lines.reduce((acc, l) => acc + Number(l.fields.amount), 0);
+    expect(total).not.toBe(sum);   // the actual disagreement driving the split (total==sum vs total<=sum)
+
+    const eqVerdict = evaluateCandidate(sumCandidate, w);
+    const leVerdict = evaluateCandidate(sumLe, w);
+    expect(eqVerdict).not.toBe(leVerdict);   // the witness must genuinely split the pair
+    expect([eqVerdict, leVerdict].sort()).toEqual(['forbid', 'permit']);
+    // Witness consistency check: the reported verdicts match direct recomputation from the
+    // witness's own child rows + parent total, not just "differ from each other" by accident.
+    expect(eqVerdict).toBe(total === sum ? 'permit' : 'forbid');
+    expect(leVerdict).toBe(total <= sum ? 'permit' : 'forbid');
   }, 180_000);
 });

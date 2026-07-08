@@ -124,6 +124,15 @@ function candidateToPred(c: Candidate, name: string): string {
       const guard = c.where ? `${predToAlloy(c.where, c.aggregate, 'x')} implies ` : '';
       return `pred ${name} { all x: ${c.aggregate} | ${guard}${predToAlloy(c.body, c.aggregate, 'x')} }`;
     }
+    // sumOverCollection is query-routed to quint (routeCandidate), but reaches here as an ADOPTED
+    // constraint (AlloyQuery.adopted) — Alloy's `sum` comprehension over the owned child sig
+    // expresses it directly. Operand order matches the candidate's own semantics (total <op> sum,
+    // TOTAL on the left — see evaluate.ts's judge and QuintQuery.adopted's fold above): emit
+    // `x.total <op> (sum …)` as-is, no op flip needed.
+    case 'sumOverCollection': {
+      const ops = { eq: '=', le: '<=', ge: '>=' } as const;
+      return `pred ${name} { all x: ${c.aggregate} | ${alloyPath('x', c.total)} ${ops[c.op]} (sum l: { l: ${c.child} | l.owner = x } | l.${c.field}) }`;
+    }
     default: throw new Error(`${c.kind} routes to quint, not alloy`);
   }
 }
@@ -149,6 +158,21 @@ function shapeToPred(facts: SalientFact[], subject: Candidate, name: string): st
   const w = subject.kind === 'unique' ? subject.whileStates : null;
   const conj: string[] = [];
   for (const f of facts) {
+    // Sum-over-collection dims (design §6.2/§6.4 — see salient.ts's extractSalient sumOverCollection
+    // branch) must be matched BEFORE the generic branches below. The child sig name isn't encoded
+    // in the dim string itself (unlike quint, where OWNED_BOUND/field access reads straight off the
+    // collection name) — it's recovered from the excluded shape's OWN subject candidate, which is
+    // only a sumOverCollection when these dims could have been produced in the first place. A
+    // non-sum Alloy subject (unique/cardinality/statePredicate) never carries sum dims, so this
+    // guard is never a false negative for the shapes that actually appear here.
+    const mCount = f.dim.match(/^(\w+)\.count$/);
+    if (mCount && subject.kind === 'sumOverCollection')
+      { conj.push(`#{ l: ${subject.child} | l.owner = a } = ${f.value}`); continue; }
+    const mSum = f.dim.match(/^sum\((\w+)\.(\w+)\)$/);
+    if (mSum && subject.kind === 'sumOverCollection')
+      { conj.push(`(sum l: { l: ${subject.child} | l.owner = a } | l.${mSum[2]}) = ${f.value}`); continue; }
+    const mTot = f.dim.match(/^([\w.]+) value$/);
+    if (mTot) { conj.push(`${alloyPath('a', mTot[1]!.split('.'))} = ${f.value}`); continue; }
     const mEq = f.dim.match(/^(.+) equal$/);
     if (mEq) { const p = mEq[1]!.split('.'); conj.push(`${alloyPath('a', p)} ${f.value ? '=' : '!='} ${alloyPath('b', p)}`); continue; }
     const mVal = f.dim.match(/^(.+) = (.+)$/);
@@ -246,8 +270,16 @@ export function astToAlloy(m: DomainModel, q: AlloyQuery): string {
 
   const wrapVary = (body: string) => varyClause ? `some disj a, b: ${(q.hi as { aggregate: string }).aggregate} | ${body}${varyClause}` : body;
 
-  if (q.kind === 'distinguish') parts.push(`run q { ${constrain('(Hi and not Hj) or (not Hi and Hj)')} } for ${q.scope} but 5 Int`);
-  else if (q.kind === 'probe-forbid') parts.push(`run q { ${wrapVary(constrain('(not Hi)'))} } for ${q.scope} but 5 Int`);
-  else { parts.push(nonVacuousPred(q.hi)); parts.push(`run q { ${wrapVary(constrain('Hi and nonVacuous'))} } for ${q.scope} but 5 Int`); }
+  // Bitwidth policy (design §6.2): a sum over up to OWNED_BOUND=3 children with values up to the
+  // default Int range can overflow the default 5-Int scope (-16..15) — 3 children × values ≤15 sum
+  // to ≤45, which needs 7 Int (-64..63) to represent without wraparound. Only raised when a sum
+  // actually appears on the query (as the query subject or an adopted constraint); everything else
+  // keeps the tighter default scope.
+  const hasSum = [q.hi, q.hj, ...(q.adopted ?? [])].some(c => c?.kind === 'sumOverCollection');
+  const intW = hasSum ? 7 : 5;
+
+  if (q.kind === 'distinguish') parts.push(`run q { ${constrain('(Hi and not Hj) or (not Hi and Hj)')} } for ${q.scope} but ${intW} Int`);
+  else if (q.kind === 'probe-forbid') parts.push(`run q { ${wrapVary(constrain('(not Hi)'))} } for ${q.scope} but ${intW} Int`);
+  else { parts.push(nonVacuousPred(q.hi)); parts.push(`run q { ${wrapVary(constrain('Hi and nonVacuous'))} } for ${q.scope} but ${intW} Int`); }
   return parts.join('\n\n') + '\n';
 }

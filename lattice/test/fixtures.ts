@@ -111,6 +111,20 @@ export const someStatePredicateOnInvoice: Candidate = {
   body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['totalDue'] }, right: { kind: 'int', value: 0 } },
 };
 
+// Alloy-routable structural candidate on Invoice — `unique` needs a machine region this fixture's
+// Invoice doesn't have, so `cardinality` (also alloy-routed, no whileStates) stands in — used by
+// sum-in-solvers tests (Task 9) that need an alloy query whose Hi is NOT itself the sum candidate.
+export const someUniqueOnInvoice: Candidate = {
+  kind: 'cardinality', aggregate: 'Invoice', where: null, atMost: 99,
+};
+
+// Task 9: sum-over-collection candidate — Invoice.totalDue must equal the sum of its InvoiceLine
+// amounts (design §6.2/§6.4). Shared across the quint/alloy emitter, salient, and integration tests.
+export const sumCandidate: Candidate = {
+  kind: 'sumOverCollection', aggregate: 'Invoice',
+  collection: 'lines', child: 'InvoiceLine', field: 'amount', op: 'eq', total: ['totalDue'],
+};
+
 export const revrecModel: DomainModel = {
   context: 'RevRec', ticksPerDay: 24,
   enums: [{ name: 'EntryKind', values: ['Recognition', 'Correction'] }, { name: 'PeriodState', values: ['Open', 'Closed'] }],

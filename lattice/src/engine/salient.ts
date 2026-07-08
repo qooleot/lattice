@@ -132,6 +132,32 @@ export function extractSalient(cands: Candidate[], s: CaseState): SalientFact[] 
         }
       }
     }
+    if (c.kind === 'sumOverCollection') {
+      // Design §6.2/§6.4: three numeric dims characterize a sum witness — child count, sum of the
+      // child field, and the parent's own total. Convention matches evaluate.ts's judge: children
+      // are CaseEntities with fields.owner === parent.id; parent carries '<collection>.count'.
+      const subjects = s.entities.filter(e => e.type === c.aggregate);
+      const per = subjects.map(e => {
+        const kids = s.entities.filter(x => x.type === c.child && x.fields['owner'] === e.id);
+        const vals = kids.map(k => k.fields[c.field]);
+        const total = resolveValue(s, e, c.total);
+        return { n: kids.length,
+          sum: vals.every(v => typeof v === 'number') ? (vals as number[]).reduce((a, b) => a + b, 0) : undefined,
+          total: typeof total === 'number' ? total : undefined };
+      });
+      // all-subjects-agree guard (same rationale as the inState capture above): a single-existential
+      // shape (quint's `exists(k => ...)`, alloy's single `all x`/`a`) cannot express "which
+      // subject", so subjects disagreeing on a dim's value must drop it rather than conjoin
+      // contradictory facts onto one variable.
+      const agree = <T>(vs: (T | undefined)[]): T | undefined => {
+        const set = new Set(vs.filter(v => v !== undefined));
+        return set.size === 1 ? [...set][0] as T : undefined;
+      };
+      const n = agree(per.map(p => p.n)), sum = agree(per.map(p => p.sum)), total = agree(per.map(p => p.total));
+      if (n !== undefined) facts.set(`${c.collection}.count`, { dim: `${c.collection}.count`, value: n });
+      if (sum !== undefined) facts.set(`sum(${c.collection}.${c.field})`, { dim: `sum(${c.collection}.${c.field})`, value: sum });
+      if (total !== undefined) facts.set(`${c.total.join('.')} value`, { dim: `${c.total.join('.')} value`, value: total });
+    }
   }
   return [...facts.values()].sort((a, b) => a.dim.localeCompare(b.dim));
 }
