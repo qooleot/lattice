@@ -229,8 +229,12 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
     // actions: declared transitions; generic region mutator when a region has none; create for non-machine entities; enum mutators
     for (const r of machine?.regions ?? []) {
       const declared = (machine!.transitions ?? []).filter(t => t.region === r.name);
-      for (const t of declared) actions.push(
-        `action trans_${o.name}_${t.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) all { (${t.from.map(f => `${v}.get(id).${r.name}_state == "${f}"`).join(' or ')}), ${v}' = ${v}.set(id, ${v}.get(id).with("${r.name}_state", "${t.to}")), ${frame([v]).join(', ')} } }`);
+      for (const t of declared) {
+        const fromChk = `(${t.from.map(f => `${v}.get(id).${r.name}_state == "${f}"`).join(' or ')})`;
+        const guard = t.requires ? `, ${predToQuint(m, t.requires, `${v}.get(id)`, o.name)}` : '';
+        actions.push(
+          `action trans_${o.name}_${t.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) all { ${fromChk}${guard}, ${v}' = ${v}.set(id, ${v}.get(id).with("${r.name}_state", "${t.to}")), ${frame([v]).join(', ')} } }`);
+      }
       if (declared.length === 0) actions.push(
         `action set_${o.name}_${r.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) nondet s = oneOf(Set(${r.states.map(x => `"${x.name}"`).join(', ')})) all { ${v}' = ${v}.set(id, ${v}.get(id).with("${r.name}_state", s)), ${frame([v]).join(', ')} } }`);
     }

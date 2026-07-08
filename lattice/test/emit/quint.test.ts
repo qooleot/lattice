@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { astToQuint } from '../../src/emit/quint.js';
 import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap } from '../fixtures.js';
 import type { Candidate } from '../../src/ast/invariant.js';
+import type { DomainModel } from '../../src/ast/domain.js';
 
 describe('astToQuint', () => {
   const em = astToQuint(traceBModel, { kind: 'distinguish', hi: graceCandidate(false), hj: graceCandidate(true), exclusions: [], maxSteps: 8 });
@@ -75,5 +76,42 @@ describe('astToQuint', () => {
     expect(p.source).toContain('val q_inv = (adopted0) implies (Hi)');
     const bare = astToQuint(invoicingModel, { kind: 'probe-forbid', hi: graceCap(72), exclusions: [], maxSteps: 8 });
     expect(bare.source).toContain('val q_inv = Hi');
+  });
+
+  // Task 3: transition guards — a declared transition's `requires` predicate is conjoined into
+  // the trans_ action alongside the from-state check (design §3.6).
+  describe('guarded transitions', () => {
+    const guardedModel: DomainModel = {
+      context: 'Billing', ticksPerDay: 24, enums: [], entities: [],
+      aggregates: [{
+        kind: 'aggregate', name: 'Invoice',
+        fields: [
+          { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+          { name: 'amountPaid', type: { kind: 'prim', prim: 'Money' } },
+          { name: 'totalDue', type: { kind: 'prim', prim: 'Money' } }],
+        machine: {
+          regions: [{ name: 'settlement', initial: 'open', states: [{ name: 'open' }, { name: 'paid' }] }],
+          transitions: [{
+            name: 'settle', region: 'settlement', from: ['open'], to: 'paid',
+            requires: { kind: 'cmp', op: 'ge',
+              left: { kind: 'field', owner: 'self', path: ['amountPaid'] },
+              right: { kind: 'field', owner: 'self', path: ['totalDue'] } },
+          }],
+        },
+      }],
+      events: [],
+    };
+
+    it('conjoins the guard predicate into the declared transition action', () => {
+      const cap = (n: number): Candidate => ({
+        kind: 'statePredicate', aggregate: 'Invoice',
+        body: { kind: 'cmp', op: 'le', left: { kind: 'field', owner: 'self', path: ['totalDue'] }, right: { kind: 'int', value: n } },
+      });
+      const em = astToQuint(guardedModel, {
+        kind: 'distinguish', hi: cap(72), hj: cap(24), exclusions: [], maxSteps: 8,
+      });
+      expect(em.source).toContain('action trans_Invoice_settle =');
+      expect(em.source).toContain('invoices.get(id).amountPaid >= invoices.get(id).totalDue');
+    });
   });
 });

@@ -70,7 +70,7 @@ function machineLines(mach: Machine, out: string[]): void {
     }).join(', ');
     out.push(`      states { ${states} }`);
     for (const t of mach.transitions.filter(t => t.region === r.name))
-      out.push(`      transition ${t.name} { from ${t.from.join(', ')} to ${t.to}${t.when ? `; when ${t.when}` : ''} }`);
+      out.push(`      transition ${t.name} { from ${t.from.join(', ')} to ${t.to}${t.when ? `; when ${t.when}` : ''}${t.requires ? `; requires ${predToText(t.requires)}` : ''} }`);
     out.push('    }');
   }
 }

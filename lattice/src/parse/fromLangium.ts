@@ -45,7 +45,7 @@ function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic
   });
 }
 
-function mapLifecycles(lifs: G.LifecycleDecl[], ownerName: string, diags: ParseDiagnostic[]): Machine {
+function mapLifecycles(lifs: G.LifecycleDecl[], ownerName: string, diags: ParseDiagnostic[], enums: Map<string, string[]>): Machine {
   const regions: Region[] = lifs.map(r => {
     const states: StateDef[] = r.states.map(s => {
       const tags = s.tags.map(t => t.name).filter(t => t === 'active' || t === 'terminal') as ('active' | 'terminal')[];
@@ -62,6 +62,7 @@ function mapLifecycles(lifs: G.LifecycleDecl[], ownerName: string, diags: ParseD
   const transitions: TransitionDef[] = lifs.flatMap(r => r.transitions.map(t => {
     const tr: TransitionDef = { name: t.name, region: r.name, from: [...t.from], to: t.to };
     if (t.when) tr.when = t.when;
+    if (t.requires) tr.requires = mapPred(t.requires, enums);
     return tr;
   }));
   return { regions, transitions };
@@ -214,7 +215,7 @@ export function loadLatText(text: string): LoadResult {
       case 'AggregateDecl': {
         const a = item as G.AggregateDecl;
         const def: AggregateDef = { kind: 'aggregate', name: a.name, fields: mapFields([...a.fields], enumSet, diags) };
-        if (a.lifecycles.length) def.machine = mapLifecycles([...a.lifecycles], a.name, diags);
+        if (a.lifecycles.length) def.machine = mapLifecycles([...a.lifecycles], a.name, diags, enumMap);
         const d = joinDocs([...a.docs]); if (d) def.doc = d;
         locs.set(`owner:${a.name}`, at(a)); noteFields(a.name, [...a.fields]);
         for (const r of a.lifecycles) {

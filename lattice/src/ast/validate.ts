@@ -1,11 +1,59 @@
-import type { Diagnostic } from './invariant.js';
+import type { Diagnostic, Predicate, Term } from './invariant.js';
 import type { DomainModel, Field, TypeRef } from './domain.js';
 import { RESERVED_WORDS } from './reserved.js';
 
 export const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+// Guard predicates on transitions are OWN-AGGREGATE-ONLY in v1 (design §3.3): every field path
+// must be a single segment naming a field on the SAME aggregate, and every inState clause must
+// name a region/state pair declared on that aggregate's own machine. Ref-hops (multi-segment
+// paths) are rejected wholesale as guard-cross-aggregate — that's the r04 ref-hop class,
+// deliberately out of scope until real evidence motivates it (§3.3/§5.2.1).
+function checkGuard(a: { name: string; fields: Field[]; machine?: { regions: { name: string; states: { name: string }[] }[] } },
+    enums: Map<string, string[]>, t: string, p: Predicate, out: Diagnostic[]): void {
+  const term = (tm: Term): void => {
+    switch (tm.kind) {
+      case 'field': {
+        if (tm.path.length !== 1) {
+          // multi-segment = ref-hop or value path; guards are own-scalar-only in v1 (§5.2.1)
+          out.push({ code: 'guard-cross-aggregate', message: `transition ${t}: guard path ${tm.path.join('.')} leaves the aggregate — v1 guards read own fields only`, at: t });
+          return;
+        }
+        if (!a.fields.some(f => f.name === tm.path[0]))
+          out.push({ code: 'unknown-path', message: `transition ${t}: guard reads unknown field ${tm.path[0]}`, at: t });
+        break;
+      }
+      case 'enumval': {
+        const e = enums.get(tm.enum);
+        if (!e) out.push({ code: 'unknown-enum', message: `transition ${t}: no enum ${tm.enum}`, at: t });
+        else if (!e.includes(tm.value)) out.push({ code: 'unknown-enum-value', message: `transition ${t}: ${tm.enum} has no value ${tm.value}`, at: t });
+        break;
+      }
+      case 'plus': term(tm.left); term(tm.right); break;
+      case 'int': case 'now': break;
+    }
+  };
+  const walk = (q: Predicate): void => {
+    switch (q.kind) {
+      case 'cmp': term(q.left); term(q.right); break;
+      case 'inState': {
+        const r = a.machine?.regions.find(x => x.name === q.region);
+        if (!r) { out.push({ code: 'unknown-region', message: `transition ${t}: guard names missing region ${q.region}`, at: t }); return; }
+        for (const s of q.states) if (!r.states.some(x => x.name === s))
+          out.push({ code: 'unknown-state', message: `transition ${t}: guard names missing state ${s}`, at: t });
+        break;
+      }
+      case 'and': case 'or': q.args.forEach(walk); break;
+      case 'not': walk(q.arg); break;
+      case 'implies': walk(q.left); walk(q.right); break;
+    }
+  };
+  walk(p);
+}
+
 export function validateModel(m: DomainModel): Diagnostic[] {
   const out: Diagnostic[] = [];
+  const enumMap = new Map(m.enums.map(e => [e.name, e.values]));
   const checkName = (kind: string, value: string, at?: string) => {
     if (!IDENT_RE.test(value))
       out.push({ code: 'invalid-name', message: `${kind} name '${value}' is not a valid identifier (letters, digits, underscore; no spaces)`, at });
@@ -86,6 +134,7 @@ export function validateModel(m: DomainModel): Diagnostic[] {
         out.push({ code: 'self-loop', message: `transition ${t.name}: target ${t.to} is also a source — self-loops need evidence before the grammar admits them (design §5.2)`, at: t.name });
       if (t.when && !events.has(t.when))
         out.push({ code: 'unknown-event', message: `transition ${t.name} triggered by undeclared event ${t.when}`, at: t.name });
+      if (t.requires) checkGuard(a, enumMap, t.name, t.requires, out);
     }
   });
   return out;

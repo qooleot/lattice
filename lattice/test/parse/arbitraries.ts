@@ -144,22 +144,34 @@ function candidateArb(agg: AggregateDef, enums: { name: string; values: string[]
   return fc.oneof(...arbs);
 }
 
+// AGGREGATE fields eligible as guard operands: prim numeric types only, matching validate's
+// own-scalar-only rule (checkGuard) and predArb's numFields filter above.
+const isNumericPrim = (f: Field): boolean =>
+  f.type.kind === 'prim' && ['Int', 'Money', 'Date', 'Duration'].includes((f.type as any).prim);
+
 // 1–2 regions; per region: 2–4 states (the LAST tagged @terminal — candidateArb's terminal arm
-// depends on exactly that), one transition, optionally triggered by a declared event.
-const machineArb = (fieldNames: string[], eventNames: string[]): fc.Arbitrary<Machine> =>
+// depends on exactly that), one transition, optionally triggered by a declared event and/or
+// guarded by a simple `numField >= <int>` predicate over the owning aggregate's own numeric
+// fields (guards are own-scalar-only in v1 — design §3.3/§5.2.1, matches checkGuard).
+const machineArb = (fieldNames: string[], eventNames: string[], numFieldNames: string[]): fc.Arbitrary<Machine> =>
   uniqNames(camel.filter(n => !fieldNames.includes(n)), 1, 2).chain(regionNames =>
     fc.tuple(
       fc.tuple(...regionNames.map(() => uniqNames(camel, 2, 4))),
       uniqNames(camel, regionNames.length, regionNames.length),
       fc.tuple(...regionNames.map(() => eventNames.length
         ? fc.option(fc.constantFrom(...eventNames), { nil: undefined }) : fc.constant(undefined))),
-    ).map(([statesPer, transNames, whens]) => ({
+      fc.tuple(...regionNames.map(() => fc.option(fc.integer({ min: 0, max: 99 }), { nil: undefined }))),
+    ).map(([statesPer, transNames, whens, guards]) => ({
       regions: regionNames.map((name, i) => ({ name, initial: statesPer[i]![0]!,
         states: statesPer[i]!.map((s, j): StateDef =>
           j === statesPer[i]!.length - 1 ? { name: s, tags: ['terminal'] } : { name: s }) })),
       transitions: regionNames.map((region, i) => {
         const t: TransitionDef = { name: transNames[i]!, region, from: [statesPer[i]![0]!], to: statesPer[i]![1]! };
         if (whens[i]) t.when = whens[i];
+        if (guards[i] !== undefined && numFieldNames.length)
+          t.requires = { kind: 'cmp', op: 'ge',
+            left: { kind: 'field', owner: 'self', path: [numFieldNames[0]!] },
+            right: { kind: 'int', value: guards[i]! } };
         return t;
       }),
     })));
@@ -173,7 +185,8 @@ const aggArb = (name: string, enums: { name: string; values: string[] }[], event
           const base: AggregateDef = { kind: 'aggregate', name, fields };
           if (aggDoc) base.doc = aggDoc;
           if (!hasMachine) return fc.constant(base);
-          return machineArb(fieldNames, eventNames).map(machine => ({ ...base, machine }));
+          return machineArb(fieldNames, eventNames, rest.filter(isNumericPrim).map(f => f.name))
+            .map(machine => ({ ...base, machine }));
         }));
 
 // event field: simple prim-typed field, no ref/enum wiring.

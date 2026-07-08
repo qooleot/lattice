@@ -6,6 +6,7 @@ import { domainToMermaid } from '../../src/emit/mermaid/domainDiagram.js';
 import { contextMapToMermaid } from '../../src/emit/mermaid/contextMap.js';
 import { specDiagramFiles, workspaceDiagramFiles } from '../../src/emit/mermaid/docs.js';
 import { order, model, map } from './mermaid.test.js';
+import type { AggregateDef } from '../../src/ast/domain.js';
 
 mermaid.initialize({ startOnLoad: false });
 // mermaid.parse with suppressErrors:false never resolves to `false` — it resolves to a
@@ -22,6 +23,29 @@ describe('generated mermaid parses (the GitHub-renderability gate)', () => {
     expect(await valid(domainToMermaid(model))).toBe(true));
   it('context map (incl. label edges and ---|kind| edges)', async () =>
     expect(await valid(contextMapToMermaid(map))).toBe(true));
+
+  // Task 3: a guarded transition renders `name [sanitized predicate]` as the edge label —
+  // exercise the real mermaid parser so guardLabel's `{}`/`&&`/`||`/`!` sanitization is validated
+  // for real, not just asserted by string equality.
+  it('statechart with a guarded transition (guard label sanitized: no {}, &&, ||, !)', async () => {
+    const guarded: AggregateDef = { kind: 'aggregate', name: 'Invoice', doc: 'An invoice',
+      fields: [
+        { name: 'invId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'amountPaid', type: { kind: 'prim', prim: 'Money' } },
+        { name: 'totalDue', type: { kind: 'prim', prim: 'Money' } }],
+      machine: { regions: [{ name: 'settlement', initial: 'open',
+          states: [{ name: 'open' }, { name: 'paid', tags: ['terminal'] }] }],
+        transitions: [{ name: 'settle', region: 'settlement', from: ['open'], to: 'paid',
+          requires: { kind: 'and', args: [
+            { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['amountPaid'] }, right: { kind: 'field', owner: 'self', path: ['totalDue'] } },
+            { kind: 'inState', owner: 'self', region: 'settlement', states: ['open'] }] } }] } };
+    const src = machineToMermaid(guarded, guarded.machine!.regions[0]!);
+    expect(src).not.toContain('&&');
+    expect(src).not.toContain('{');
+    expect(src).not.toContain('}');
+    expect(src).toContain('[amountPaid >= totalDue and state settlement in (open)]');
+    expect(await valid(src)).toBe(true);
+  });
 });
 
 /** Extracts every ```mermaid ... ``` fenced block from a markdown document. */

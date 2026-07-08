@@ -1,3 +1,5 @@
+import type { Predicate } from './invariant.js';
+
 export type PrimType = 'Int' | 'Text' | 'Date' | 'Duration' | 'Money' | 'Id';
 
 export type TypeRef =
@@ -14,7 +16,11 @@ export interface Field {
 }
 export interface StateDef { name: string; tags?: ('active' | 'terminal')[] }
 export interface Region { name: string; initial: string; states: StateDef[] }
-export interface TransitionDef { name: string; region: string; from: string[]; to: string; when?: string }
+export interface TransitionDef {
+  name: string; region: string; from: string[]; to: string;
+  when?: string;
+  requires?: Predicate;   // guard over the OWN aggregate's fields + machine state (design §3.3)
+}
 export interface Machine { regions: Region[]; transitions: TransitionDef[] }
 export interface EnumDef { name: string; values: string[] }
 export interface EntityDef { kind: 'entity'; name: string; fields: Field[]; doc?: string }

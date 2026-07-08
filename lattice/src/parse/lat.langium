@@ -77,7 +77,10 @@ StateDecl:
     name=ID tags+=Tag*;
 
 TransitionDecl:
-    'transition' name=ID '{' 'from' from+=ID (',' from+=ID)* 'to' to=ID (';' 'when' when=ID)? '}';
+    'transition' name=ID '{' 'from' from+=ID (',' from+=ID)* 'to' to=ID
+        (';' 'when' when=ID)?
+        (';' 'requires' requires=Predicate)?
+    '}';
 
 InvariantDecl:
     docs+=DOC* 'invariant' name=ID ('on' target=ID)? ('where' where=Predicate)? '{' body=InvariantBody '}';
