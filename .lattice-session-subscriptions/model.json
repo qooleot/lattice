@@ -50,6 +50,27 @@
             "kind": "prim",
             "prim": "Int"
           }
+        },
+        {
+          "name": "paidInvoiceCount",
+          "type": {
+            "kind": "prim",
+            "prim": "Int"
+          }
+        },
+        {
+          "name": "maxRetries",
+          "type": {
+            "kind": "prim",
+            "prim": "Int"
+          }
+        },
+        {
+          "name": "latestInvoice",
+          "type": {
+            "kind": "ref",
+            "target": "Invoice"
+          }
         }
       ],
       "machine": {
@@ -95,7 +116,23 @@
             "from": [
               "trialing"
             ],
-            "to": "active"
+            "to": "active",
+            "requires": {
+              "kind": "cmp",
+              "op": "ge",
+              "left": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "paidInvoiceCount"
+                ]
+              },
+              "right": {
+                "kind": "int",
+                "value": 1
+              }
+            },
+            "emits": "SubscriptionActivated"
           },
           {
             "name": "expireTrial",
@@ -122,28 +159,15 @@
             "to": "active"
           },
           {
-            "name": "cancelFromTrial",
+            "name": "cancel",
             "region": "status",
             "from": [
-              "trialing"
-            ],
-            "to": "canceled"
-          },
-          {
-            "name": "cancelFromActive",
-            "region": "status",
-            "from": [
-              "active"
-            ],
-            "to": "canceled"
-          },
-          {
-            "name": "cancelFromPastDue",
-            "region": "status",
-            "from": [
+              "trialing",
+              "active",
               "pastDue"
             ],
-            "to": "canceled"
+            "to": "canceled",
+            "emits": "SubscriptionCanceled"
           },
           {
             "name": "dunningExhausted",
@@ -215,6 +239,13 @@
           "tags": [
             "balance"
           ]
+        },
+        {
+          "name": "retryCount",
+          "type": {
+            "kind": "prim",
+            "prim": "Int"
+          }
         }
       ],
       "machine": {
@@ -260,7 +291,36 @@
             "from": [
               "draft"
             ],
-            "to": "open"
+            "to": "open",
+            "requires": {
+              "kind": "cmp",
+              "op": "eq",
+              "left": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "totalDue"
+                ]
+              },
+              "right": {
+                "kind": "plus",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "licenseFeeAmount"
+                  ]
+                },
+                "right": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "usageAmount"
+                  ]
+                }
+              }
+            },
+            "emits": "InvoiceFinalized"
           },
           {
             "name": "settle",
@@ -268,7 +328,26 @@
             "from": [
               "open"
             ],
-            "to": "paid"
+            "to": "paid",
+            "requires": {
+              "kind": "cmp",
+              "op": "eq",
+              "left": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "amountPaid"
+                ]
+              },
+              "right": {
+                "kind": "field",
+                "owner": "self",
+                "path": [
+                  "totalDue"
+                ]
+              }
+            },
+            "emits": "InvoicePaid"
           },
           {
             "name": "voidDraft",
@@ -299,7 +378,143 @@
       "doc": "Period invoice: license-fee portion plus usage portion; partial payments accrue"
     }
   ],
-  "events": [],
-  "doc": "Subscriptions API: hybrid license-fee + usage-based billing",
-  "services": []
+  "events": [
+    {
+      "name": "SubscriptionActivated",
+      "fields": [
+        {
+          "name": "subId",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          }
+        }
+      ]
+    },
+    {
+      "name": "SubscriptionCanceled",
+      "fields": [
+        {
+          "name": "subId",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          }
+        }
+      ]
+    },
+    {
+      "name": "InvoicePaid",
+      "fields": [
+        {
+          "name": "invoiceId",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          }
+        }
+      ]
+    },
+    {
+      "name": "InvoiceFinalized",
+      "fields": [
+        {
+          "name": "invoiceId",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          }
+        }
+      ]
+    }
+  ],
+  "services": [
+    {
+      "name": "SubscriptionService",
+      "methods": [
+        {
+          "name": "createSubscription",
+          "params": [
+            {
+              "name": "plan",
+              "type": {
+                "kind": "ref",
+                "target": "Catalog.Plan"
+              }
+            },
+            {
+              "name": "seats",
+              "type": {
+                "kind": "prim",
+                "prim": "Int"
+              }
+            }
+          ],
+          "kind": {
+            "creates": "Subscription"
+          },
+          "returns": {
+            "kind": "ref",
+            "target": "Subscription"
+          }
+        },
+        {
+          "name": "getSubscription",
+          "params": [
+            {
+              "name": "subId",
+              "type": {
+                "kind": "prim",
+                "prim": "Id"
+              }
+            }
+          ],
+          "kind": {
+            "readOnly": true
+          },
+          "returns": {
+            "kind": "ref",
+            "target": "Subscription"
+          }
+        },
+        {
+          "name": "activate",
+          "params": [
+            {
+              "name": "subId",
+              "type": {
+                "kind": "prim",
+                "prim": "Id"
+              }
+            }
+          ],
+          "kind": {
+            "performs": {
+              "aggregate": "Subscription",
+              "transition": "activate"
+            }
+          }
+        },
+        {
+          "name": "cancel",
+          "params": [
+            {
+              "name": "subId",
+              "type": {
+                "kind": "prim",
+                "prim": "Id"
+              }
+            }
+          ],
+          "kind": {
+            "performs": {
+              "aggregate": "Subscription",
+              "transition": "cancel"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "doc": "Subscriptions API: hybrid license-fee + usage-based billing"
 }

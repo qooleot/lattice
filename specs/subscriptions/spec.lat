@@ -1,29 +1,52 @@
 /// Subscriptions API: hybrid license-fee + usage-based billing
 context Subscriptions {
 
+  event SubscriptionActivated {
+    subId : Id
+  }
+
+  event SubscriptionCanceled {
+    subId : Id
+  }
+
+  event InvoicePaid {
+    invoiceId : Id
+  }
+
+  event InvoiceFinalized {
+    invoiceId : Id
+  }
+
   /// A customer's subscription to a Plan; usage accrues per billing period and resets at rollover
   aggregate Subscription {
-    subId        : Id key
-    plan         : ref Catalog.Plan
-    seats        : Int
-    periodStart  : Date
-    periodEnd    : Date
-    accruedUnits : Int
+    subId            : Id key
+    plan             : ref Catalog.Plan
+    seats            : Int
+    periodStart      : Date
+    periodEnd        : Date
+    accruedUnits     : Int
+    paidInvoiceCount : Int
+    maxRetries       : Int
+    latestInvoice    : ref Invoice
 
     lifecycle status {
       states { trialing @initial, active @active, pastDue @active, canceled @terminal, expired @terminal }
-      transition activate { from trialing to active }
+      transition activate { from trialing to active; requires paidInvoiceCount >= 1; emits SubscriptionActivated }
       transition expireTrial { from trialing to expired }
       transition paymentFailed { from active to pastDue }
       transition recover { from pastDue to active }
-      transition cancelFromTrial { from trialing to canceled }
-      transition cancelFromActive { from active to canceled }
-      transition cancelFromPastDue { from pastDue to canceled }
+      transition cancel { from trialing, active, pastDue to canceled; emits SubscriptionCanceled }
       transition dunningExhausted { from pastDue to canceled }
     }
 
     /// A billing period is well-ordered and accrued usage never goes negative.
     invariant positivePeriodNonNegativeUsage { periodStart < periodEnd && accruedUnits >= 0 }
+
+    /// An active subscription's current invoice is paid in full (companion to the activate guard).
+    invariant activePaidInFull where state status in {active} { latestInvoice.amountPaid == latestInvoice.totalDue }
+
+    /// While past due, dunning retries on the current invoice never exceed the subscription's cap.
+    invariant retryCapWhilePastDue where state status in {pastDue} { latestInvoice.retryCount <= maxRetries }
   }
 
   /// Period invoice: license-fee portion plus usage portion; partial payments accrue
@@ -34,11 +57,12 @@ context Subscriptions {
     usageAmount      : Money @total
     totalDue         : Money @total
     amountPaid       : Money @balance
+    retryCount       : Int
 
     lifecycle settlement {
       states { draft @initial, open @active, paid @terminal, void @terminal, uncollectible @terminal }
-      transition finalize { from draft to open }
-      transition settle { from open to paid }
+      transition finalize { from draft to open; requires totalDue == licenseFeeAmount + usageAmount; emits InvoiceFinalized }
+      transition settle { from open to paid; requires amountPaid == totalDue; emits InvoicePaid }
       transition voidDraft { from draft to void }
       transition voidOpen { from open to void }
       transition writeOff { from open to uncollectible }
@@ -52,5 +76,12 @@ context Subscriptions {
 
     /// At most one draft invoice exists per subscription at any time.
     invariant oneDraftInvoicePerSubscription { unique while settlement in {draft} by (subscription) }
+  }
+
+  service SubscriptionService {
+    createSubscription(plan: ref Catalog.Plan, seats: Int): ref Subscription creates Subscription
+    getSubscription(subId: Id): ref Subscription read-only
+    activate(subId: Id) performs Subscription.activate
+    cancel(subId: Id) performs Subscription.cancel
   }
 }

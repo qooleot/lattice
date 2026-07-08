@@ -15,6 +15,8 @@ classDiagram
       +periodStart : Date
       +periodEnd : Date
       +accruedUnits : Int
+      +paidInvoiceCount : Int
+      +maxRetries : Int
     }
     class Invoice {
       +invoiceId : Id «key»
@@ -22,12 +24,22 @@ classDiagram
       +usageAmount : Money
       +totalDue : Money
       +amountPaid : Money
+      +retryCount : Int
+    }
+    class SubscriptionService {
+      <<service>>
+      +createSubscription(plan, seats)
+      +getSubscription(subId)
+      +activate(subId)
+      +cancel(subId)
     }
   }
   class Catalog_Plan["Catalog.Plan"] {
     <<external>>
   }
+  Subscription --> Invoice : latestInvoice
   Invoice --> Subscription : subscription
+  SubscriptionService ..> Subscription : createSubscription
   Subscription ..> Catalog_Plan : plan
 ```
 
@@ -38,13 +50,13 @@ A customer's subscription to a Plan; usage accrues per billing period and resets
 ```mermaid
 stateDiagram-v2
   [*] --> trialing
-  trialing --> active: activate
+  trialing --> active: activate [paidInvoiceCount >= 1] / SubscriptionActivated
   trialing --> expired: expireTrial
   active --> pastDue: paymentFailed
   pastDue --> active: recover
-  trialing --> canceled: cancelFromTrial
-  active --> canceled: cancelFromActive
-  pastDue --> canceled: cancelFromPastDue
+  trialing --> canceled: cancel / SubscriptionCanceled
+  active --> canceled: cancel / SubscriptionCanceled
+  pastDue --> canceled: cancel / SubscriptionCanceled
   pastDue --> canceled: dunningExhausted
   canceled --> [*]
   expired --> [*]
@@ -57,8 +69,8 @@ Period invoice: license-fee portion plus usage portion; partial payments accrue
 ```mermaid
 stateDiagram-v2
   [*] --> draft
-  draft --> open: finalize
-  open --> paid: settle
+  draft --> open: finalize [totalDue == licenseFeeAmount + usageAmount] / InvoiceFinalized
+  open --> paid: settle [amountPaid == totalDue] / InvoicePaid
   draft --> void: voidDraft
   open --> void: voidOpen
   open --> uncollectible: writeOff
