@@ -277,8 +277,9 @@ Notes:
 - `requires` reuses the existing `Predicate` rule verbatim — no new predicate syntax.
 - `emits` is an `ID` cross-checked against declared `event` names (semantic validation, not a
   Langium cross-reference, consistent with how `ref` targets are handled).
-- `when` stays a free identifier (unchecked), as today. Tightening it to declared
-  events/commands is a generation-slice question.
+- `when` stays as today — note (correction, 2026-07-07 code read): it is already validated
+  against declared events (`unknown-event`, validate.ts) — the trigger vocabulary is events, and
+  `emits` reuses the same check for the published side.
 - `sum` is a dedicated invariant-body form, not a term: the closed grammar grows by one shape,
   not by an expression language. Ops `==`/`<=`/`>=` share one machinery and give the loop
   genuinely distinct candidates to distinguish ("exactly" vs "at most").
@@ -338,6 +339,7 @@ export interface ValueDef {  // NEW
 ```ts
 | { kind: 'sumOverCollection'; aggregate: string;
     collection: string;      // owned List<E> field name on the aggregate
+    child: string;           // E's name — carried so the model-free evaluator can find child rows
     field: string;           // numeric field on the child entity E
     op: 'eq' | 'le' | 'ge';
     total: Path }            // numeric path on the aggregate (own fields; no ref-hops in v1)
