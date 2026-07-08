@@ -10,7 +10,7 @@ context Subscriptions {
     periodEnd    : Date
     accruedUnits : Int
 
-    lifecycle lifecycle {
+    lifecycle status {
       states { trialing @initial, active @active, pastDue @active, canceled @terminal, expired @terminal }
       transition activate { from trialing to active }
       transition expireTrial { from trialing to expired }

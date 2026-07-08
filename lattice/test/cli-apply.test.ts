@@ -39,8 +39,8 @@ describe('engine apply', () => {
     expect(r.written).toContain(cdMmd);
     expect(existsSync(diagramsMd)).toBe(true);
     expect(existsSync(cdMmd)).toBe(true);
-    // both member aggregates (Subscription/lifecycle, Invoice/settlement) get their own SD file
-    const sdSubscription = join(specDir, 'diagrams', 'SD_Subscription_lifecycle.mmd');
+    // both member aggregates (Subscription/status, Invoice/settlement) get their own SD file
+    const sdSubscription = join(specDir, 'diagrams', 'SD_Subscription_status.mmd');
     const sdInvoice = join(specDir, 'diagrams', 'SD_Invoice_settlement.mmd');
     expect(r.written).toContain(sdSubscription);
     expect(r.written).toContain(sdInvoice);

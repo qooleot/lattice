@@ -6,7 +6,7 @@
 
 A customer's subscription to a Plan; usage accrues per billing period and resets at rollover
 
-**lifecycle lifecycle:** trialing → active (activate), trialing → expired (terminal) (expireTrial), active → pastDue (paymentFailed), pastDue → active (recover), trialing → canceled (terminal) (cancelFromTrial), active → canceled (terminal) (cancelFromActive), pastDue → canceled (terminal) (cancelFromPastDue), pastDue → canceled (terminal) (dunningExhausted)
+**status lifecycle:** trialing → active (activate), trialing → expired (terminal) (expireTrial), active → pastDue (paymentFailed), pastDue → active (recover), trialing → canceled (terminal) (cancelFromTrial), active → canceled (terminal) (cancelFromActive), pastDue → canceled (terminal) (cancelFromPastDue), pastDue → canceled (terminal) (dunningExhausted)
 
 ## Invoice
 
@@ -20,8 +20,8 @@ Period invoice: license-fee portion plus usage portion; partial payments accrue
 - On every Invoice: totalDue ≤ licenseFeeAmount + usageAmount.  (elicited (w1, w2): totalDueAtMostParts)
 - On every Invoice: amountPaid ≤ totalDue and if it is paid, then amountPaid is totalDue.  (elicited (w1, w2, w3): neverOverpaidAndPaidExact)
 - Only one Invoice may be draft per (subscription).  (elicited (w1, w2, w3, w4, w5): oneDraftInvoicePerSubscription)
-- Once Subscription is canceled, it stays canceled.  (implied by structure: terminalSubscriptionLifecycleCanceled)
-- Once Subscription is expired, it stays expired.  (implied by structure: terminalSubscriptionLifecycleExpired)
+- Once Subscription is canceled, it stays canceled.  (implied by structure: terminalSubscriptionStatusCanceled)
+- Once Subscription is expired, it stays expired.  (implied by structure: terminalSubscriptionStatusExpired)
 - On every Invoice: licenseFeeAmount ≥ 0.  (implied by structure: nonNegativeInvoiceLicenseFeeAmount)
 - On every Invoice: usageAmount ≥ 0.  (implied by structure: nonNegativeInvoiceUsageAmount)
 - On every Invoice: totalDue ≥ 0.  (implied by structure: nonNegativeInvoiceTotalDue)

@@ -31,7 +31,7 @@ classDiagram
   Subscription ..> Catalog_Plan : plan
 ```
 
-## Subscription — lifecycle
+## Subscription — status
 
 A customer's subscription to a Plan; usage accrues per billing period and resets at rollover
 

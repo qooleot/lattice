@@ -54,7 +54,7 @@
       "machine": {
         "regions": [
           {
-            "name": "lifecycle",
+            "name": "status",
             "initial": "trialing",
             "states": [
               {
@@ -90,50 +90,66 @@
         "transitions": [
           {
             "name": "activate",
-            "region": "lifecycle",
-            "from": ["trialing"],
+            "region": "status",
+            "from": [
+              "trialing"
+            ],
             "to": "active"
           },
           {
             "name": "expireTrial",
-            "region": "lifecycle",
-            "from": ["trialing"],
+            "region": "status",
+            "from": [
+              "trialing"
+            ],
             "to": "expired"
           },
           {
             "name": "paymentFailed",
-            "region": "lifecycle",
-            "from": ["active"],
+            "region": "status",
+            "from": [
+              "active"
+            ],
             "to": "pastDue"
           },
           {
             "name": "recover",
-            "region": "lifecycle",
-            "from": ["pastDue"],
+            "region": "status",
+            "from": [
+              "pastDue"
+            ],
             "to": "active"
           },
           {
             "name": "cancelFromTrial",
-            "region": "lifecycle",
-            "from": ["trialing"],
+            "region": "status",
+            "from": [
+              "trialing"
+            ],
             "to": "canceled"
           },
           {
             "name": "cancelFromActive",
-            "region": "lifecycle",
-            "from": ["active"],
+            "region": "status",
+            "from": [
+              "active"
+            ],
             "to": "canceled"
           },
           {
             "name": "cancelFromPastDue",
-            "region": "lifecycle",
-            "from": ["pastDue"],
+            "region": "status",
+            "from": [
+              "pastDue"
+            ],
             "to": "canceled"
           },
           {
             "name": "dunningExhausted",
-            "region": "lifecycle",
-            "from": ["pastDue"],
+            "region": "status",
+            "from": [
+              "pastDue"
+            ],
             "to": "canceled"
           }
         ]
@@ -240,31 +256,41 @@
           {
             "name": "finalize",
             "region": "settlement",
-            "from": ["draft"],
+            "from": [
+              "draft"
+            ],
             "to": "open"
           },
           {
             "name": "settle",
             "region": "settlement",
-            "from": ["open"],
+            "from": [
+              "open"
+            ],
             "to": "paid"
           },
           {
             "name": "voidDraft",
             "region": "settlement",
-            "from": ["draft"],
+            "from": [
+              "draft"
+            ],
             "to": "void"
           },
           {
             "name": "voidOpen",
             "region": "settlement",
-            "from": ["open"],
+            "from": [
+              "open"
+            ],
             "to": "void"
           },
           {
             "name": "writeOff",
             "region": "settlement",
-            "from": ["open"],
+            "from": [
+              "open"
+            ],
             "to": "uncollectible"
           }
         ]
