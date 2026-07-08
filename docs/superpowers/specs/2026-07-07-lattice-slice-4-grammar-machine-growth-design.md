@@ -11,6 +11,57 @@
 
 ---
 
+## Implementation deltas (accumulated across the slice, dated as landed)
+
+Deviations from the design as actually implemented, recorded here rather than edited into the
+decision sections above (which stay as the pre-implementation record):
+
+- **2026-07-08 (Task 6).** Owned-collection init in Quint draws **per-index nondet** values for
+  each of the `OWNED_BOUND` slots (plus one nondet for the count), rather than a single
+  `oneOf(setOfMaps(...))` draw as §6.1 sketches. Semantically equivalent — both produce a
+  nondeterministic bounded map — but per-index draws are what Quint's nondet-placement rule
+  actually accepts cleanly at this call site. `docs/language/*.md` and the emitter comments
+  describe the per-index form. (`dfab1de`)
+- **2026-07-08 (Task 8).** `sumOverCollection` candidates carry a `child: string` field (the
+  owned entity's name) so the model-free evaluator can find child rows without re-deriving the
+  aggregate→collection→child chain. This was already specified in §5.1's `Candidate` union above
+  — noted here only to confirm the implementation matches §5.1 exactly, no drift. (`3ea6ef4`)
+- **2026-07-08 (Task 2 follow-up).** The committed Subscriptions spec had a region literally named
+  `lifecycle` — a keyword collision once `lifecycle` became a block keyword (§3.1/§4.2). Resolved
+  as a human decision: renamed `lifecycle` → `status` via `engine apply --rename`, preserving
+  ledger provenance rather than hand-editing the `.lat`. (`03dd509`; note an identical duplicate
+  commit `96950ed` immediately precedes it — same rename, re-run artifact, no second effect.)
+- **2026-07-08 (Task 16).** `refsResolve` candidates gained an optional `fields?: string[]` scope
+  to same-context (unqualified) ref fields. The evaluator's original dangling-ref heuristic
+  flagged *any* string field that failed to resolve to an entity id — including qualified
+  (cross-context) ref fields, which §4.2 and `implied.ts`/`alloy.ts`/`grammar.ts` already exclude
+  from invariant semantics on purpose (e.g. `Subscription.plan: "plan1"` legitimately has no
+  local entity to resolve to). `implied.ts` and template #9 (`NoOrphan`) now populate `fields`
+  with the non-qualified ref fields they already compute; `evaluate.ts` checks only those fields
+  when present, falling back to the legacy whole-record heuristic for candidates stored before
+  this field existed. (`ad1c91e`)
+- **2026-07-08 (Task 16 human decisions — dunning).** The b03/b10 dunning guards were modeled as
+  two **coupling invariants** on `Subscription` over a `latestInvoice : ref Invoice` field —
+  `activePaidInFull` (`active ⇒ latestInvoice.amountPaid == latestInvoice.totalDue`) and
+  `retryCapWhilePastDue` (`pastDue ⇒ latestInvoice.retryCount <= maxRetries`) — rather than as
+  cross-aggregate transition guards or a "latest invoice in a list" selector, both of which were
+  discussed and declined as out of v1 scope. `dunningExhausted` itself stays unguarded
+  (declarative-only per §3.4). (`b8fecf7`; ledger entries #80–87.) See the three new/updated
+  §11.1 registry rows below.
+- **2026-07-08 (Task 12).** Method params are allowed to **shadow** target-aggregate field names
+  in method-level `requires` with no collision diagnostic in v1: a bare name always resolves to
+  the parameter, never the field, when both exist. This means a param named like a target field
+  cannot be used to write a guard comparing that field against the param (`delta >= delta` reads
+  back as "param ≥ param", never "field ≥ param"). Documented in `docs/language/service.md`
+  ("Method-level `requires`" section); registry follow-up row added below.
+- **2026-07-08 (Task 14, reviewer finding).** `matchTemplates`'s `owners(m)` walks
+  `m.aggregates` + top-level `m.entities` only — it never descends into an aggregate's *nested*
+  `entities` (owned children like `InvoiceLine`). So template-driven auto-adoption (e.g. Money
+  non-negativity, template #2) does not fire for nested-entity fields; only the parent
+  aggregate's own fields get auto-adopted invariants. Confirmed intentional-but-undocumented
+  pre-existing behavior via a scratch probe during Task 14, not a regression. Registry row added
+  below (templates-over-nested-entities).
+
 ## 1. Summary
 
 Grow the language and its elicitation coverage along the two evidence-driven axes:
@@ -571,7 +622,11 @@ between method guards and transition guards). Each restriction is stated in the 
 | `emits` verification semantics (event traces) | **Conformance slice** (already sequenced after generation) | Outbox trace diffing per generation brief §5 |
 | Method execution semantics (atomicity, sagas, `external`, transport/OpenAPI); data-write methods with no lifecycle move | **Generation slice** (now a pure consumer of the §3.6 surface) | Its brainstorm; effects evidence |
 | Method-guard ⊨ transition-guard entailment; solver encoding of methods | **Inference slice** | Real `performs` + method-`requires` usage from this slice |
-| Cross-aggregate guards; reverse-ref sums; collection atoms in predicates | Evidence-gated grammar growth | r04-class or new gate/live-session failures |
+| Cross-aggregate guards; reverse-ref sums; collection atoms in predicates | Evidence-gated grammar growth | r04-class or new gate/live-session failures; **fresh evidence 2026-07-08: b10 dunning wanted a latest-invoice retry read (`latestInvoice.retryCount`) inside a `Subscription` transition guard, not just a coupling invariant** — modeled instead as coupling invariants over a `latestInvoice : ref Invoice` field (Task 16 human decision, `b8fecf7`) |
+| Latest-of-list selector / reverse-ref collections (e.g. Subscription's "most recent invoice" read as a derived selector over its owned/reverse-ref invoices, rather than a hand-maintained `latestInvoice` ref field) | Evidence-gated grammar growth | Task 16 (2026-07-08): declined as out of v1 scope in favor of the explicit `latestInvoice` ref; revisit once a second domain wants a derived "latest of N" read |
+| Ref-hop machine-state equality in candidate/guard terms (comparing another aggregate's *lifecycle state* across a `ref`, not just its data fields) | Evidence-gated grammar growth (same r04 ref-hop class) | Task 16 residue (2026-07-08): `activePaidInFull` used the numeric proxy `latestInvoice.amountPaid == latestInvoice.totalDue` instead of a direct machine-state comparison (e.g. "latestInvoice is in state `paid`") because Invoice's machine state isn't term-expressible through a ref-hop in v1 |
+| Method-param/field name collisions in method guards (no `param-shadows-field` diagnostic in v1 — bare names always resolve to the param) | Small follow-up to the service surface | Task 12 (2026-07-08), documented in `docs/language/service.md`; revisit if real specs hit the collision in practice |
+| `matchTemplates` does not walk nested entities — Money-nonnegative and other field-level templates are not auto-adopted for an owned child's fields, only the parent aggregate's own fields | Small follow-up to the template matcher | Task 14 reviewer finding (2026-07-08): confirmed intentional-but-undocumented gap via scratch probe, not a regression; revisit once a nested-entity domain needs its child invariants auto-adopted |
 | Templates #4 idempotency, #12 saga net-zero | `external`/saga slice of their own | Per brief triage |
 | Template #5 reservation-release | Small follow-up | First real domain with a reservation bucket |
 
@@ -602,6 +657,18 @@ vitest run` before every commit; goldens A/B/C never weakened; never `git add -A
    render) plus the Quint from-disjunction test.
 5. **Closed-grammar surfaces** (reserved words, reference docs, `not-elicitable`, skill text,
    committed spec migration) updated in the same commits as the features they describe.
+
+### 12.1 DoD artifacts (added 2026-07-08 closing sweep)
+
+Each row above, mapped to the commit/test that discharges it:
+
+| DoD row | Artifact |
+|---|---|
+| 1. Subscriptions demo | `lattice/specs/subscriptions/spec.lat` + `.lattice-session-subscriptions/` (ledger entries #80–87), landed in `b8fecf7`; guarded `activate`/`finalize`/`settle`, unguarded `dunningExhausted`, multi-source `cancel`, `SubscriptionService`, coupling invariants `activePaidInFull`/`retryCapWhilePastDue`. Rendered projections: `spec.prose.md`, `spec.diagrams.md`, `diagrams/*.mmd` (same commit). |
+| 2. b02 one-shot re-formalization | `lattice/test/fidelity/b02-regrammar.test.ts` (`b02 re-formalization (DoD 2): sum-over-collection against the grown grammar`), `lattice/fidelity/results/b02.json` / `fidelity/results/first-shot/b02.json`, landed in `b297fb4`. |
+| 3. Mini golden trace D | `lattice/test/golden-trace-d.test.ts`, landed in `6c54e56` — invoice-lines domain with `InvoiceLine` owned collection + `Period` value object, full propose→distinguish→verdict→adopt→emit loop, masking-regression assertion on salient dims (§6.4), `.lat`/prose/statechart emit assertions. |
+| 4. Seven checklist points + three routing restrictions | Spread across per-feature commits (validate/evaluate/quint/alloy/prose/mermaid/printer touched together each time — see `3ea6ef4`, `97d4546`, `7cb8e12`, `b4c935e`, `421cf52`/`415600d`, `aa7c7ef`). Routing restriction 1 (guards: Quint-only, no Alloy transition concept) is structural — `src/emit/alloy.ts` has no guard-emitting path at all. Routing restriction 2 (sums: both engines) — `lattice/test/emit/quint.test.ts` and `lattice/test/emit/alloy.test.ts` both cover `sumOverCollection` emission (`97d4546`, `d56923e`). Routing restriction 3 (services: neither engine) is pinned explicitly by `0948b95` ("pin param-term routing-restriction throws in evaluator + both emitters") — `param` terms throw in `evaluate.ts`, `quint.ts`, and `alloy.ts`. Multi-source from-disjunction: `8ea454c` + its Quint emitter test. |
+| 5. Closed-grammar surfaces | Reserved words + sync test: `lattice/src/ast/reserved.ts` + `lattice/test/ast/validate-reserved.test.ts`, updated alongside `5960237` (lifecycle blocks) and `0f07aea`/`aa7c7ef` (service keywords). Reference docs: `docs/language/lifecycle.md`, `transition.md`, `entity.md`, `value.md`, `service.md`, `invariant-forms.md`, all passing the docs parse gate (`lattice/test/docs-blocks.test.ts`). `not-elicitable`/CLI: `lattice/src/cli.ts` + `lattice/test/cli.test.ts`. Skill text: `.claude/skills/elicit-spec/SKILL.md`, updated in `d19108d`. Committed spec migration: `5960237` (lifecycle rename) + `03dd509` (Subscription region rename, keyword-collision follow-up) + `b8fecf7` (final Subscriptions demo state). |
 
 ## 13. Out of scope
 

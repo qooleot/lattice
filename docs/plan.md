@@ -136,6 +136,12 @@ We generated ~25 loose concepts. They collapse to **7 components + candidate sou
 
 ### 5.1 Constructs
 
+> Implementation note (2026-07-08): the `machine`/`region`/`transition` vocabulary below is the
+> long-run vision; the shipped slice-4 surface implements it as named `lifecycle` blocks (no
+> `machine`/`region` keywords) — see
+> [`2026-07-07-lattice-slice-4-grammar-machine-growth-design.md`](superpowers/specs/2026-07-07-lattice-slice-4-grammar-machine-growth-design.md)
+> §3.1.
+
 - `profile` — one company-wide import bundle (prelude + shared kernel + house conventions). Universal primitives (`Money`, `Date`, `Duration`, `Percent`, `Currency`, `Id`) are **always in scope**; no per-context declarations. A context may *refine* an imported type (e.g. house rounding on `Money`) but never re-declare it. **The import graph is the context map's tactical layer** — a cross-context reference is only legal over published/imported types; an Anti-Corruption Layer is a named, checkable translation.
 - `context` — a bounded context (module + invariant scope).
 - `aggregate` — the **consistency + transaction boundary**. Owns a `machine`, `ref` relations, nested `invariant`s, and its own `repository`. Invariants on an aggregate must hold at every commit (this is the natural home for a held-transaction boundary).
