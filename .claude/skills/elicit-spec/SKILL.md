@@ -17,11 +17,34 @@ gitignored solver binaries; the script installs deps and links solvers from the 
 
 ## Phase 0 — structure elicitation (you, no solver)
 From the user's domain description, PROPOSE a concrete structure and let them correct it:
-aggregates, entities, enums, machine regions/states (tag @active/@terminal), refs, field tags
+aggregates, entities, enums, lifecycle blocks/states (tag @active/@terminal), refs, field tags
 (@balance/@total/@monotonic on money-flow fields — these power auto-invariants). One question
-per message; multiple-choice when possible; the user judges, never authors. Budget ~10 questions.
+per message; multiple-choice when possible; the user judges, never authors. Budget ~15 questions.
 Record each structure Q&A via `engine structure --question ... --answer ...` as you go, so the
 ledger keeps a durable trace of how the structure was decided.
+
+Once each lifecycle's states are agreed, work through five more structure steps before `engine
+init` (still you, no solver — each recorded as structure Q&A):
+1. **Transition set**: propose the full set of legal transitions for the lifecycle, named, as one
+   list ("here are the moves I believe exist — `activate`: trialing→active, … — any missing? any
+   that shouldn't exist?"). One correction round.
+2. **Skip probes**: 1–3 probes per lifecycle for state pairs with no direct edge that domain
+   priors flag as tempting ("can a Subscription go trialing→canceled directly, skipping active?").
+   Don't enumerate every pair — pick the ones a domain expert would find tempting. A confirmed
+   *absent* edge IS template #10 (no-skip) — record it as structure Q&A; it's realized by the
+   closed transition set, not a new invariant kind.
+3. **Guard elicitation** per transition: "is `settle` always allowed from `open`, or only under a
+   condition?" — multiple choice over the aggregate's own fields. If the honest guard needs a fact
+   the model doesn't have (the b03 pattern: payment truth lives on Invoice, not Subscription),
+   surface the missing field ("what on Subscription records that payment succeeded?") and add it
+   before writing the guard.
+4. **Event elicitation**: propose past-tense event names for the notable transitions
+   (`InvoicePaid`); confirm or decline; declared as `event`s with `emits` links on the transition.
+5. **Service seeding**: one question per aggregate — "which of these moves are operations someone
+   invokes, versus system/time-driven?" The invokable ones seed `performs` methods; propose
+   `creates`/read-only methods too; the user corrects the list. This is the first step to compress
+   if the question budget strains.
+
 When stable: `engine init --model <file>`. Fix any diagnostics by asking, not guessing.
 Present the auto-adopted template invariants as a list ("these come free — object to any?").
 All declared names (context, aggregates, entities, enums, fields, states, events) are code
@@ -35,8 +58,9 @@ hybrid license-fee + usage-based billing", ... }` emits `// Subscriptions API: .
 Fold the engine's returned seeds with your own domain knowledge into 3–5 candidate invariants
 per open question, each with a prior (sum ≈ 1). Every candidate MUST be inside the closed grammar
 (lattice/src/ast/invariant.ts) AND proposable: only statePredicate / unique / cardinality /
-conservation may be elicited. (terminal / monotonic / leadsTo / refsResolve are template-adopted
-only — `engine propose`/`regenerate` reject them with `not-elicitable`.) `engine propose`.
+conservation / sumOverCollection may be elicited. (terminal / monotonic / leadsTo / refsResolve
+are template-adopted only — `engine propose`/`regenerate` reject them with `not-elicitable`.)
+`engine propose`.
 If rejected: fix to the diagnostics, don't argue.
 
 ## Phase 2 — the loop
@@ -56,6 +80,8 @@ Repeat `engine next-question`:
 - `converged` → `engine emit --out specs/<slug>/`, show the prose spec, note open decisions.
 
 ## Rules
+- Transition guards are structure, not candidates — they are recorded via `engine structure` and
+  land in the model; they never enter the hypothesis loop (design §3.3).
 - Verdicts are the source of truth; formulas are derived. Never overrule a verdict.
 - Never author freeform prose the engine must parse — everything to the engine is structured JSON.
 - Report solver latency honestly if a question takes > 45s (that's a budget violation worth logging).

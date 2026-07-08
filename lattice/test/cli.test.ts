@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommand } from '../src/cli.js';
-import { traceAModel } from './fixtures.js';
+import { traceAModel, invoiceLinesModel, sumCandidate } from './fixtures.js';
 
 const dpsf = { entities: [
   { type: 'Customer', id: 'c1', fields: {} }, { type: 'Family', id: 'f1', fields: {} },
@@ -261,6 +261,33 @@ describe('engine CLI', () => {
     const r: any = await runCommand(['regenerate', '--session', dir, '--candidate', JSON.stringify(bad)], fakeDeps);
     expect(r.error).toBe('not-elicitable');
     expect(r.kinds).toEqual(['refsResolve']);
+  });
+
+  it('sumOverCollection is proposable (design §8: elicitable kind)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(invoiceLinesModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    const cands = [
+      { id: 'S1', name: 'lineTotalsMatch', prior: 0.5, source: 'seed', candidate: sumCandidate }
+    ];
+    const r: any = await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify(cands)], fakeDeps);
+    expect(r.error).toBeUndefined();
+    expect(r.registered).toBe(1);
+
+    const st: any = await runCommand(['status', '--session', dir], fakeDeps);
+    expect(st.candidates.find((c: any) => c.id === 'S1').status).toBe('active');
+  });
+
+  it('regenerate does not reject sumOverCollection as not-elicitable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(invoiceLinesModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+      { id: 'S1', name: 'lineTotalsMatch', prior: 0.5, source: 'seed', candidate: sumCandidate }
+    ])], fakeDeps);
+    const rg: any = await runCommand(['regenerate', '--session', dir,
+      '--candidate', JSON.stringify({ id: 'S2', name: 's2', candidate: sumCandidate })], fakeDeps);
+    expect(rg.error).not.toBe('not-elicitable');
   });
 
   it('structure command appends a structure ledger entry and works pre-init', async () => {
