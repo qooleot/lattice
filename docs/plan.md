@@ -208,6 +208,7 @@ context Billing {
       transition firstPayment {
         from AwaitingFirstPayment to Current
         when PaymentSucceeded
+        // vision: atomic do { mrr = plan.price } — effects language deferred (slice-4 design §3.4)
         emits SubscriptionActivated
       }
       transition paymentFailed { from Current to Retrying; when PaymentFailed }
