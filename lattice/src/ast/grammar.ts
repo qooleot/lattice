@@ -96,7 +96,8 @@ function shapeErrors(c: any): Diagnostic[] {
         ?? check(isPathArray(c.by), 'by', 'Path[] (array of string[])', c.by);
       break;
     case 'refsResolve':
-      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate);
+      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
+        ?? (c.fields !== undefined ? check(isPath(c.fields), 'fields', 'string[] (optional)', c.fields) : null);
       break;
     case 'cardinality':
       err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)

@@ -83,6 +83,33 @@ describe('evaluateCandidate', () => {
     const s: CaseState = { entities: [{ type: 'RevenueEntry', id: 'e1', fields: { obligation: 'ghost' } }] };
     expect(evaluateCandidate(c, s)).toBe('forbid');
   });
+  it('refsResolve WITH fields: ignores an unresolvable string on a non-listed (qualified-ref) field', () => {
+    // The w1 shape (task 16): Subscription.plan is a qualified cross-context ref (spec §4.2) —
+    // witnesses legitimately carry a bare string like "plan1" with no Plan entity in scope.
+    // A refsResolve candidate scoped to same-context fields only (via `fields`) must not convict.
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Subscription', fields: ['latestInvoice'] };
+    const s: CaseState = { entities: [
+      { type: 'Subscription', id: 's1', fields: { plan: 'plan1', latestInvoice: 'inv1' } },
+      { type: 'Invoice', id: 'inv1', fields: {} }
+    ]};
+    expect(evaluateCandidate(c, s)).toBe('permit');
+  });
+  it('refsResolve WITH fields: still forbids a dangling listed field', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Subscription', fields: ['latestInvoice'] };
+    const s: CaseState = { entities: [
+      { type: 'Subscription', id: 's1', fields: { plan: 'plan1', latestInvoice: 'ghost' } }
+    ]};
+    expect(evaluateCandidate(c, s)).toBe('forbid');
+  });
+  it('refsResolve WITHOUT fields: keeps the legacy heuristic over all string fields (absence ⇒ old behavior)', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Subscription' };
+    const s: CaseState = { entities: [
+      { type: 'Subscription', id: 's1', fields: { plan: 'plan1', latestInvoice: 'inv1' } },
+      { type: 'Invoice', id: 'inv1', fields: {} }
+    ]};
+    // plan:"plan1" has no matching entity id → legacy heuristic still convicts (pre-existing behavior)
+    expect(evaluateCandidate(c, s)).toBe('forbid');
+  });
   it('monotonic: forbids a decrease across the trace', () => {
     const c: Candidate = { kind: 'monotonic', aggregate: 'Obligation', field: ['recognized'] };
     const s: CaseState = {

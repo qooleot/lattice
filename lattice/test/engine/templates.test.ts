@@ -39,6 +39,10 @@ describe('matchTemplates', () => {
     expect(adopt.some(a => a.candidate.kind === 'monotonic')).toBe(true));
   it('#9 refsResolve for owners with refs', () =>
     expect(adopt.some(a => a.candidate.kind === 'refsResolve' && a.candidate.aggregate === 'RevenueEntry')).toBe(true));
+  it('#9 refsResolve carries the same-context ref field names', () => {
+    const c = adopt.find(a => a.candidate.kind === 'refsResolve' && a.candidate.aggregate === 'RevenueEntry')!.candidate;
+    expect(c).toEqual({ kind: 'refsResolve', aggregate: 'RevenueEntry', fields: ['obligation'] });
+  });
   it('all adopted have template source + deterministic ids', () => {
     expect(adopt.every(a => a.source === 'template')).toBe(true);
     expect(new Set(adopt.map(a => a.id)).size).toBe(adopt.length);
@@ -99,5 +103,14 @@ describe('matchTemplates — qualified-ref exclusion (spec §4.2)', () => {
     const m = base('Catalog.Plan');
     const { adopt } = matchTemplates(m);
     expect(adopt.some(a => a.candidate.kind === 'refsResolve')).toBe(false);
+  });
+
+  it('tpl-9 fields list excludes a qualified ref alongside a local one', () => {
+    const m = base('Catalog.Plan');
+    m.entities.push({ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] });
+    m.aggregates[0]!.fields.push({ name: 'who', type: { kind: 'ref', target: 'Customer' } });
+    const { adopt } = matchTemplates(m);
+    const c = adopt.find(a => a.candidate.kind === 'refsResolve')!.candidate;
+    expect(c).toEqual({ kind: 'refsResolve', aggregate: 'Order', fields: ['who'] });
   });
 });

@@ -41,9 +41,11 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
       adopt.push(mk(`tpl-8-${o.name}-${f.name}`, `Monotonic_${o.name}_${f.name}`,
         { kind: 'monotonic', aggregate: o.name, field: [f.name] }));
 
-    // #9 no-orphan for owners with refs
+    // #9 no-orphan for owners with refs — fields scopes evaluation to same-context (unqualified)
+    // ref fields only (spec §4.2 excludes qualified/cross-context refs from invariant semantics).
     if (refs.length > 0)
-      adopt.push(mk(`tpl-9-${o.name}`, `NoOrphan_${o.name}`, { kind: 'refsResolve', aggregate: o.name }));
+      adopt.push(mk(`tpl-9-${o.name}`, `NoOrphan_${o.name}`,
+        { kind: 'refsResolve', aggregate: o.name, fields: refs.map(f => f.name) }));
 
     for (const r of machine?.regions ?? []) {
       // #3 terminal

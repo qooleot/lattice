@@ -23,7 +23,10 @@ export type Predicate =
 export type Candidate =
   | { kind: 'statePredicate'; aggregate: string; where?: Predicate; body: Predicate }
   | { kind: 'unique'; aggregate: string; whileStates: { region: string; states: string[] }; by: Path[] }
-  | { kind: 'refsResolve'; aggregate: string }
+  // fields: the SAME-CONTEXT (unqualified) ref field names this candidate checks (spec §4.2
+  // excludes qualified/cross-context refs from invariant semantics — see isQualifiedRef).
+  // Absent ⇒ legacy heuristic over all string fields (stored candidates predate this field).
+  | { kind: 'refsResolve'; aggregate: string; fields?: string[] }
   | { kind: 'cardinality'; aggregate: string; where: Predicate | null; atMost: number }
   | { kind: 'terminal'; aggregate: string; region: string; state: string }
   | { kind: 'monotonic'; aggregate: string; field: Path }

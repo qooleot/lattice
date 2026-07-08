@@ -85,9 +85,23 @@ export function evaluateCandidate(c: Candidate, s: CaseState): Verdict {
     }
     case 'refsResolve': {
       const ids = new Set(s.entities.map(e => e.id));
-      for (const e of subjects())
-        for (const [k, v] of Object.entries(e.fields))
-          if (!k.includes('.') && typeof v === 'string' && !ids.has(v) && looksLikeRef(s, k, e)) return 'forbid';
+      const fields = c.fields;
+      for (const e of subjects()) {
+        if (fields) {
+          // Scoped (design task 16): check ONLY the listed same-context ref fields. Qualified
+          // (cross-context) ref fields are excluded from invariant semantics (spec §4.2) and may
+          // legitimately carry a bare string with no corresponding entity in this witness's scope.
+          for (const k of fields) {
+            const v = e.fields[k];
+            if (typeof v === 'string' && !ids.has(v)) return 'forbid';
+          }
+        } else {
+          // Legacy heuristic (absent `fields` — stored candidates predate the field): any
+          // string-valued field whose value is no entity's id counts as a dangling ref.
+          for (const [k, v] of Object.entries(e.fields))
+            if (!k.includes('.') && typeof v === 'string' && !ids.has(v) && looksLikeRef(s, k, e)) return 'forbid';
+        }
+      }
       return 'permit';
     }
     case 'terminal': {

@@ -53,8 +53,21 @@ describe('impliedInvariants', () => {
         { name: 'orderId', type: { kind: 'prim', prim: 'Id' }, key: true },
         { name: 'plan', type: { kind: 'ref', target: 'Plan' } }] }] };
     const d = impliedInvariants(m2).find(x => x.name === 'refsResolveOrder')!;
-    expect(d.candidate).toEqual({ kind: 'refsResolve', aggregate: 'Order' });
+    expect(d.candidate).toEqual({ kind: 'refsResolve', aggregate: 'Order', fields: ['plan'] });
     expect(isImplied({ kind: 'refsResolve', aggregate: 'Order' }, m2)).toBe(true);
+  });
+
+  it('isImplied dedup: a stored refsResolve WITHOUT fields still matches a newly-derived one WITH fields', () => {
+    // Regression for task 16: adopted candidates recorded before the `fields` addition have no
+    // `fields` key. Newly-derived candidates now carry `fields`. isImplied's shape comparison must
+    // normalize (strip `fields`) so a legacy stored candidate is still recognized as implied —
+    // otherwise it would double-print/reprint on regeneration.
+    const m2: DomainModel = { ...m, entities: [...m.entities,
+      { kind: 'entity', name: 'Order', fields: [
+        { name: 'orderId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'plan', type: { kind: 'ref', target: 'Plan' } }] }] };
+    const legacyStored = { kind: 'refsResolve' as const, aggregate: 'Order' }; // no `fields`
+    expect(isImplied(legacyStored, m2)).toBe(true);
   });
 
   it('derives a terminal rule per tagged state across multiple regions', () => {
@@ -151,5 +164,15 @@ describe('impliedInvariants — qualified-ref exclusion (spec §4.2)', () => {
     m.entities.push({ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] });
     m.aggregates[0]!.fields.push({ name: 'who', type: { kind: 'ref', target: 'Customer' } });
     expect(impliedInvariants(m).some(i => i.candidate.kind === 'refsResolve')).toBe(true);
+  });
+
+  it('the derived refsResolve candidate carries only the same-context (unqualified) ref field names', () => {
+    // Order has both a qualified ref (plan: Catalog.Plan, excluded per spec §4.2) and a local ref
+    // (who: Customer) — the derived candidate's `fields` must list only `who`.
+    const m = base('Catalog.Plan');
+    m.entities.push({ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] });
+    m.aggregates[0]!.fields.push({ name: 'who', type: { kind: 'ref', target: 'Customer' } });
+    const d = impliedInvariants(m).find(i => i.candidate.kind === 'refsResolve')!;
+    expect(d.candidate).toEqual({ kind: 'refsResolve', aggregate: 'Order', fields: ['who'] });
   });
 });

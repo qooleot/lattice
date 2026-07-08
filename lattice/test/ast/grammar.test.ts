@@ -143,6 +143,22 @@ describe('validateCandidate — structural shape validation', () => {
       body: { kind: 'inState', owner: 'Subscription', region: 'Access', states: ['Active'] } };
     expect(validateCandidate(bad, model).map(d => d.code)).toContain('unsupported-owner');
   });
+
+  it('accepts refsResolve without fields (stored candidates predate the field — must not break)', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Subscription' };
+    expect(validateCandidate(c, model)).toEqual([]);
+  });
+
+  it('accepts refsResolve with a fields string array', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Subscription', fields: ['customer'] };
+    expect(validateCandidate(c, model)).toEqual([]);
+  });
+
+  it('rejects refsResolve with a non-string-array fields as ill-typed', () => {
+    const bad: any = { kind: 'refsResolve', aggregate: 'Subscription', fields: [1, 2] };
+    const result = validateCandidate(bad, model);
+    expect(result.map((d: any) => d.code)).toContain('ill-typed');
+  });
 });
 
 describe('routeCandidate', () => {

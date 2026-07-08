@@ -69,8 +69,9 @@ export function impliedInvariants(m: DomainModel): CandidateInvariant[] {
         out.push(mk(`nonNegative${cap(o.name)}${cap(f.name)}`, { kind: 'statePredicate', aggregate: o.name,
           body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [f.name] },
             right: { kind: 'int', value: 0 } } }));
-    if (o.fields.some(f => f.type.kind === 'ref' && !isQualifiedRef(f.type)))
-      out.push(mk(`refsResolve${cap(o.name)}`, { kind: 'refsResolve', aggregate: o.name }));
+    const sameContextRefFields = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type)).map(f => f.name);
+    if (sameContextRefFields.length > 0)
+      out.push(mk(`refsResolve${cap(o.name)}`, { kind: 'refsResolve', aggregate: o.name, fields: sameContextRefFields }));
     const machine = o.kind === 'aggregate' ? o.machine : undefined;
     for (const r of machine?.regions ?? [])
       for (const s of r.states.filter(s => s.tags?.includes('terminal')))
@@ -95,7 +96,22 @@ function sortDeep(v: unknown): unknown {
   return v;
 }
 export const canonicalCandidate = (v: unknown): string => JSON.stringify(sortDeep(v));
+
+// refsResolve.fields is new (task 16): candidates adopted/stored before its introduction have no
+// `fields` key, while freshly-derived candidates always carry it. Strip it from BOTH sides before
+// canonicalizing so a legacy stored candidate (no `fields`) still shape-matches a newly-derived one
+// (with `fields`) — otherwise isImplied would stop recognizing old adopted refsResolve candidates
+// as implied, causing them to double-print/reprint on regeneration.
+const stripRefsResolveFields = (v: unknown): unknown => {
+  if (v && typeof v === 'object' && (v as any).kind === 'refsResolve') {
+    const { fields, ...rest } = v as any;
+    return rest;
+  }
+  return v;
+};
+const canonicalForDedup = (v: unknown): string => canonicalCandidate(stripRefsResolveFields(v));
+
 export function isImplied(c: Candidate, m: DomainModel): boolean {
-  const mine = canonicalCandidate(c);
-  return impliedInvariants(m).some(d => canonicalCandidate(d.candidate) === mine);
+  const mine = canonicalForDedup(c);
+  return impliedInvariants(m).some(d => canonicalForDedup(d.candidate) === mine);
 }
