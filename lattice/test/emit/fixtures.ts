@@ -30,3 +30,11 @@ export const map: ContextMapModel = { name: 'AcmeBilling',
     { kind: 'upstreamDownstream', left: 'Catalog', right: 'Subscriptions',
       upstreamRoles: ['openHost', 'publishedLanguage'], downstreamRoles: ['anticorruption'], exposes: ['Plan'] },
     { kind: 'sharedKernel', left: 'Billing', right: 'Subscriptions' }] };
+
+/** Contexts named after mermaid flowchart keywords — legal .lat identifiers that must still render. */
+export const keywordMap: ContextMapModel = { name: 'KeywordClash',
+  contexts: [{ name: 'end', path: 'end' }, { name: 'subgraph', path: 'subgraph' },
+             { name: 'Billing', path: 'billing' }],
+  relationships: [
+    { kind: 'upstreamDownstream', left: 'end', right: 'Billing' },
+    { kind: 'sharedKernel', left: 'Billing', right: 'subgraph' }] };

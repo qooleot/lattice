@@ -5,7 +5,7 @@ import { contextMapToMermaid } from '../../src/emit/mermaid/contextMap.js';
 import { MD_HEADER, MMD_HEADER, specDiagramFiles, workspaceDiagramFiles } from '../../src/emit/mermaid/docs.js';
 import type { AggregateDef, DomainModel } from '../../src/ast/domain.js';
 import type { ContextMapModel } from '../../src/ast/contextmap.js';
-import { order, model, map } from './fixtures.js';
+import { order, model, map, keywordMap } from './fixtures.js';
 
 describe('machineToMermaid', () => {
   it('renders initial, transitions (labeled), terminals', () => {
@@ -74,6 +74,16 @@ describe('contextMapToMermaid', () => {
       contexts: [{ name: 'A', path: 'a' }, { name: 'B', path: 'b' }],
       relationships: [{ kind: 'upstreamDownstream', left: 'A', right: 'B' }] };
     expect(contextMapToMermaid(bareMap)).toContain('  A -- "upstream" --> B');
+  });
+  it('escapes node ids that collide with mermaid flowchart keywords, keeping labels exact', () => {
+    expect(contextMapToMermaid(keywordMap)).toBe(
+`flowchart LR
+  end_["end"]
+  subgraph_["subgraph"]
+  Billing["Billing"]
+  end_ -- "upstream" --> Billing
+  Billing ---|sharedKernel| subgraph_
+`);
   });
 });
 
