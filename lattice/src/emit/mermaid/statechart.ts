@@ -5,9 +5,14 @@ import { predToText } from '../code.js';
 // Mermaid edge labels can't safely carry the .lat predicate syntax verbatim: `{`/`}` collide with
 // stateDiagram-v2's own state-composition brackets, `&&`/`||`/`!` read as odd inline tokens to the
 // parser in a label context. Sanitize to plain words so the guard is legible without breaking parse.
+// predToText renders `not` as `! ${arg}` (the trailing space already separates `!` from its argument,
+// per code.ts's wrap()), so replace the two-char token `'! '` rather than bare `'!'` to avoid a double
+// space; the final \s+ collapse is a belt-and-suspenders normalization, not logical grouping — mermaid
+// only needs label-safe text, not parenthesized fidelity.
 const guardLabel = (p: Predicate): string =>
   predToText(p).replaceAll('&&', 'and').replaceAll('||', 'or')
-    .replaceAll('{', '(').replaceAll('}', ')').replaceAll('!', 'not ');
+    .replaceAll('{', '(').replaceAll('}', ')').replaceAll('! ', 'not ').replaceAll('!', 'not ')
+    .replace(/\s+/g, ' ').trim();
 
 /** stateDiagram-v2 for one region: [*]→initial, one labeled edge per declared transition
  *  (guarded transitions append a sanitized `[predicate]` suffix — design §3.6),

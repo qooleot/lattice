@@ -40,6 +40,22 @@ describe('machineToMermaid', () => {
   lost --> [*]
 `);
   });
+
+  // predToText renders `not X` as `! X` (space already present before the arg); guardLabel must
+  // not double that space when it maps `!` -> `not `. Pin the exact single-space output.
+  it('renders a not-guarded transition with a single space after "not"', () => {
+    const notGuarded: AggregateDef = { ...order,
+      machine: { regions: order.machine!.regions,
+        transitions: [{ name: 'ship', region: 'fulfillment', from: ['open'], to: 'shipped',
+          requires: { kind: 'not', arg: { kind: 'inState', owner: 'self', region: 'fulfillment', states: ['lost'] } } }] } };
+    expect(machineToMermaid(notGuarded, notGuarded.machine!.regions[0]!)).toBe(
+`stateDiagram-v2
+  [*] --> open
+  open --> shipped: ship [not state fulfillment in (lost)]
+  shipped --> [*]
+  lost --> [*]
+`);
+  });
 });
 
 export const model: DomainModel = { context: 'Shop',

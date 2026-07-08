@@ -46,6 +46,23 @@ describe('generated mermaid parses (the GitHub-renderability gate)', () => {
     expect(src).toContain('[amountPaid >= totalDue and state settlement in (open)]');
     expect(await valid(src)).toBe(true);
   });
+
+  // The `!` (not) branch of guardLabel was previously untested: predToText renders `not X` as
+  // `! X` (already space-separated), so a naive `replaceAll('!', 'not ')` produced `not  X` —
+  // a double space. Exercise it for real through the mermaid parser.
+  it('statechart with a not-guarded transition (guard label: single-space "not ...")', async () => {
+    const notGuarded: AggregateDef = { kind: 'aggregate', name: 'Invoice', doc: 'An invoice',
+      fields: [{ name: 'invId', type: { kind: 'prim', prim: 'Id' }, key: true }],
+      machine: { regions: [{ name: 'settlement', initial: 'open',
+          states: [{ name: 'open' }, { name: 'paid', tags: ['terminal'] }] }],
+        transitions: [{ name: 'settle', region: 'settlement', from: ['open'], to: 'paid',
+          requires: { kind: 'not', arg: { kind: 'inState', owner: 'self', region: 'settlement', states: ['paid'] } } }] } };
+    const src = machineToMermaid(notGuarded, notGuarded.machine!.regions[0]!);
+    expect(src).not.toContain('!');
+    expect(src).not.toContain('not  '); // no double space after "not" (the bug this test guards against)
+    expect(src).toContain('[not state settlement in (paid)]');
+    expect(await valid(src)).toBe(true);
+  });
 });
 
 /** Extracts every ```mermaid ... ``` fenced block from a markdown document. */
