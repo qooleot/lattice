@@ -64,6 +64,12 @@ brief §6).
 
 ## 4. The forks for brainstorming (one at a time, with the human)
 
+0. **`service` surface syntax (user flag, 2026-07-06):** the user objects to the `command` param
+   vocabulary in plan §5.3's service sketch — a service may be better declared endpoint-shaped.
+   Revisit the surface syntax in this slice's brainstorm before adopting §5.3's sketch verbatim;
+   the verified-contract layering (requires/ensures/emits, transport as projection) is not itself
+   in dispute, only the declaration vocabulary.
+
 1. **Persistence**: in-memory + SQLite (better-sqlite3) vs an ORM (parent product spec-core is
    MikroORM-shaped — plan §11.5.4 assumes a generated persistence mapping that can be read in
    reverse; a real mapping strengthens the future conformance story). YAGNI pressure vs.
