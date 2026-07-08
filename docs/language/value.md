@@ -50,13 +50,32 @@ A value's name is then usable as a field type anywhere an entity or enum name wo
   order for a bare identifier is: primitive → declared value → declared entity/aggregate (`ref`) →
   enum — see [field types](field-types.md).
 
-## No solver encoding yet
+## Solver encoding
 
-This is deliberately a surface, AST, validation, and printer feature only: a value-typed field
-parses, validates, and round-trips, but the quint and Alloy emitters do not yet encode it — it is
-silently dropped from the solver-facing model, the same way `List<T>` fields are today. A value
-invariant is likewise not yet checked by the solver-backed elicitation flow. Both are planned
-follow-up work once the surface has real usage to learn from.
+A value-typed field is fully solver-encoded, and its structural invariants are checked, not just
+parsed. The two engines encode a value differently, matching how each represents structure:
+
+- **Quint** encodes a value field as a nested inline record — `period: { start: int, end: int }` —
+  mirroring the value's own field shape one level deep.
+- **Alloy** has no nested-record type, so it flattens a value field to one sig relation per
+  subfield, joined by underscore: `period_start`, `period_end` (not `period: …`).
+- **Witnesses** normalize either encoding back to a dotted key for display and exclusion-shape
+  bookkeeping — `period.start`, `period.end` — regardless of which engine produced them.
+
+A value's own `invariant` blocks (e.g. `wellOrdered { start < end }` on `Period`) are **type-carried
+laws**: the moment a field is typed with the value, that law is auto-adopted at that use site, on
+both the implied and template channels, with provenance `ValueLaw_<Value>_<invariant>`. These are
+real solver-checked invariants, not documentation — golden trace D exercises a value law adopted
+and checked end-to-end with real solvers.
+
+**Remaining limits**, still deliberately closed pending evidence:
+
+- A value-typed field on a *nested entity* (an aggregate's owned child, not the aggregate itself)
+  is rejected — nested-entity children carry prim/enum fields only in v1 (`nested-entity-flat`; see
+  [entity](entity.md) and design §5.2).
+- A value-typed candidate path is one flat hop (`period.start`), matching the "no value nested
+  inside another value" rule above — deeper paths through a value aren't part of the v1 candidate
+  surface.
 
 ## Example
 

@@ -119,8 +119,7 @@ describe('golden trace D: invoice-lines sum-over-collection, elicited end-to-end
     const statechartPath = join(emitDir, 'diagrams', 'SD_Invoice_settlement.mmd');
     expect(existsSync(statechartPath)).toBe(true);
     const statechart = readFileSync(statechartPath, 'utf8');
-    expect(statechart).toContain('finalize');   // guarded edge (requires totalDue >= 0)
-    expect(statechart).toContain('settle');     // emitting edge (emits InvoicePaid)
-    expect(statechart).toContain('InvoicePaid');
+    expect(statechart).toContain('finalize [totalDue >= 0]');   // guarded edge (requires totalDue >= 0)
+    expect(statechart).toContain('settle / InvoicePaid');       // emitting edge (emits InvoicePaid)
   }, 90000);
 });

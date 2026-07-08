@@ -172,8 +172,10 @@ describe('astToQuint', () => {
 
   // Defense-in-depth below validateCandidate (which REJECTS any param-bearing candidate as
   // ill-typed — see test/ast/validate-services.test.ts): a param term must never reach quint
-  // emission either. termToQuint's (and refHopsInTerm's) 'param' case throws rather than silently
-  // emitting nonsense quint source referencing a method parameter that doesn't exist as state.
+  // emission either. termToQuint's 'param' case throws rather than silently emitting nonsense
+  // quint source referencing a method parameter that doesn't exist as state. (refHopsInTerm has
+  // its own 'param' case too, but predToQuint's cmp branch calls termToQuint first, so that
+  // branch is unreachable defense-in-depth — termToQuint always throws before refHopsInTerm runs.)
   it('astToQuint throws on a param-bearing candidate — param terms never reach the emitter (validateCandidate rejects them upstream; this is the routing backstop)', () => {
     const paramLeak: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
       body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['grace'] }, right: { kind: 'param', name: 'delta' } } };

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { astToAlloy } from '../../src/emit/alloy.js';
 import type { Candidate } from '../../src/ast/invariant.js';
-import { traceAModel, invoiceLinesModel, someStatePredicateOnInvoice, someUniqueOnInvoice, sumCandidate, periodModel } from '../fixtures.js';
+import { traceAModel, invoiceLinesModel, someStatePredicateOnInvoice, someCardinalityOnInvoice, sumCandidate, periodModel } from '../fixtures.js';
 
 const h1: Candidate = { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] };
 const h2: Candidate = { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer'], ['plan']] };
@@ -115,14 +115,22 @@ describe('astToAlloy', () => {
   // comprehension over the owned child sig, and raise the bitwidth (3 children × values summed
   // can overflow the default 5-Int scope) to 7 Int.
   it('conjoins adopted sums with alloy sum and raises bitwidth to 7 Int', () => {
-    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-forbid', hi: someUniqueOnInvoice,
+    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-forbid', hi: someCardinalityOnInvoice,
       exclusions: [], adopted: [sumCandidate], scope: 4 });
     expect(src).toContain('x.totalDue = (sum l: { l: InvoiceLine | l.owner = x } | l.amount)');
     expect(src).toContain('but 7 Int');
   });
   it('keeps 5 Int without sums', () => {
-    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-forbid', hi: someUniqueOnInvoice, exclusions: [], scope: 4 });
+    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-forbid', hi: someCardinalityOnInvoice, exclusions: [], scope: 4 });
     expect(src).toContain('but 5 Int');
+  });
+  // Bitwidth policy checks q.hi, q.hj, AND adopted — not just hi. A distinguish query where only
+  // hj (not hi) is the sumOverCollection candidate must still raise to 7 Int.
+  it('raises bitwidth to 7 Int when only hj (not hi) is a sumOverCollection candidate', () => {
+    const src = astToAlloy(invoiceLinesModel, {
+      kind: 'distinguish', hi: someStatePredicateOnInvoice, hj: sumCandidate, exclusions: [], scope: 4,
+    });
+    expect(src).toContain('but 7 Int');
   });
 
   // Task 9: shapeToPred rebuilds a sum witness's salient dims (count/sum/total) as Alloy conjuncts
@@ -162,8 +170,9 @@ describe('astToAlloy', () => {
   // Defense-in-depth below validateCandidate (which REJECTS any param-bearing candidate as
   // ill-typed — see test/ast/validate-services.test.ts): a param term must never reach alloy
   // emission either. termToAlloy's 'param' case throws rather than silently emitting nonsense
-  // alloy source referencing a method parameter that doesn't exist as a sig relation. Uses a
-  // non-arithmetic cmp (no `plus`) so the candidate would otherwise route structurally to alloy.
+  // alloy source referencing a method parameter that doesn't exist as a sig relation. This test
+  // calls astToAlloy directly, bypassing routeCandidate (a `ge` cmp actually routes to quint via
+  // predNeedsArith), to pin the emitter's own defense-in-depth throw regardless of routing.
   it('astToAlloy throws on a param-bearing candidate — param terms never reach the emitter (validateCandidate rejects them upstream; this is the routing backstop)', () => {
     const paramLeak: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
       body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['customer'] }, right: { kind: 'param', name: 'delta' } } };

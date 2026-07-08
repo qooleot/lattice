@@ -30,6 +30,13 @@ describe('nested entities', () => {
     expect(validateModel(inv([...goodChild, { name: 'bad', type: { kind: 'ref', target: 'Invoice' } }]))
       .map(d => d.code)).toContain('nested-entity-flat');
   });
+  it('rejects a value-typed field inside a nested child (nested-entity-flat, design §5.2)', () => {
+    const m = inv([...goodChild, { name: 'period', type: { kind: 'value', value: 'Period' } }]);
+    m.values.push({ kind: 'value', name: 'Period', fields: [
+      { name: 'start', type: { kind: 'prim', prim: 'Date' } },
+      { name: 'end', type: { kind: 'prim', prim: 'Date' } }] });
+    expect(validateModel(m).map(d => d.code)).toContain('nested-entity-flat');
+  });
   it('List of a non-nested target is not an owned collection', () => {
     const m = inv(goodChild, 'Invoice');
     const a = m.aggregates[0] as AggregateDef;

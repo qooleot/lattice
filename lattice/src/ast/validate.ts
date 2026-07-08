@@ -180,7 +180,7 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       checkName('entity', child.name, `${a.name}.${child.name}`);
       checkFields(child.fields, `${a.name}.${child.name}`, true);   // missing-key covers child-key-required
       for (const f of child.fields)
-        if (f.type.kind === 'ref' || f.type.kind === 'list')
+        if (f.type.kind === 'ref' || f.type.kind === 'list' || f.type.kind === 'value')
           out.push({ code: 'nested-entity-flat', message: `nested entity ${a.name}.${child.name}.${f.name}: children carry prim/enum fields only in v1 (design §5.2)`, at: `${a.name}.${child.name}.${f.name}` });
     }
     const collectionOwners = new Map<string, string>();   // child entity name -> first owning field

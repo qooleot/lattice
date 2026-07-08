@@ -114,7 +114,7 @@ export const someStatePredicateOnInvoice: Candidate = {
 // Alloy-routable structural candidate on Invoice — `unique` needs a machine region this fixture's
 // Invoice doesn't have, so `cardinality` (also alloy-routed, no whileStates) stands in — used by
 // sum-in-solvers tests (Task 9) that need an alloy query whose Hi is NOT itself the sum candidate.
-export const someUniqueOnInvoice: Candidate = {
+export const someCardinalityOnInvoice: Candidate = {
   kind: 'cardinality', aggregate: 'Invoice', where: null, atMost: 99,
 };
 
