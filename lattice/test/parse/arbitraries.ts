@@ -180,18 +180,42 @@ const machineArb = (fieldNames: string[], eventNames: string[], numFieldNames: s
       }),
     })));
 
-const aggArb = (name: string, enums: { name: string; values: string[] }[], eventNames: string[]): fc.Arbitrary<AggregateDef> =>
+// Nested entity + owned collection: when `childName` is supplied (caller decides, with
+// probability ~1/3, from a name pool disjoint across ALL aggregates — see arbSpec), attach one
+// flat child entity to the aggregate and a parent field ranging over it (`List<Child>` → owned
+// collection per ownedCollectionChild). Child fields reuse fieldArb (prim/enum only — nested
+// children carry no ref/list per nested-entity-flat) with a forced keyed first field, mirroring
+// aggArb's own shape.
+const nestedArb = (childName: string | undefined, enums: { name: string; values: string[] }[], fieldNames: string[]): fc.Arbitrary<{ child: EntityDef; collectionField: Field } | null> => {
+  if (!childName) return fc.constant(null);
+  return fc.tuple(
+    camel.filter(n => n !== 'state' && !fieldNames.includes(n)),
+    uniqNames(camel.filter(n => n !== 'state'), 1, 3))
+    .chain(([collectionFieldName, childFieldNames]) =>
+      fc.tuple(...childFieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name))))
+        .map(rest => {
+          const child: EntityDef = { kind: 'entity', name: childName,
+            fields: [{ name: childFieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest] };
+          const collectionField: Field = { name: collectionFieldName,
+            type: { kind: 'list', of: { kind: 'ref', target: childName } } };
+          return { child, collectionField };
+        }));
+};
+
+const aggArb = (name: string, enums: { name: string; values: string[] }[], eventNames: string[], childName?: string): fc.Arbitrary<AggregateDef> =>
   fc.tuple(uniqNames(camel.filter(n => n !== 'state'), 2, 4), fc.boolean(), fc.option(docText, { nil: undefined }))
     .chain(([fieldNames, hasMachine, aggDoc]) =>
       fc.tuple(...fieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name))))
-        .chain(rest => {
-          const fields: Field[] = [{ name: fieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest];
-          const base: AggregateDef = { kind: 'aggregate', name, fields };
-          if (aggDoc) base.doc = aggDoc;
-          if (!hasMachine) return fc.constant(base);
-          return machineArb(fieldNames, eventNames, rest.filter(isNumericPrim).map(f => f.name))
-            .map(machine => ({ ...base, machine }));
-        }));
+        .chain(rest =>
+          nestedArb(childName, enums, fieldNames).chain(nested => {
+            const fields: Field[] = [{ name: fieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest];
+            const base: AggregateDef = { kind: 'aggregate', name, fields };
+            if (nested) { base.fields = [...fields, nested.collectionField]; base.entities = [nested.child]; }
+            if (aggDoc) base.doc = aggDoc;
+            if (!hasMachine) return fc.constant(base);
+            return machineArb(fieldNames, eventNames, rest.filter(isNumericPrim).map(f => f.name))
+              .map(machine => ({ ...base, machine }));
+          })));
 
 // event field: simple prim-typed field, no ref/enum wiring.
 const eventFieldArb = (name: string): fc.Arbitrary<Field> =>
@@ -225,11 +249,22 @@ export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateIn
         .chain(([entityNames, ticksPerDay]) =>
           uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n) && !entityNames.includes(n)), 0, 2)
           .chain(eventNames =>
-            fc.tuple(
-              fc.tuple(...aggNames.map(name => aggArb(name, enums, eventNames))),
-              fc.tuple(...entityNames.map(name =>
-                entityArb(name, enums.map(e => e.name), [...aggNames, ...entityNames]))),
-              fc.tuple(...eventNames.map(name => eventArb(name))))
+            // nested-entity child names: disjoint from every top-level name AND from each other
+            // (validate's duplicate-name pool is flat across enum/entity/aggregate/nested-entity
+            // names), one optional slot per aggregate, each drawn ~1/3 of the time.
+            uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
+              && !entityNames.includes(n) && !eventNames.includes(n)), 0, aggNames.length)
+            .chain(childNamePool =>
+            fc.tuple(...aggNames.map(() => fc.boolean()))
+            .chain(wantsChild => {
+              let pi = 0;
+              const childNames = wantsChild.map(w => w && pi < childNamePool.length ? childNamePool[pi++] : undefined);
+              return fc.tuple(
+                fc.tuple(...aggNames.map((name, i) => aggArb(name, enums, eventNames, childNames[i]))),
+                fc.tuple(...entityNames.map(name =>
+                  entityArb(name, enums.map(e => e.name), [...aggNames, ...entityNames]))),
+                fc.tuple(...eventNames.map(name => eventArb(name))));
+            }))
             .chain(([aggs, entities, events]) => {
               const model: DomainModel = { context, enums, entities: [...entities], aggregates: [...aggs], events: [...events] };
               if (doc) model.doc = doc;

@@ -110,6 +110,13 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
     doc(a.doc, '  ', out);
     out.push(`  aggregate ${a.name} {`);
     fieldLines(a.fields, '    ', out);
+    for (const child of a.entities ?? []) {
+      out.push('');
+      doc(child.doc, '    ', out);
+      out.push(`    entity ${child.name} {`);
+      fieldLines(child.fields, '      ', out);
+      out.push('    }');
+    }
     if (a.machine) { out.push(''); machineLines(a.machine, out); }
     for (const inv of explicit.filter(i => i.candidate.aggregate === a.name)) {
       out.push('');

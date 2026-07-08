@@ -85,11 +85,13 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   }
 
   const names = new Map<string, number>();
-  const all = [...m.enums.map(e => e.name), ...m.entities.map(e => e.name), ...m.aggregates.map(a => a.name)];
+  const all = [...m.enums.map(e => e.name), ...m.entities.map(e => e.name), ...m.aggregates.map(a => a.name),
+    ...m.aggregates.flatMap(a => (a.entities ?? []).map(e => e.name))];
   for (const n of all) names.set(n, (names.get(n) ?? 0) + 1);
   for (const [n, c] of names) if (c > 1) out.push({ code: 'duplicate-name', message: `name ${n} declared ${c} times` });
 
-  const owners = new Set([...m.entities.map(e => e.name), ...m.aggregates.map(a => a.name)]);
+  const owners = new Set([...m.entities.map(e => e.name), ...m.aggregates.map(a => a.name),
+    ...m.aggregates.flatMap(a => (a.entities ?? []).map(e => e.name))]);
   const enums = new Set(m.enums.map(e => e.name));
   const events = new Set(m.events.map(e => e.name));
 
@@ -119,6 +121,13 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   m.events.forEach(e => e.fields.forEach(f => { checkType(f.type, `${e.name}.${f.name}`); checkReservedField(f, `${e.name}.${f.name}`); }));
   m.aggregates.forEach(a => {
     checkFields(a.fields, a.name, true);
+    for (const child of a.entities ?? []) {
+      checkName('entity', child.name, `${a.name}.${child.name}`);
+      checkFields(child.fields, `${a.name}.${child.name}`, true);   // missing-key covers child-key-required
+      for (const f of child.fields)
+        if (f.type.kind === 'ref' || f.type.kind === 'list')
+          out.push({ code: 'nested-entity-flat', message: `nested entity ${a.name}.${child.name}.${f.name}: children carry prim/enum fields only in v1 (design §5.2)`, at: `${a.name}.${child.name}.${f.name}` });
+    }
     for (const r of a.machine?.regions ?? []) {
       if (!r.states.some(s => s.name === r.initial))
         out.push({ code: 'unknown-initial-state', message: `region ${a.name}.${r.name} initial ${r.initial} not a state`, at: r.name });

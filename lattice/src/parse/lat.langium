@@ -48,7 +48,7 @@ EventDecl:
     docs+=DOC* 'event' name=ID '{' fields+=FieldDecl* '}';
 
 AggregateDecl:
-    docs+=DOC* 'aggregate' name=ID '{' fields+=FieldDecl* lifecycles+=LifecycleDecl* invariants+=InvariantDecl* '}';
+    docs+=DOC* 'aggregate' name=ID '{' (fields+=FieldDecl | entities+=EntityDecl)* lifecycles+=LifecycleDecl* invariants+=InvariantDecl* '}';
 
 FieldDecl:
     name=ID ':' type=LatType (key?='key')? tags+=Tag*;

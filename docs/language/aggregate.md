@@ -30,10 +30,12 @@ context Billing {
 }
 ```
 
-`aggregate <PascalId> { <field>* <lifecycle>* <invariant>* }`, with an optional leading `///` doc.
-Fields use the same grammar as an entity's; `lifecycle` blocks (see [lifecycle](lifecycle.md)) are
-optional — an aggregate with no lifecycle is legal — and any number of `invariant` blocks follow,
-implicitly scoped to this aggregate (no `on` needed; see [invariant](invariant.md)).
+`aggregate <PascalId> { (<field> | <entity>)* <lifecycle>* <invariant>* }`, with an optional
+leading `///` doc. Fields use the same grammar as an entity's, and `entity` blocks (see
+[entity § Nested in an aggregate](entity.md#nested-in-an-aggregate)) may be interleaved with them
+to declare owned child entities; `lifecycle` blocks (see [lifecycle](lifecycle.md)) are optional —
+an aggregate with no lifecycle is legal — and any number of `invariant` blocks follow, implicitly
+scoped to this aggregate (no `on` needed; see [invariant](invariant.md)).
 
 ## Semantic Rules
 
@@ -51,6 +53,11 @@ implicitly scoped to this aggregate (no `on` needed; see [invariant](invariant.m
 - An aggregate with a `Money` field, a `ref` field, or an `@terminal` state carries
   [derived invariants](derived-invariants.md) automatically — non-negativity, refs-resolve, and
   stays-terminal respectively — without any invariant block needing to state them.
+- A nested `entity` block declares a child the aggregate owns; a `List<Child>` field ranging over
+  a nested entity's name is an **owned collection**. Nested entities follow their own rules
+  (`missing-key`, `nested-entity-flat`, uniqueness against the flat name pool) — see
+  [entity § Nested in an aggregate](entity.md#nested-in-an-aggregate). Owned collections are not
+  yet part of the solver encoding (list-typed fields are dropped before solving).
 
 ## Example
 

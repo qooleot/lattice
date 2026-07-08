@@ -112,6 +112,11 @@ function namedThings(m: DomainModel): NamedThing[] {
     }
     for (const t of mach?.transitions ?? []) out.push({ scope: 'transition', owner: o.name, name: t.name, shape: `transition:${o.name}.${t.region}` });
   }
+  for (const a of m.aggregates) for (const child of a.entities ?? []) {
+    out.push({ scope: 'entity', owner: a.name, name: child.name,
+      shape: `owner:${child.fields.map(f => f.name).sort().join(',')}` });
+    for (const f of child.fields) out.push({ scope: 'field', owner: child.name, name: f.name, shape: `field:${child.name}:${cjson(f.type)}` });
+  }
   for (const ev of m.events) out.push({ scope: 'event', name: ev.name, shape: 'event' });
   return out;
 }

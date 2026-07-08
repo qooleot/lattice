@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { loadLatText } from '../../src/parse/fromLangium.js';
+import { ownedCollectionChild } from '../../src/ast/domain.js';
+import type { AggregateDef } from '../../src/ast/domain.js';
 
 const SPEC = `/// Top doc
 context Demo {
@@ -179,5 +181,69 @@ describe('qualified cross-context refs', () => {
   it('rejects a malformed qualified target (three segments) at parse time', () => {
     const r = loadLatText(SPEC.replace('Catalog.Plan', 'A.B.C'));
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('nested entities in aggregates', () => {
+  const SPEC = `context Billing {
+  aggregate Invoice {
+    invoiceId : Id key
+    lines     : List<InvoiceLine>
+
+    entity InvoiceLine {
+      lineId : Id key
+      amount : Money
+    }
+  }
+}
+`;
+  it('maps a nested entity into AggregateDef.entities and classifies the owned collection', () => {
+    const r = loadLatText(SPEC);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    const a = r.model.aggregates[0] as AggregateDef;
+    expect(a.entities).toEqual([{ kind: 'entity', name: 'InvoiceLine',
+      fields: [{ name: 'lineId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }]);
+    const linesField = a.fields.find(f => f.name === 'lines')!;
+    expect(linesField.type).toEqual({ kind: 'list', of: { kind: 'ref', target: 'InvoiceLine' } });
+    expect(ownedCollectionChild(a, linesField)?.name).toBe('InvoiceLine');
+  });
+
+  it('a bare NamedType naming a nested entity resolves to ref, not enum', () => {
+    // mapType's fallback treats any unknown NamedType as an unresolved enum UNLESS the name is
+    // in the pre-pass owners set; a nested entity name must land in that set even when it's
+    // referenced (via List<...>) before/without an explicit `ref` keyword.
+    const r = loadLatText(SPEC);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const a = r.model.aggregates[0] as AggregateDef;
+    const linesField = a.fields.find(f => f.name === 'lines')!;
+    expect(linesField.type.kind).toBe('list');
+    expect((linesField.type as any).of).toEqual({ kind: 'ref', target: 'InvoiceLine' });
+  });
+
+  it('rejects an unkeyed nested entity (missing-key)', () => {
+    const bad = loadLatText(SPEC.replace('lineId : Id key', 'lineId : Id'));
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'missing-key')).toBe(true);
+  });
+
+  it('rejects a ref/list field inside a nested entity (nested-entity-flat)', () => {
+    const bad = loadLatText(SPEC.replace('amount : Money', 'amount : Money\n      bad : ref Invoice'));
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'nested-entity-flat')).toBe(true);
+  });
+
+  it('round-trips a nested entity through astToCode', async () => {
+    const { astToCode } = await import('../../src/emit/code.js');
+    const r = loadLatText(SPEC);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const printed = astToCode(r.model, []);
+    const reparsed = loadLatText(printed);
+    expect(reparsed.ok, JSON.stringify(!reparsed.ok && reparsed.diagnostics)).toBe(true);
+    if (!reparsed.ok) return;
+    expect(reparsed.model.aggregates[0]!.entities).toEqual(r.model.aggregates[0]!.entities);
   });
 });

@@ -28,17 +28,18 @@ const at = (node: any): { line: number; col: number } => {
 const diag = (code: string, message: string, node?: any): ParseDiagnostic =>
   ({ code, message, ...at(node) });
 
-function mapType(t: G.LatType, enums: Set<string>, diags: ParseDiagnostic[]): TypeRef {
-  if (t.$type === 'ListType') return { kind: 'list', of: mapType((t as G.ListType).of, enums, diags) };
+function mapType(t: G.LatType, enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>): TypeRef {
+  if (t.$type === 'ListType') return { kind: 'list', of: mapType((t as G.ListType).of, enums, diags, owners) };
   if (t.$type === 'RefType') return { kind: 'ref', target: (t as G.RefType).target };
   const name = (t as G.NamedType).name;
   if (PRIMS.has(name)) return { kind: 'prim', prim: name as any };
+  if (owners.has(name)) return { kind: 'ref', target: name };
   return { kind: 'enum', enum: name };   // unresolved enum → validateModel reports unresolved-enum
 }
 
-function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic[]): Field[] {
+function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>): Field[] {
   return fs.map(f => {
-    const field: Field = { name: f.name, type: mapType(f.type, enums, diags) };
+    const field: Field = { name: f.name, type: mapType(f.type, enums, diags, owners) };
     if (f.key) field.key = true;
     if (f.tags.length) field.tags = f.tags.map(t => t.name);
     return field;
@@ -188,6 +189,19 @@ export function loadLatText(text: string): LoadResult {
   const enumSet = new Set(enumDecls.map(e => e.name));
   const enumMap = new Map(enumDecls.map(e => [e.name, [...e.values]]));
 
+  // owners in scope for bare-name ref resolution (mapType): top-level entities, aggregates, and
+  // every nested entity name declared inside an aggregate — collected in a pre-pass so forward
+  // references (a field naming an owner declared later in the file) still resolve.
+  const ownerNames = new Set<string>();
+  for (const item of cst.items) {
+    if (item.$type === 'EntityDecl') ownerNames.add((item as G.EntityDecl).name);
+    if (item.$type === 'AggregateDecl') {
+      const a = item as G.AggregateDecl;
+      ownerNames.add(a.name);
+      for (const e of a.entities) ownerNames.add(e.name);
+    }
+  }
+
   const model: DomainModel = {
     context: cst.name,
     enums: enumDecls.map(e => ({ name: e.name, values: [...e.values] }) as EnumDef),
@@ -201,21 +215,27 @@ export function loadLatText(text: string): LoadResult {
       case 'TicksDecl': model.ticksPerDay = parseInt((item as G.TicksDecl).value, 10); break;
       case 'EntityDecl': {
         const e = item as G.EntityDecl;
-        const def: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags) };
+        const def: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames) };
         const d = joinDocs([...e.docs]); if (d) def.doc = d;
         locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
         model.entities.push(def); break;
       }
       case 'EventDecl': {
         const e = item as G.EventDecl;
-        const def: EventDef = { name: e.name, fields: mapFields([...e.fields], enumSet, diags) };
+        const def: EventDef = { name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames) };
         const d = joinDocs([...e.docs]); if (d) def.doc = d;
         locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
         model.events.push(def); break;
       }
       case 'AggregateDecl': {
         const a = item as G.AggregateDecl;
-        const def: AggregateDef = { kind: 'aggregate', name: a.name, fields: mapFields([...a.fields], enumSet, diags) };
+        const def: AggregateDef = { kind: 'aggregate', name: a.name, fields: mapFields([...a.fields], enumSet, diags, ownerNames) };
+        if (a.entities.length) def.entities = [...a.entities].map(e => {
+          const child: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames) };
+          const d = joinDocs([...e.docs]); if (d) child.doc = d;
+          locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
+          return child;
+        });
         if (a.lifecycles.length) def.machine = mapLifecycles([...a.lifecycles], a.name, diags, enumMap);
         const d = joinDocs([...a.docs]); if (d) def.doc = d;
         locs.set(`owner:${a.name}`, at(a)); noteFields(a.name, [...a.fields]);

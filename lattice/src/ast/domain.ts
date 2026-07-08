@@ -25,8 +25,14 @@ export interface TransitionDef {
 export interface Machine { regions: Region[]; transitions: TransitionDef[] }
 export interface EnumDef { name: string; values: string[] }
 export interface EntityDef { kind: 'entity'; name: string; fields: Field[]; doc?: string }
-export interface AggregateDef { kind: 'aggregate'; name: string; fields: Field[]; machine?: Machine; doc?: string }
+export interface AggregateDef { kind: 'aggregate'; name: string; fields: Field[]; entities?: EntityDef[]; machine?: Machine; doc?: string }
 export interface EventDef { name: string; fields: Field[]; doc?: string }
+
+/** The nested child an owned collection ranges over, or null (design §3.2). */
+export function ownedCollectionChild(a: AggregateDef, f: Field): EntityDef | null {
+  if (f.type.kind !== 'list' || f.type.of.kind !== 'ref') return null;
+  return a.entities?.find(e => e.name === (f.type as any).of.target) ?? null;
+}
 
 export interface DomainModel {
   context: string;
