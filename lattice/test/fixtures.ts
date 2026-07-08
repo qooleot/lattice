@@ -148,6 +148,55 @@ export const periodModel: DomainModel = {
   }],
 };
 
+// Task 14: golden trace D fixture — invoice-lines domain end-to-end with real solvers (design
+// DoD item 3). Combines invoiceLinesModel's nested InvoiceLine collection + totalDue @total with
+// periodModel's Period value (wellOrdered invariant) plus a settlement lifecycle (requires/emits)
+// and a Billing service performing the settle transition, per the task-14 brief's model spec.
+export const traceDModel: DomainModel = {
+  context: 'Invoicing', ticksPerDay: 24,
+  enums: [], entities: [],
+  values: [{
+    kind: 'value', name: 'Period',
+    fields: [
+      { name: 'start', type: { kind: 'prim', prim: 'Date' } },
+      { name: 'end', type: { kind: 'prim', prim: 'Date' } }],
+    invariants: [{ name: 'wellOrdered', body: { kind: 'cmp', op: 'lt',
+      left: { kind: 'field', owner: 'self', path: ['start'] }, right: { kind: 'field', owner: 'self', path: ['end'] } } }],
+  }],
+  aggregates: [{
+    kind: 'aggregate', name: 'Invoice',
+    fields: [
+      { name: 'invId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'period', type: { kind: 'value', value: 'Period' } },
+      { name: 'totalDue', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
+      { name: 'lines', type: { kind: 'list', of: { kind: 'ref', target: 'InvoiceLine' } } }],
+    entities: [{ kind: 'entity', name: 'InvoiceLine', fields: [
+      { name: 'lineId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }],
+    machine: { regions: [{ name: 'settlement', initial: 'draft', states: [
+      { name: 'draft', tags: [] }, { name: 'open', tags: ['active'] }, { name: 'paid', tags: ['terminal'] }] }],
+      transitions: [
+        { name: 'finalize', region: 'settlement', from: ['draft'], to: 'open',
+          requires: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['totalDue'] }, right: { kind: 'int', value: 0 } } },
+        { name: 'settle', region: 'settlement', from: ['open'], to: 'paid', emits: 'InvoicePaid' }] },
+  }],
+  events: [{ name: 'InvoicePaid', fields: [{ name: 'invId', type: { kind: 'prim', prim: 'Id' } }] }],
+  services: [{ name: 'Billing', methods: [
+    { name: 'settle', params: [{ name: 'invId', type: { kind: 'prim', prim: 'Id' } }],
+      kind: { performs: { aggregate: 'Invoice', transition: 'settle' } } }] }],
+};
+
+// Task 14: H1/H2 sumOverCollection rivals distinguished on totalDue == sum vs totalDue <= sum
+// (design §6.2/§6.4) — H1 is the b02 shape (equality is the domain truth for this trace).
+export const traceDSumEq: Candidate = {
+  kind: 'sumOverCollection', aggregate: 'Invoice',
+  collection: 'lines', child: 'InvoiceLine', field: 'amount', op: 'eq', total: ['totalDue'],
+};
+export const traceDSumLe: Candidate = {
+  kind: 'sumOverCollection', aggregate: 'Invoice',
+  collection: 'lines', child: 'InvoiceLine', field: 'amount', op: 'le', total: ['totalDue'],
+};
+
 export const revrecModel: DomainModel = {
   context: 'RevRec', ticksPerDay: 24,
   enums: [{ name: 'EntryKind', values: ['Recognition', 'Correction'] }, { name: 'PeriodState', values: ['Open', 'Closed'] }], values: [],
