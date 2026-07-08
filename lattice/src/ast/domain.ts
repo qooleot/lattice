@@ -14,7 +14,7 @@ export interface Field {
 }
 export interface StateDef { name: string; tags?: ('active' | 'terminal')[] }
 export interface Region { name: string; initial: string; states: StateDef[] }
-export interface TransitionDef { name: string; region: string; from: string; to: string; when?: string }
+export interface TransitionDef { name: string; region: string; from: string[]; to: string; when?: string }
 export interface Machine { regions: Region[]; transitions: TransitionDef[] }
 export interface EnumDef { name: string; values: string[] }
 export interface EntityDef { kind: 'entity'; name: string; fields: Field[]; doc?: string }

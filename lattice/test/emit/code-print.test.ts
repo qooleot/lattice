@@ -16,7 +16,7 @@ const m: DomainModel = {
     { name: 'units', type: { kind: 'prim', prim: 'Int' } }],
     machine: { regions: [{ name: 'run', initial: 'queued', states: [
       { name: 'queued' }, { name: 'going', tags: ['active'] }, { name: 'done', tags: ['terminal'] }] }],
-      transitions: [{ name: 'start', region: 'run', from: 'queued', to: 'going', when: 'kicked' }] } }],
+      transitions: [{ name: 'start', region: 'run', from: ['queued'], to: 'going', when: 'kicked' }] } }],
   events: [{ name: 'kicked', fields: [{ name: 'reason', type: { kind: 'prim', prim: 'Text' } }] }],
 };
 

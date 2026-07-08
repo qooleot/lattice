@@ -158,7 +158,7 @@ const machineArb = (fieldNames: string[], eventNames: string[]): fc.Arbitrary<Ma
         states: statesPer[i]!.map((s, j): StateDef =>
           j === statesPer[i]!.length - 1 ? { name: s, tags: ['terminal'] } : { name: s }) })),
       transitions: regionNames.map((region, i) => {
-        const t: TransitionDef = { name: transNames[i]!, region, from: statesPer[i]![0]!, to: statesPer[i]![1]! };
+        const t: TransitionDef = { name: transNames[i]!, region, from: [statesPer[i]![0]!], to: statesPer[i]![1]! };
         if (whens[i]) t.when = whens[i];
         return t;
       }),

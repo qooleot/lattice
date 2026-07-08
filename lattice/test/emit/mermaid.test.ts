@@ -17,8 +17,8 @@ export const order: AggregateDef = { kind: 'aggregate', name: 'Order', doc: 'A c
   machine: { regions: [{ name: 'fulfillment', initial: 'open',
       states: [{ name: 'open' }, { name: 'shipped', tags: ['terminal'] }, { name: 'lost', tags: ['terminal'] }] }],
     transitions: [
-      { name: 'ship', region: 'fulfillment', from: 'open', to: 'shipped' },
-      { name: 'vanish', region: 'fulfillment', from: 'open', to: 'lost' }] } };
+      { name: 'ship', region: 'fulfillment', from: ['open'], to: 'shipped' },
+      { name: 'vanish', region: 'fulfillment', from: ['open'], to: 'lost' }] } };
 
 describe('machineToMermaid', () => {
   it('renders initial, transitions (labeled), terminals', () => {

@@ -60,7 +60,7 @@ function mapMachine(m: G.MachineDecl, ownerName: string, diags: ParseDiagnostic[
     return { name: r.name, initial: initials[0]?.name ?? r.states[0]!.name, states };
   });
   const transitions: TransitionDef[] = m.transitions.map(t => {
-    const tr: TransitionDef = { name: t.name, region: t.region, from: t.from, to: t.to };
+    const tr: TransitionDef = { name: t.name, region: t.region, from: [t.from], to: t.to };
     if (t.when) tr.when = t.when;
     return tr;
   });

@@ -15,7 +15,7 @@ const good: DomainModel = {
     ],
     machine: {
       regions: [{ name: 'Access', initial: 'Trialing', states: [{ name: 'Trialing' }, { name: 'Active', tags: ['active'] }, { name: 'Ended', tags: ['terminal'] }] }],
-      transitions: [{ name: 'activate', region: 'Access', from: 'Trialing', to: 'Active', when: 'PaymentSucceeded' }]
+      transitions: [{ name: 'activate', region: 'Access', from: ['Trialing'], to: 'Active', when: 'PaymentSucceeded' }]
     }
   }],
   events: [{ name: 'PaymentSucceeded', fields: [] }]

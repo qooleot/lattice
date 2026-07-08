@@ -48,7 +48,7 @@ describe('loadLatText', () => {
     const job = model.aggregates[0]!;
     expect(job.machine!.regions[0]).toEqual({ name: 'run', initial: 'queued', states: [
       { name: 'queued' }, { name: 'going', tags: ['active'] }, { name: 'done', tags: ['terminal'] }] });
-    expect(job.machine!.transitions[0]).toEqual({ name: 'start', region: 'run', from: 'queued', to: 'going', when: 'kicked' });
+    expect(job.machine!.transitions[0]).toEqual({ name: 'start', region: 'run', from: ['queued'], to: 'going', when: 'kicked' });
   });
 
   it('maps invariants with docs, owners, bodies', () => {

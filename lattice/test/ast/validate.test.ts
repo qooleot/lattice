@@ -16,7 +16,7 @@ const good: DomainModel = {
     ],
     machine: {
       regions: [{ name: 'Access', initial: 'Trialing', states: [{ name: 'Trialing' }, { name: 'Active', tags: ['active'] }, { name: 'Ended', tags: ['terminal'] }] }],
-      transitions: [{ name: 'activate', region: 'Access', from: 'Trialing', to: 'Active', when: 'PaymentSucceeded' }]
+      transitions: [{ name: 'activate', region: 'Access', from: ['Trialing'], to: 'Active', when: 'PaymentSucceeded' }]
     }
   }],
   events: [{ name: 'PaymentSucceeded', fields: [] }]
@@ -39,7 +39,7 @@ describe('validateModel', () => {
 
   it('rejects a transition whose from-state is missing', () => {
     const m = structuredClone(good);
-    m.aggregates[0]!.machine!.transitions[0]!.from = 'Ghost';
+    m.aggregates[0]!.machine!.transitions[0]!.from = ['Ghost'];
     expect(validateModel(m).map(d => d.code)).toContain('unknown-transition-state');
   });
 

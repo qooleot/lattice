@@ -71,7 +71,7 @@ function machineLines(mach: Machine, out: string[]): void {
     out.push(`      region ${r.name} { states { ${states} } }`);
   }
   for (const t of mach.transitions)
-    out.push(`      transition ${t.name} { region ${t.region}; from ${t.from} to ${t.to}${t.when ? `; when ${t.when}` : ''} }`);
+    out.push(`      transition ${t.name} { region ${t.region}; from ${t.from.join(', ')} to ${t.to}${t.when ? `; when ${t.when}` : ''} }`);
   out.push('    }');
 }
 

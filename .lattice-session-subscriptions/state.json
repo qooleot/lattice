@@ -92,49 +92,49 @@
             {
               "name": "activate",
               "region": "lifecycle",
-              "from": "trialing",
+              "from": ["trialing"],
               "to": "active"
             },
             {
               "name": "expireTrial",
               "region": "lifecycle",
-              "from": "trialing",
+              "from": ["trialing"],
               "to": "expired"
             },
             {
               "name": "paymentFailed",
               "region": "lifecycle",
-              "from": "active",
+              "from": ["active"],
               "to": "pastDue"
             },
             {
               "name": "recover",
               "region": "lifecycle",
-              "from": "pastDue",
+              "from": ["pastDue"],
               "to": "active"
             },
             {
               "name": "cancelFromTrial",
               "region": "lifecycle",
-              "from": "trialing",
+              "from": ["trialing"],
               "to": "canceled"
             },
             {
               "name": "cancelFromActive",
               "region": "lifecycle",
-              "from": "active",
+              "from": ["active"],
               "to": "canceled"
             },
             {
               "name": "cancelFromPastDue",
               "region": "lifecycle",
-              "from": "pastDue",
+              "from": ["pastDue"],
               "to": "canceled"
             },
             {
               "name": "dunningExhausted",
               "region": "lifecycle",
-              "from": "pastDue",
+              "from": ["pastDue"],
               "to": "canceled"
             }
           ]
@@ -241,31 +241,31 @@
             {
               "name": "finalize",
               "region": "settlement",
-              "from": "draft",
+              "from": ["draft"],
               "to": "open"
             },
             {
               "name": "settle",
               "region": "settlement",
-              "from": "open",
+              "from": ["open"],
               "to": "paid"
             },
             {
               "name": "voidDraft",
               "region": "settlement",
-              "from": "draft",
+              "from": ["draft"],
               "to": "void"
             },
             {
               "name": "voidOpen",
               "region": "settlement",
-              "from": "open",
+              "from": ["open"],
               "to": "void"
             },
             {
               "name": "writeOff",
               "region": "settlement",
-              "from": "open",
+              "from": ["open"],
               "to": "uncollectible"
             }
           ]

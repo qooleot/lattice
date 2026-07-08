@@ -78,8 +78,12 @@ export function validateModel(m: DomainModel): Diagnostic[] {
     for (const t of a.machine?.transitions ?? []) {
       const r = a.machine!.regions.find(x => x.name === t.region);
       if (!r) { out.push({ code: 'unknown-region', message: `transition ${t.name} names missing region ${t.region}`, at: t.name }); continue; }
-      for (const s of [t.from, t.to]) if (!r.states.some(x => x.name === s))
+      for (const s of [...t.from, t.to]) if (!r.states.some(x => x.name === s))
         out.push({ code: 'unknown-transition-state', message: `transition ${t.name}: no state ${s} in ${a.name}.${t.region}`, at: t.name });
+      if (new Set(t.from).size !== t.from.length)
+        out.push({ code: 'duplicate-source', message: `transition ${t.name}: repeated source state`, at: t.name });
+      if (t.from.includes(t.to))
+        out.push({ code: 'self-loop', message: `transition ${t.name}: target ${t.to} is also a source — self-loops need evidence before the grammar admits them (design §5.2)`, at: t.name });
       if (t.when && !events.has(t.when))
         out.push({ code: 'unknown-event', message: `transition ${t.name} triggered by undeclared event ${t.when}`, at: t.name });
     }
