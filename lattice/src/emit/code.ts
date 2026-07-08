@@ -6,6 +6,7 @@ import { defaultPath } from '../ast/contextmap.js';
 
 const typeStr = (f: Field): string =>
   f.type.kind === 'prim' ? f.type.prim : f.type.kind === 'enum' ? f.type.enum
+  : f.type.kind === 'value' ? f.type.value
   : f.type.kind === 'ref' ? `ref ${f.type.target}` : `List<${typeStr({ ...f, type: f.type.of })}>`;
 
 const OPS = { eq: '==', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' } as const;
@@ -98,6 +99,16 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
     out.push(`  enum ${e.name} { ${e.values.join(', ')} }`);
   }
   if (m.enums.length) out.push('');
+  for (const v of m.values) {
+    doc(v.doc, '  ', out);
+    out.push(`  value ${v.name} {`);
+    fieldLines(v.fields, '    ', out);
+    for (const inv of v.invariants ?? []) {
+      doc(inv.doc, '    ', out);
+      out.push(`    invariant ${inv.name} { ${predToText(inv.body)} }`);
+    }
+    out.push('  }', '');
+  }
   for (const ent of m.entities) {
     doc(ent.doc, '  ', out);
     out.push(`  entity ${ent.name} {`);

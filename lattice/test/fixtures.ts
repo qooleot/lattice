@@ -3,7 +3,7 @@ import type { Candidate } from '../src/ast/invariant.js';
 
 export const traceAModel: DomainModel = {
   context: 'Billing', ticksPerDay: 24,
-  enums: [],
+  enums: [], values: [],
   entities: [
     { kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] },
     { kind: 'entity', name: 'Family', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] },
@@ -25,7 +25,7 @@ export const traceAModel: DomainModel = {
 
 export const traceBModel: DomainModel = {
   context: 'Billing', ticksPerDay: 24,
-  enums: [{ name: 'InvStatus', values: ['Paid', 'Unpaid'] }],
+  enums: [{ name: 'InvStatus', values: ['Paid', 'Unpaid'] }], values: [],
   entities: [],
   aggregates: [
     { kind: 'aggregate', name: 'Invoice', fields: [
@@ -60,7 +60,7 @@ export const graceCandidate = (withGrace: boolean): Candidate => ({
 // unrelated Subscription statePredicate candidates on the quint route.
 export const invoicingModel: DomainModel = {
   context: 'Invoicing', ticksPerDay: 24,
-  enums: [],
+  enums: [], values: [],
   entities: [],
   aggregates: [
     { kind: 'aggregate', name: 'Subscription', fields: [
@@ -93,7 +93,7 @@ export const graceCap = (hours: number): Candidate => ({
 // (sum-over-collection) tasks can reuse this same fixture without another variant.
 export const invoiceLinesModel: DomainModel = {
   context: 'Billing', ticksPerDay: 24,
-  enums: [], entities: [], events: [],
+  enums: [], values: [], entities: [], events: [],
   aggregates: [{
     kind: 'aggregate', name: 'Invoice',
     fields: [
@@ -127,7 +127,7 @@ export const sumCandidate: Candidate = {
 
 export const revrecModel: DomainModel = {
   context: 'RevRec', ticksPerDay: 24,
-  enums: [{ name: 'EntryKind', values: ['Recognition', 'Correction'] }, { name: 'PeriodState', values: ['Open', 'Closed'] }],
+  enums: [{ name: 'EntryKind', values: ['Recognition', 'Correction'] }, { name: 'PeriodState', values: ['Open', 'Closed'] }], values: [],
   entities: [
     { kind: 'entity', name: 'Obligation', fields: [
       { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },

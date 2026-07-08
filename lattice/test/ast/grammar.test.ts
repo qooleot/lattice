@@ -6,7 +6,7 @@ import type { DomainModel } from '../../src/ast/domain.js';
 // Minimal model stub — real DomainModel arrives in Task 2; grammar.ts only reads these arrays.
 const model: any = {
   context: 'Billing',
-  enums: [{ name: 'Status', values: ['Paid', 'Unpaid'] }],
+  enums: [{ name: 'Status', values: ['Paid', 'Unpaid'] }], values: [],
   entities: [{ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
   aggregates: [{
     kind: 'aggregate', name: 'Subscription',
@@ -178,7 +178,7 @@ describe('resolveFieldPath — ref-hop machine-state paths', () => {
 // cross-context ref field `plan: ref Catalog.Plan` (spec §4.2).
 const base = (target: string): DomainModel => ({
   context: 'Billing', ticksPerDay: 24,
-  enums: [],
+  enums: [], values: [],
   entities: [],
   aggregates: [{
     kind: 'aggregate', name: 'Order',

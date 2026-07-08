@@ -3,10 +3,10 @@ import { validateWorkspace } from '../../src/ast/workspace.js';
 import type { ContextMapModel } from '../../src/ast/contextmap.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 
-const catalog: DomainModel = { context: 'Catalog', enums: [], events: [], aggregates: [],
+const catalog: DomainModel = { context: 'Catalog', enums: [], values: [], events: [], aggregates: [],
   entities: [{ kind: 'entity', name: 'Plan',
     fields: [{ name: 'planId', type: { kind: 'prim', prim: 'Id' }, key: true }] }] };
-const subs: DomainModel = { context: 'Subscriptions', enums: [], events: [], entities: [],
+const subs: DomainModel = { context: 'Subscriptions', enums: [], values: [], events: [], entities: [],
   aggregates: [{ kind: 'aggregate', name: 'Subscription', fields: [
     { name: 'subId', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'plan', type: { kind: 'ref', target: 'Catalog.Plan' } }] }] };

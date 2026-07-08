@@ -33,10 +33,13 @@ DownstreamRoleName returns string:
     'anticorruption' | 'conformist';
 
 ContextItem:
-    EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl;
+    EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl | ValueDecl;
 
 EnumDecl:
     'enum' name=ID '{' values+=ID (',' values+=ID)* '}';
+
+ValueDecl:
+    docs+=DOC* 'value' name=ID '{' fields+=FieldDecl* invariants+=InvariantDecl* '}';
 
 TicksDecl:
     'ticksPerDay' '=' value=INT;

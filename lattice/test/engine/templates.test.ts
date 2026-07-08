@@ -4,7 +4,7 @@ import type { DomainModel } from '../../src/ast/domain.js';
 
 const revrecMini: DomainModel = {
   context: 'RevRec', ticksPerDay: 24,
-  enums: [{ name: 'EntryKind', values: ['Recognition', 'Correction'] }],
+  enums: [{ name: 'EntryKind', values: ['Recognition', 'Correction'] }], values: [],
   entities: [
     { kind: 'entity', name: 'Obligation', fields: [
       { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
@@ -53,7 +53,7 @@ describe('matchTemplates — qualified-ref exclusion (spec §4.2)', () => {
   // field is a qualified cross-context ref.
   const base = (target: string): DomainModel => ({
     context: 'Billing', ticksPerDay: 24,
-    enums: [],
+    enums: [], values: [],
     entities: [],
     aggregates: [{
       kind: 'aggregate', name: 'Order',

@@ -4,7 +4,7 @@ import type { DomainModel } from '../../src/ast/domain.js';
 import type { Predicate } from '../../src/ast/invariant.js';
 
 const model = (requires?: Predicate): DomainModel => ({
-  context: 'C', enums: [], entities: [], events: [],
+  context: 'C', enums: [], values: [], entities: [], events: [],
   aggregates: [
     { kind: 'aggregate', name: 'Other',
       fields: [{ name: 'oId', type: { kind: 'prim', prim: 'Id' }, key: true }] },

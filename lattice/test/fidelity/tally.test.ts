@@ -6,7 +6,7 @@ const makeRecord = (ruleId: string, status: 'formalized' | 'not-formalizable', h
   ruleId,
   status,
   model: {
-    context: 'RevRec', enums: [], entities: [], events: [],
+    context: 'RevRec', enums: [], values: [], entities: [], events: [],
     aggregates: [{ kind: 'aggregate', name: 'Obligation', fields: [
       { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
       { name: 'recognized', type: { kind: 'prim', prim: 'Money' } },

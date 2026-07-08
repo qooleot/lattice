@@ -6,7 +6,7 @@ import type { DomainModel } from '../../src/ast/domain.js';
 import type { LedgerEntry } from '../../src/engine/session.js';
 
 const model: DomainModel = {
-  context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], events: [], entities: [],
+  context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], values: [], events: [], entities: [],
   aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
     { name: 'jobId', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'speed', type: { kind: 'enum', enum: 'Mode' } },

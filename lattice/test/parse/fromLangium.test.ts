@@ -247,3 +247,62 @@ describe('nested entities in aggregates', () => {
     expect(reparsed.model.aggregates[0]!.entities).toEqual(r.model.aggregates[0]!.entities);
   });
 });
+
+describe('value objects', () => {
+  const SPEC = `context Billing {
+  value Period {
+    start : Date
+    end   : Date
+
+    invariant wellOrdered { start < end }
+  }
+
+  aggregate Lease {
+    leaseId : Id key
+    term    : Period
+  }
+}
+`;
+  it('maps a value declaration into DomainModel.values, including its own-field invariant', () => {
+    const r = loadLatText(SPEC);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    expect(r.model.values).toEqual([{ kind: 'value', name: 'Period',
+      fields: [
+        { name: 'start', type: { kind: 'prim', prim: 'Date' } },
+        { name: 'end', type: { kind: 'prim', prim: 'Date' } }],
+      invariants: [{ name: 'wellOrdered',
+        body: { kind: 'cmp', op: 'lt',
+          left: { kind: 'field', owner: 'self', path: ['start'] },
+          right: { kind: 'field', owner: 'self', path: ['end'] } } }] }]);
+  });
+
+  it('a field typed with a declared value name maps to TypeRef kind value', () => {
+    const r = loadLatText(SPEC);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const lease = r.model.aggregates[0] as AggregateDef;
+    const term = lease.fields.find(f => f.name === 'term')!;
+    expect(term.type).toEqual({ kind: 'value', value: 'Period' });
+  });
+
+  it('rejects `on`/`where` on a value invariant (value-invariant-plain)', () => {
+    const bad = loadLatText(SPEC.replace(
+      'invariant wellOrdered { start < end }',
+      'invariant wellOrdered where start < end { start < end }'));
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'value-invariant-plain')).toBe(true);
+  });
+
+  it('round-trips a value declaration through astToCode', async () => {
+    const { astToCode } = await import('../../src/emit/code.js');
+    const r = loadLatText(SPEC);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const printed = astToCode(r.model, r.invariants);
+    const reparsed = loadLatText(printed);
+    expect(reparsed.ok, JSON.stringify(!reparsed.ok && reparsed.diagnostics)).toBe(true);
+    if (!reparsed.ok) return;
+    expect(reparsed.model.values).toEqual(r.model.values);
+  });
+});

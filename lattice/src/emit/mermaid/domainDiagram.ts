@@ -7,6 +7,7 @@ function typeStr(t: TypeRef): string {
   switch (t.kind) {
     case 'prim': return t.prim;
     case 'enum': return t.enum;
+    case 'value': return t.value;
     case 'list': return `List~${typeStr(t.of)}~`;
     case 'ref': throw new Error(`typeStr: ref ${t.target} should have been filtered as an association`);
   }

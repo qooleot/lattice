@@ -5,7 +5,7 @@ import type { CandidateInvariant } from '../../src/ast/invariant.js';
 
 const m: DomainModel = {
   context: 'Demo', doc: 'Top doc', ticksPerDay: 24,
-  enums: [{ name: 'Mode', values: ['fast', 'slow'] }],
+  enums: [{ name: 'Mode', values: ['fast', 'slow'] }], values: [],
   entities: [{ kind: 'entity', name: 'Plan', doc: 'Entity doc', fields: [
     { name: 'planId', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'fee', type: { kind: 'prim', prim: 'Money' } },
@@ -94,7 +94,7 @@ it('never emits // and always emits every candidate kind parseably', () => {
 });
 
 it('refuses degenerate inputs the grammar cannot parse back (throws, no garbage text)', () => {
-  const hollowEnum: DomainModel = { ...m, enums: [{ name: 'Hollow', values: [] }] };
+  const hollowEnum: DomainModel = { ...m, enums: [{ name: 'Hollow', values: [] }], values: [] };
   expect(() => astToCode(hollowEnum, [])).toThrow(/enum Hollow/);
   const onePart: CandidateInvariant = { id: 'hand-c1', name: 'c1', prior: 1, source: 'template',
     candidate: { kind: 'conservation', aggregate: 'Job', parts: [['units']], total: ['units'] } };

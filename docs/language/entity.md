@@ -95,6 +95,7 @@ declared in the same aggregate, is an **owned collection** — the aggregate hol
 ## See also
 
 - [Aggregate](aggregate.md)
+- [Value](value.md)
 - [Field types](field-types.md)
 - [Tags](tags.md)
 - [Naming conventions](naming-conventions.md)

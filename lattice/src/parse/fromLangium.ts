@@ -1,6 +1,6 @@
 import { parseLat, type ParseDiagnostic } from './parse.js';
 import type * as G from './generated/ast.js';
-import type { DomainModel, EnumDef, EntityDef, AggregateDef, EventDef, Field, TypeRef, Machine, Region, StateDef, TransitionDef } from '../ast/domain.js';
+import type { DomainModel, EnumDef, ValueDef, EntityDef, AggregateDef, EventDef, Field, TypeRef, Machine, Region, StateDef, TransitionDef } from '../ast/domain.js';
 import { ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Path } from '../ast/invariant.js';
 import { validateModel } from '../ast/validate.js';
@@ -29,18 +29,23 @@ const at = (node: any): { line: number; col: number } => {
 const diag = (code: string, message: string, node?: any): ParseDiagnostic =>
   ({ code, message, ...at(node) });
 
-function mapType(t: G.LatType, enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>): TypeRef {
-  if (t.$type === 'ListType') return { kind: 'list', of: mapType((t as G.ListType).of, enums, diags, owners) };
+// Resolution order for a bare NamedType (design §3.5): prim → value → owner-ref → enum. A value
+// name and an owner (entity/aggregate) name are mutually exclusive by validateModel's shared
+// duplicate-name pool, so checking values before owners is safe — this order only matters for the
+// final unresolved-enum fallback, which must not shadow an in-scope value or owner name.
+function mapType(t: G.LatType, enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>, values: Set<string>): TypeRef {
+  if (t.$type === 'ListType') return { kind: 'list', of: mapType((t as G.ListType).of, enums, diags, owners, values) };
   if (t.$type === 'RefType') return { kind: 'ref', target: (t as G.RefType).target };
   const name = (t as G.NamedType).name;
   if (PRIMS.has(name)) return { kind: 'prim', prim: name as any };
+  if (values.has(name)) return { kind: 'value', value: name };
   if (owners.has(name)) return { kind: 'ref', target: name };
   return { kind: 'enum', enum: name };   // unresolved enum → validateModel reports unresolved-enum
 }
 
-function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>): Field[] {
+function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>, values: Set<string>): Field[] {
   return fs.map(f => {
-    const field: Field = { name: f.name, type: mapType(f.type, enums, diags, owners) };
+    const field: Field = { name: f.name, type: mapType(f.type, enums, diags, owners, values) };
     if (f.key) field.key = true;
     if (f.tags.length) field.tags = f.tags.map(t => t.name);
     return field;
@@ -165,6 +170,10 @@ function namingWarnings(m: DomainModel, invNames: string[],
   };
   warn('context', m.context, PASCAL, 'PascalCase', 'context');
   for (const e of m.enums) { warn('enum', e.name, PASCAL, 'PascalCase', `enum:${e.name}`); e.values.forEach(v => warn('enum value', v, CAMEL, 'camelCase', `enum:${e.name}`)); }
+  for (const v of m.values) {
+    warn('value', v.name, PASCAL, 'PascalCase', `owner:${v.name}`);
+    v.fields.forEach(f => warn('field', f.name, CAMEL, 'camelCase', `field:${v.name}.${f.name}`));
+  }
   const owners = [...m.entities, ...m.aggregates];
   for (const o of owners) {
     warn(o.kind, o.name, PASCAL, 'PascalCase', `owner:${o.name}`);
@@ -210,11 +219,15 @@ export function loadLatText(text: string): LoadResult {
       for (const e of a.entities) ownerNames.add(e.name);
     }
   }
+  // value type names in scope for bare-name resolution (mapType: prim → value → owner-ref →
+  // enum), same forward-reference rationale as ownerNames above.
+  const valueDecls = cst.items.filter((i): i is G.ValueDecl => i.$type === 'ValueDecl');
+  const valueNames = new Set(valueDecls.map(v => v.name));
 
   const model: DomainModel = {
     context: cst.name,
     enums: enumDecls.map(e => ({ name: e.name, values: [...e.values] }) as EnumDef),
-    entities: [], aggregates: [], events: [],
+    values: [], entities: [], aggregates: [], events: [],
   };
   const topDoc = joinDocs([...file.docs]);
   if (topDoc) model.doc = topDoc;
@@ -222,25 +235,44 @@ export function loadLatText(text: string): LoadResult {
   for (const item of cst.items) {
     switch (item.$type) {
       case 'TicksDecl': model.ticksPerDay = parseInt((item as G.TicksDecl).value, 10); break;
+      case 'ValueDecl': {
+        const v = item as G.ValueDecl;
+        const def: ValueDef = { kind: 'value', name: v.name, fields: mapFields([...v.fields], enumSet, diags, ownerNames, valueNames) };
+        if (v.invariants.length) def.invariants = v.invariants.map(inv => {
+          // value invariants are unconditional own-field laws (design §3.5): `on`/`where` on the
+          // header, or any body shape besides a plain predicate, is out of scope in v1.
+          if (inv.target || inv.where || inv.body.$type !== 'PredicateBody')
+            diags.push(diag('value-invariant-plain', `value invariant ${v.name}.${inv.name}: value invariants take a plain predicate body only — no 'on', 'where', or non-predicate body form`, inv));
+          const body = inv.body.$type === 'PredicateBody' ? mapPred((inv.body as G.PredicateBody).pred, enumMap)
+            : { kind: 'cmp', op: 'eq', left: { kind: 'int', value: 0 }, right: { kind: 'int', value: 0 } } as Predicate;
+          const vi: { name: string; body: Predicate; doc?: string } = { name: inv.name, body };
+          const d = joinDocs([...inv.docs]); if (d) vi.doc = d;
+          locs.set(`invariant:${inv.name}`, at(inv));
+          return vi;
+        });
+        const d = joinDocs([...v.docs]); if (d) def.doc = d;
+        locs.set(`owner:${v.name}`, at(v)); noteFields(v.name, [...v.fields]);
+        model.values.push(def); break;
+      }
       case 'EntityDecl': {
         const e = item as G.EntityDecl;
-        const def: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames) };
+        const def: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames) };
         const d = joinDocs([...e.docs]); if (d) def.doc = d;
         locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
         model.entities.push(def); break;
       }
       case 'EventDecl': {
         const e = item as G.EventDecl;
-        const def: EventDef = { name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames) };
+        const def: EventDef = { name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames) };
         const d = joinDocs([...e.docs]); if (d) def.doc = d;
         locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
         model.events.push(def); break;
       }
       case 'AggregateDecl': {
         const a = item as G.AggregateDecl;
-        const def: AggregateDef = { kind: 'aggregate', name: a.name, fields: mapFields([...a.fields], enumSet, diags, ownerNames) };
+        const def: AggregateDef = { kind: 'aggregate', name: a.name, fields: mapFields([...a.fields], enumSet, diags, ownerNames, valueNames) };
         if (a.entities.length) def.entities = [...a.entities].map(e => {
-          const child: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames) };
+          const child: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames) };
           const d = joinDocs([...e.docs]); if (d) child.doc = d;
           locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
           return child;

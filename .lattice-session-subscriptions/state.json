@@ -2,6 +2,7 @@
   "model": {
     "context": "Subscriptions",
     "enums": [],
+    "values": [],
     "entities": [],
     "aggregates": [
       {

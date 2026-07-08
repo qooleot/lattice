@@ -3,7 +3,7 @@ import { impliedInvariants, isImplied, canonicalCandidate } from '../../src/engi
 import type { DomainModel } from '../../src/ast/domain.js';
 
 const m: DomainModel = {
-  context: 'C', enums: [], events: [],
+  context: 'C', enums: [], values: [], events: [],
   entities: [{ kind: 'entity', name: 'Plan', fields: [
     { name: 'planId', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'licenseFee', type: { kind: 'prim', prim: 'Money' } },
@@ -89,7 +89,7 @@ describe('impliedInvariants', () => {
 // field is a qualified cross-context ref to `target` (e.g. 'Catalog.Plan', spec §4.2).
 const base = (target: string): DomainModel => ({
   context: 'Billing', ticksPerDay: 24,
-  enums: [],
+  enums: [], values: [],
   entities: [],
   aggregates: [{
     kind: 'aggregate', name: 'Order',

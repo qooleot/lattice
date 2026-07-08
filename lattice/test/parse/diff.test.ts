@@ -5,7 +5,7 @@ import type { CandidateInvariant } from '../../src/ast/invariant.js';
 import type { LedgerEntry } from '../../src/engine/session.js';
 
 const mk = (name: string, field: string): DomainModel => ({
-  context: 'C', enums: [], events: [], entities: [],
+  context: 'C', enums: [], values: [], events: [], entities: [],
   aggregates: [{ kind: 'aggregate', name, fields: [
     { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: field, type: { kind: 'prim', prim: 'Int' } }],
@@ -38,7 +38,7 @@ describe('ledgerReferences', () => {
 
   it('finds enum values referenced only inside adopted candidate BODIES (design §5 step 4)', () => {
     const model: DomainModel = {
-      context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], events: [], entities: [],
+      context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], values: [], events: [], entities: [],
       aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
         { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
         { name: 'speed', type: { kind: 'enum', enum: 'Mode' } }] }],
@@ -67,7 +67,7 @@ describe('ledgerReferences', () => {
 
   it('enumValue references require an enum-typed field of that enum', () => {
     const model: DomainModel = {
-      context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], events: [], entities: [],
+      context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], values: [], events: [], entities: [],
       aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
         { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
         { name: 'speed', type: { kind: 'enum', enum: 'Mode' } },
@@ -116,7 +116,7 @@ describe('diffModels', () => {
 
   it('pairs enum renames (single-segment path) backed by an adopted-body reference', () => {
     const withEnum = (enumName: string): DomainModel => ({
-      context: 'C', enums: [{ name: enumName, values: ['fast', 'slow'] }], events: [], entities: [],
+      context: 'C', enums: [{ name: enumName, values: ['fast', 'slow'] }], values: [], events: [], entities: [],
       aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
         { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
         { name: 'speed', type: { kind: 'enum', enum: enumName } }] }],

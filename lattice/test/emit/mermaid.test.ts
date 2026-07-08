@@ -59,7 +59,7 @@ describe('machineToMermaid', () => {
 });
 
 export const model: DomainModel = { context: 'Shop',
-  enums: [{ name: 'Color', values: ['red', 'blue'] }],
+  enums: [{ name: 'Color', values: ['red', 'blue'] }], values: [],
   entities: [{ kind: 'entity', name: 'Customer',
     fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
   aggregates: [order], events: [] };
@@ -90,6 +90,20 @@ describe('domainToMermaid', () => {
   Order "1" --> "*" Customer : tags
   Order ..> Catalog_Plan : plan
 `);
+  });
+
+  // Task 10: value objects add TypeRef kind 'value' — domainDiagram's typeStr must not crash on
+  // it (mirrors code.ts's typeStr); a value-typed field prints as an ordinary member, same as enum.
+  it('renders a value-typed field as an ordinary class member', () => {
+    const withValue: DomainModel = { context: 'Billing',
+      enums: [], values: [{ kind: 'value', name: 'Period',
+        fields: [{ name: 'start', type: { kind: 'prim', prim: 'Date' } }, { name: 'end', type: { kind: 'prim', prim: 'Date' } }] }],
+      entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Lease', fields: [
+        { name: 'leaseId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'term', type: { kind: 'value', value: 'Period' } }] }],
+      events: [] };
+    expect(domainToMermaid(withValue)).toContain('+term : Period');
   });
 });
 

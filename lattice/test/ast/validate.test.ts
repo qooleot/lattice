@@ -5,7 +5,7 @@ import type { DomainModel } from '../../src/ast/domain.js';
 
 const good: DomainModel = {
   context: 'Billing', ticksPerDay: 24,
-  enums: [{ name: 'Status', values: ['Paid', 'Unpaid'] }],
+  enums: [{ name: 'Status', values: ['Paid', 'Unpaid'] }], values: [],
   entities: [{ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
   aggregates: [{
     kind: 'aggregate', name: 'Subscription',
@@ -100,7 +100,7 @@ describe('validateModel', () => {
 });
 
 const base = (target: string): DomainModel => ({
-  context: 'Shop', enums: [], entities: [], events: [],
+  context: 'Shop', enums: [], values: [], entities: [], events: [],
   aggregates: [{ kind: 'aggregate', name: 'Order', fields: [
     { name: 'orderId', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'plan', type: { kind: 'ref', target } }] }],

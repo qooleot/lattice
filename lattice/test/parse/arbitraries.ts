@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import type { DomainModel, AggregateDef, EntityDef, Field, EventDef, Machine, StateDef,
-  TransitionDef, TypeRef } from '../../src/ast/domain.js';
+  TransitionDef, TypeRef, ValueDef } from '../../src/ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Cmp } from '../../src/ast/invariant.js';
 import { ownedCollectionChild } from '../../src/ast/domain.js';
 import { RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
@@ -20,13 +20,19 @@ const uniqNames = (arb: fc.Arbitrary<string>, min: number, max: number) =>
 const docText = fc.string({ unit: fc.constantFrom(...'abc XYZ,.'.split('')), minLength: 1, maxLength: 30 })
   .map(s => s.trim()).filter(s => s.length > 0);
 
-// AGGREGATE fields: prim/enum only — never 'ref'. candidateArb's refsResolve arm depends on
-// this (see its comment); roundtrip.test.ts asserts the invariant executably.
-export function fieldArb(name: string, enumNames: string[]): fc.Arbitrary<Field> {
+// AGGREGATE fields: prim/enum/value only — never 'ref'/'list'. candidateArb's refsResolve arm
+// depends on there being no ref fields (see its comment); roundtrip.test.ts asserts the invariant
+// executably. `valueNames` (optional, Task 10) lets a field draw a declared value type — kept a
+// low-weight option since value fields are excluded from every invariant path (see `representable`
+// above): no solver encoding yet, so they must never end up load-bearing in a generated candidate.
+export function fieldArb(name: string, enumNames: string[], valueNames: string[] = []): fc.Arbitrary<Field> {
   const prim = fc.constantFrom('Int', 'Money', 'Date', 'Duration', 'Text', 'Id').map(p => ({ kind: 'prim' as const, prim: p as any }));
-  const type = enumNames.length
-    ? fc.oneof({ weight: 3, arbitrary: prim }, { weight: 1, arbitrary: fc.constantFrom(...enumNames).map(e => ({ kind: 'enum' as const, enum: e })) })
-    : prim;
+  const options: fc.WeightedArbitrary<TypeRef>[] = [{ weight: 4, arbitrary: prim }];
+  if (enumNames.length) options.push({ weight: 1,
+    arbitrary: fc.constantFrom(...enumNames).map(e => ({ kind: 'enum' as const, enum: e })) });
+  if (valueNames.length) options.push({ weight: 1,
+    arbitrary: fc.constantFrom(...valueNames).map(v => ({ kind: 'value' as const, value: v })) });
+  const type = fc.oneof(...options);
   return fc.record({
     type,
     tags: fc.option(fc.constantFrom(['total'], ['balance'], ['signed']), { nil: undefined }),
@@ -103,8 +109,11 @@ function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[],
 // `unrepresentable-path` — keys and Text/Id prims are absent from the solver-facing model), and
 // loadLatText treats those diagnostics as parse failures. Generated invariants must only draw
 // paths from representable fields or the round-trip property generates unparseable specs.
+// Value-typed fields are excluded outright: Task 10 adds surface/AST/printer support only, no
+// solver encoding yet (fieldQType/emitOwnerSig drop them, like lists), so a path into one would
+// generate an invariant the emitters can't faithfully represent.
 const representable = (f: Field) =>
-  !f.key && !(f.type.kind === 'prim' && ['Text', 'Id'].includes((f.type as any).prim));
+  !f.key && f.type.kind !== 'value' && !(f.type.kind === 'prim' && ['Text', 'Id'].includes((f.type as any).prim));
 
 function candidateArb(agg: AggregateDef, enums: { name: string; values: string[] }[]): fc.Arbitrary<Candidate> {
   const paths = agg.fields.filter(representable).map(f => [f.name]);
@@ -211,10 +220,33 @@ const nestedArb = (childName: string | undefined, enums: { name: string; values:
         }));
 };
 
-const aggArb = (name: string, enums: { name: string; values: string[] }[], eventNames: string[], childName?: string): fc.Arbitrary<AggregateDef> =>
+// Value type (design §3.5): flat prim fields only (no enum in v1's own generation — kept simple),
+// plus an optional own-field invariant when there are >= 2 numeric fields, in the
+// `firstNumeric < secondNumeric`-style shape the brief calls out (mirrors Period.wellOrdered).
+const valueArb = (name: string): fc.Arbitrary<ValueDef> =>
+  fc.tuple(uniqNames(camel, 2, 3), fc.option(docText, { nil: undefined }))
+    .chain(([fieldNames, valDoc]) =>
+      fc.tuple(...fieldNames.map(fn => fc.constantFrom('Int', 'Money', 'Date', 'Duration', 'Text', 'Id')
+        .map(p => ({ name: fn, type: { kind: 'prim' as const, prim: p as any } } as Field))))
+        .chain(fields => {
+          const numeric = fields.filter(isNumericPrim).map(f => f.name);
+          const wantsInvariant = numeric.length >= 2;
+          return fc.tuple(wantsInvariant ? fc.boolean() : fc.constant(false), camel)
+            .map(([addInv, invName]) => {
+              const def: ValueDef = { kind: 'value', name, fields };
+              if (valDoc) def.doc = valDoc;
+              if (addInv) def.invariants = [{ name: invName,
+                body: { kind: 'cmp', op: 'lt',
+                  left: { kind: 'field', owner: 'self', path: [numeric[0]!] },
+                  right: { kind: 'field', owner: 'self', path: [numeric[1]!] } } }];
+              return def;
+            });
+        }));
+
+const aggArb = (name: string, enums: { name: string; values: string[] }[], eventNames: string[], childName?: string, valueName?: string): fc.Arbitrary<AggregateDef> =>
   fc.tuple(uniqNames(camel.filter(n => n !== 'state'), 2, 4), fc.boolean(), fc.option(docText, { nil: undefined }))
     .chain(([fieldNames, hasMachine, aggDoc]) =>
-      fc.tuple(...fieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name))))
+      fc.tuple(...fieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name), valueName ? [valueName] : [])))
         .chain(rest =>
           nestedArb(childName, enums, fieldNames).chain(nested => {
             const fields: Field[] = [{ name: fieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest];
@@ -241,6 +273,31 @@ const eventArb = (name: string): fc.Arbitrary<EventDef> =>
           return ev;
         }));
 
+// Final stage of arbSpec's chain (Task 10 pulled it out to a named function to keep the deep
+// fc.tuple/.chain nesting above it manageable): given every drawn name-scoped piece, generates the
+// per-aggregate candidate invariants and assembles { model, invariants }.
+function finalSpecArb(context: string, doc: string | undefined, ticksPerDay: number | undefined,
+    enums: { name: string; values: string[] }[], aggs: AggregateDef[], entities: EntityDef[],
+    events: EventDef[], values: ValueDef[]): fc.Arbitrary<{ model: DomainModel; invariants: CandidateInvariant[] }> {
+  const model: DomainModel = { context, enums, values, entities: [...entities], aggregates: [...aggs], events: [...events] };
+  if (doc) model.doc = doc;
+  if (ticksPerDay !== undefined) model.ticksPerDay = ticksPerDay;
+  return fc.tuple(...aggs.map(a =>
+    fc.array(fc.tuple(camel, fc.option(docText, { nil: undefined }), candidateArb(a, enums)), { maxLength: 2 })))
+    .map(perAgg => {
+      const used = new Set<string>();
+      const invariants: CandidateInvariant[] = [];
+      for (const list of perAgg) for (const [nm, d, candidate] of list) {
+        if (used.has(nm)) continue;
+        used.add(nm);
+        const inv: CandidateInvariant = { id: `hand-${nm}`, name: nm, prior: 1, source: 'template', candidate };
+        if (d) inv.doc = d;
+        invariants.push(inv);
+      }
+      return { model, invariants };
+    });
+}
+
 export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateInvariant[] }> =
   fc.tuple(pascal, uniqNames(pascal, 0, 2), fc.option(docText, { nil: undefined }))
     .chain(([ctx, enumNames, topDoc]) =>
@@ -264,35 +321,28 @@ export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateIn
             uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
               && !entityNames.includes(n) && !eventNames.includes(n)), 0, aggNames.length)
             .chain(childNamePool =>
-            fc.tuple(...aggNames.map(() => fc.boolean()))
-            .chain(wantsChild => {
-              let pi = 0;
-              const childNames = wantsChild.map(w => w && pi < childNamePool.length ? childNamePool[pi++] : undefined);
-              return fc.tuple(
-                fc.tuple(...aggNames.map((name, i) => aggArb(name, enums, eventNames, childNames[i]))),
-                fc.tuple(...entityNames.map(name =>
-                  entityArb(name, enums.map(e => e.name), [...aggNames, ...entityNames]))),
-                fc.tuple(...eventNames.map(name => eventArb(name))));
-            }))
-            .chain(([aggs, entities, events]) => {
-              const model: DomainModel = { context, enums, entities: [...entities], aggregates: [...aggs], events: [...events] };
-              if (doc) model.doc = doc;
-              if (ticksPerDay !== undefined) model.ticksPerDay = ticksPerDay;
-              return fc.tuple(...aggs.map(a =>
-                fc.array(fc.tuple(camel, fc.option(docText, { nil: undefined }), candidateArb(a, enums)), { maxLength: 2 })))
-                .map(perAgg => {
-                  const used = new Set<string>();
-                  const invariants: CandidateInvariant[] = [];
-                  for (const list of perAgg) for (const [nm, d, candidate] of list) {
-                    if (used.has(nm)) continue;
-                    used.add(nm);
-                    const inv: CandidateInvariant = { id: `hand-${nm}`, name: nm, prior: 1, source: 'template', candidate };
-                    if (d) inv.doc = d;
-                    invariants.push(inv);
-                  }
-                  return { model, invariants };
-                });
-            })))));
+            // optional single value type (Task 10, design §3.5), name disjoint from every other
+            // top-level name; drawn ~1/2 the time and, when present, made eligible as a field type
+            // on every aggregate (fieldArb decides per-field, at low weight, whether to use it).
+            fc.option(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
+              && !entityNames.includes(n) && !eventNames.includes(n) && !childNamePool.includes(n)),
+              { nil: undefined })
+            .chain(valueName => {
+              const valuesArb: fc.Arbitrary<ValueDef[]> = valueName ? valueArb(valueName).map(v => [v]) : fc.constant([]);
+              return fc.tuple(...aggNames.map(() => fc.boolean()))
+                .chain(wantsChild => {
+                  let pi = 0;
+                  const childNames = wantsChild.map(w => w && pi < childNamePool.length ? childNamePool[pi++] : undefined);
+                  return fc.tuple(
+                    fc.tuple(...aggNames.map((name, i) => aggArb(name, enums, eventNames, childNames[i], valueName))),
+                    fc.tuple(...entityNames.map(name =>
+                      entityArb(name, enums.map(e => e.name), [...aggNames, ...entityNames]))),
+                    fc.tuple(...eventNames.map(name => eventArb(name))),
+                    valuesArb);
+                })
+                .chain(([aggs, entities, events, values]) =>
+                  finalSpecArb(context, doc, ticksPerDay, enums, aggs, entities, events, values));
+            }))))));
 
 export const arbContextMap: fc.Arbitrary<ContextMapModel> = (() => {
   const name = (i: number) => `Ctx${i}`;

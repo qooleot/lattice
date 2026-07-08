@@ -3,7 +3,7 @@ import { validateModel } from '../../src/ast/validate.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 
 const model = (opts: { emits: string }): DomainModel => ({
-  context: 'C', enums: [], entities: [],
+  context: 'C', enums: [], values: [], entities: [],
   events: [{ name: 'Paid', fields: [] }],
   aggregates: [{ kind: 'aggregate', name: 'A',
     fields: [{ name: 'aId', type: { kind: 'prim', prim: 'Id' }, key: true }],

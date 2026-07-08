@@ -82,7 +82,7 @@ describe('astToQuint', () => {
   // the trans_ action alongside the from-state check (design §3.6).
   describe('guarded transitions', () => {
     const guardedModel: DomainModel = {
-      context: 'Billing', ticksPerDay: 24, enums: [], entities: [],
+      context: 'Billing', ticksPerDay: 24, enums: [], values: [], entities: [],
       aggregates: [{
         kind: 'aggregate', name: 'Invoice',
         fields: [
@@ -145,5 +145,26 @@ describe('astToQuint', () => {
     expect(p.source).toContain('x.linesCount == 2');
     expect(p.source).toContain('range(0, 3).foldl(0, (acc, i) => if (i < x.linesCount) acc + x.lines.get(i).amount else acc) == 7');
     expect(p.source).toContain('x.totalDue == 7');
+  });
+
+  // Task 10: value objects add TypeRef kind 'value', but this task is surface/AST/printer only —
+  // no solver encoding yet. fieldQType must fall through to null for it (same as it already does
+  // for 'list'), so a value-typed field is silently dropped from the sig instead of crashing.
+  it('drops a value-typed field with no encoding (does not crash)', () => {
+    const withValue: DomainModel = {
+      context: 'Billing', enums: [], values: [{ kind: 'value', name: 'Period',
+        fields: [{ name: 'start', type: { kind: 'prim', prim: 'Date' } }, { name: 'end', type: { kind: 'prim', prim: 'Date' } }] }],
+      entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Lease', fields: [
+        { name: 'leaseId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'term', type: { kind: 'value', value: 'Period' } },
+        { name: 'rent', type: { kind: 'prim', prim: 'Money' } }] }],
+      events: [],
+    };
+    const cand: Candidate = { kind: 'statePredicate', aggregate: 'Lease', body: { kind: 'cmp', op: 'ge',
+      left: { kind: 'field', owner: 'self', path: ['rent'] }, right: { kind: 'int', value: 0 } } };
+    const em = astToQuint(withValue, { kind: 'probe-permit', hi: cand, exclusions: [], maxSteps: 2 });
+    expect(em.source).not.toContain('term');
+    expect(em.source).toContain('rent');
   });
 });
