@@ -22,6 +22,8 @@ Grow the language and its elicitation coverage along the two evidence-driven axe
 - **Pillar B — invariant growth.** One new elicitable candidate kind: **sum-over-collection**
   (`totalDue == sum(lines, amount)`), ranging over a new structural capability: **entities nested
   inside an aggregate** with owned `List<ChildEntity>` collections (CML-inspired, DECIDED §3.2).
+  Plus **value objects** (`value Period { … }`, flat, structural equality, optional structural
+  invariant auto-adopted per use site) to cover CML's aggregate-contents triad (DECIDED §3.5).
 
 Both pillars ship through the full seven-point institutional checklist (brief §2) and the
 closed-grammar ceremony (reserved words, reference docs, `not-elicitable` guard, skill text) in
@@ -128,7 +130,36 @@ depend on the counter *evolving* are not checkable until an effects language lan
 become necessary exactly when generation wants machine-evolved state; that slice can demand them
 with evidence about their required shape.
 
-### 3.5 Sequencing — DECIDED (brief fork 5)
+### 3.5 Value objects — DECIDED (user, review pass 2026-07-07)
+
+`value` joins the language to cover CML's aggregate contents (its entities/VOs/events triad).
+v1 scope, deliberately flat:
+
+```
+value Period {
+  start : Date
+  end   : Date
+  invariant wellOrdered { start < end }     // optional structural invariant, own fields only
+}
+
+aggregate Subscription {
+  ...
+  period : Period                            // usable as a field type; structural equality
+}
+```
+
+- Fields are prim/enum only in v1 (`value-flat` diagnostic for refs/lists/values-in-values);
+  no `key` (`value-no-key`) — identity-free by definition.
+- A value's structural invariant materializes as an **auto-adopted invariant at each use site**
+  through the type-carried channel (plan §9 source 6): authored once on the type, applied to
+  every owner with provenance `from value Period`. Same trust model as templates (human-authored,
+  self-tested schema — not the LLM one-shot channel the gate measured).
+- Encodings: **Quint** — nested record inside the owner (`period: { start: Int, end: Int }`),
+  paths compile to `.period.start`. **Alloy** — flattened owner fields (`period_start: one Int`);
+  a value *sig* would acquire identity, which is exactly the wrong semantics for structural
+  equality. Path resolution and salient dims extend to value-field paths in both.
+
+### 3.6 Sequencing — DECIDED (brief fork 5)
 
 Slice 3 landed first; this slice extends the landed `.lat` grammar/parser/printer as part of its
 own definition of done. The generation slice is told (via its brief) that machine enrichment
@@ -162,6 +193,9 @@ TransitionDecl:                                  // 'region' param gone; require
 SumBody:                                         // new InvariantBody alternative (closed form,
     total=PathExpr op=('=='|'<='|'>=')           //  like ConserveBody — NOT a general term)
         'sum' '(' collection=ID ',' field=ID ')';
+
+ValueDecl:                                       // new ContextItem alternative
+    docs+=DOC* 'value' name=ID '{' fields+=FieldDecl* invariants+=InvariantDecl* '}';
 ```
 
 Notes:
@@ -176,8 +210,8 @@ Notes:
 
 ### 4.2 Reserved words (`src/ast/reserved.ts` + grammar-sync test)
 
-Add: `lifecycle`, `requires`, `emits`, `sum`. Remove: `machine`, `region` (no longer keywords).
-The existing sync test enforces the lockstep.
+Add: `lifecycle`, `requires`, `emits`, `sum`, `value`. Remove: `machine`, `region` (no longer
+keywords). The existing sync test enforces the lockstep.
 
 ### 4.3 Migration of committed specs
 
@@ -204,6 +238,12 @@ export interface AggregateDef {
   machine?: Machine;         // shape unchanged; built from lifecycle blocks
   doc?: string;
 }
+export interface ValueDef {  // NEW
+  kind: 'value'; name: string; fields: Field[];   // prim/enum fields only (v1)
+  invariants?: { name: string; body: Predicate; doc?: string }[];  // own-field structural laws
+  doc?: string;
+}
+// DomainModel gains `values: ValueDef[]`; TypeRef gains { kind: 'value'; value: string }.
 ```
 
 `Candidate` grows one member:
@@ -232,6 +272,28 @@ export interface AggregateDef {
   numeric on the aggregate (`ill-typed`).
 - Lifecycle blocks: ≥1 state, exactly one `@initial`, unique block names per aggregate — the
   existing Region validations, re-homed.
+- Values: fields prim/enum only (`value-flat`); no `key` (`value-no-key`); structural invariants
+  reference own fields only; value names share the context identifier namespace.
+
+### 5.2.1 Guard expressiveness (reviewed against the formal-verification claim)
+
+`requires` reuses the closed `Predicate`/`Term` types — linear integer arithmetic (plus-only),
+enum values, `now`, state membership, boolean connectives. For what this slice claims (legality
+of steps, checked bounded), this fragment is decidable and comfortably inside both engines. Its
+real limits, stated so nobody discovers them as surprises:
+
+1. **No command parameters** — the biggest gap. Plan §9.1's canonical guard is
+   `reserve requires available >= delta` where `delta` is an *input*; inputs do not exist until
+   the service construct lands (generation slice owns it). v1 guards range over current state
+   only — which is exactly what the b03/b10 evidence needs.
+2. **Plus-only terms** — no minus (rewritable as addition on the other side), no constant
+   multiplication. Same restriction invariant bodies already live with.
+3. **No collection atoms** — `requires sum(lines, amount) == totalDue` is not expressible; `sum`
+   is an invariant-body form, not a term. Evidence-gated widening if a real domain demands it.
+4. **Own-aggregate only** (§3.3) — cross-aggregate guards are the r04 ref-hop class.
+
+Each limit is an additive widening of the same closed types; (1) is already owned by the
+service-construct design.
 
 ### 5.3 Evaluator semantics (checklist point 2 — pure-TS ground truth)
 
@@ -243,7 +305,16 @@ export interface AggregateDef {
 
 ## 6. Solver encodings (the section this design exists for)
 
-Three audited gaps; each with a decided policy.
+Three audited gaps; each with a decided policy. Capabilities were reviewed against current docs
+(Quint builtin/language reference; Alloy 6 feature docs), not just our emitted subset. Two
+findings worth recording:
+
+- **Alloy 6 has native temporal checking** (`var` sigs, `always`/`eventually`, lasso traces,
+  `for 1.. steps`). "Alloy = structural, Quint = behavioral" is therefore *our* architectural
+  choice, kept deliberately: encoding the machine behaviorally twice would create a two-truths
+  problem inside our own toolchain. Alloy stays the single-state structural witness engine.
+- Quint docs confirm the encoding §6.1 relies on: `setOfMaps(Set[a], Set[b]) => Set[(a -> b)]`
+  with `nondet … = oneOf(…)` legal only at action scope, and `foldl`/`range` for the sum.
 
 ### 6.1 Owned collections exist in neither solver today
 
@@ -281,6 +352,9 @@ silently — spurious or missed witnesses. Policy:
   header comment (no silent constant).
 - `evaluateCandidate` (unbounded ints) remains the adjudicating semantics for every witness
   before it reaches a human — a residual solver artifact loses to the evaluator, as today.
+- Defense-in-depth: Alloy's API exposes a `noOverflow` option (excludes instances reachable only
+  via wrapped arithmetic). If our runner exposes it cleanly, set it for sum queries; the bitwidth
+  policy above is the primary guarantee either way.
 
 ### 6.3 Guards and emits in the emitters
 
@@ -352,7 +426,7 @@ Per new form, in the same commits as the code:
   print/parse identity for lifecycle blocks, requires/emits, nested entities, sum bodies.
 - **Reference docs** (`docs/language/`): `machine.md` → `lifecycle.md` (rewrite),
   `transition.md` (requires/emits), `entity.md` (nesting + ownership), `invariant-forms.md`
-  (sum), all passing the existing docs parse gate.
+  (sum), new `value.md`, all passing the existing docs parse gate.
 - **Elicitable-kind guard** (`src/cli.ts`): `sumOverCollection` joins the proposable set;
   `not-elicitable` list otherwise unchanged.
 - **Skill** (`.claude/skills/elicit-spec/SKILL.md`): Phase 0 gains §7's transition elicitation;
@@ -377,6 +451,18 @@ classifying them; no effects → machine-evolved data dynamics unmodeled (b10 de
 §3.4); `emits` carries no verification semantics; collections are frozen after init in Quint;
 guards are not solver-loop candidates. Each restriction is stated in the reference docs.
 
+### 11.1 Deferred-work registry (every ceiling item has an address, not a shrug)
+
+| Deferred item | Future home | Evidence trigger |
+|---|---|---|
+| Effects/`do` language; collection mutation actions | New brief, demanded by the **generation slice** | Generation needs machine-evolved state; its design says what shape effects must take |
+| Guard candidates in the solver loop; entailment classification; CTI-guided inference; guard-completeness / deadlock / reachability | An **inference slice** (plan §9.1) — no brief yet; **write its brief once slice 4 ships** and real guard usage exists | Guards on committed specs = the corpus §9.1 classifies |
+| `emits` verification semantics (event traces) | **Conformance slice** (already sequenced after generation) | Outbox trace diffing per generation brief §5 |
+| Guard input parameters (`requires available >= delta`) | **Generation slice** (service construct owns inputs) | Service surface design (its fork 0) |
+| Cross-aggregate guards; reverse-ref sums; collection atoms in predicates | Evidence-gated grammar growth | r04-class or new gate/live-session failures |
+| Templates #4 idempotency, #12 saga net-zero | `external`/saga slice of their own | Per brief triage |
+| Template #5 reservation-release | Small follow-up | First real domain with a reservation bucket |
+
 ## 12. Validation & definition of done
 
 Real solvers throughout (durable no-simulation rule); `cd lattice && npx tsc --noEmit && npx
@@ -392,7 +478,8 @@ vitest run` before every commit; goldens A/B/C never weakened; never `git add -A
 3. **Mini golden trace D:** an invoice-lines domain elicited end-to-end with real solvers where
    the residual invariant is a sum-over-collection form — covering propose → distinguish →
    verdict → adopt → emit with the new kind, including a masking regression (§6.4) in the
-   assertions.
+   assertions. The domain carries a `value` object (e.g. `Period` with `start < end`) so value
+   round-trip, solver inlining, and the type-carried auto-adoption are exercised for real.
 4. **Seven checklist points** demonstrably satisfied for each new form (`requires`, `emits`,
    `sumOverCollection`), with the two explicit routing restrictions (guards: Quint-only; sums:
    both engines) tested, not implied.
@@ -401,7 +488,7 @@ vitest run` before every commit; goldens A/B/C never weakened; never `git add -A
 
 ## 13. Out of scope
 
-Effects/`do` blocks; `value` objects; CML metadata attributes; `service`/endpoints (generation
-slice); reverse-ref sum surface; guard candidates in the solver loop; entailment classification;
-`when`-trigger checking; cross-aggregate guards; nested-entity `ref`/`List` fields; templates
-#4/#5/#12.
+Effects/`do` blocks; CML metadata attributes; `service`/endpoints and guard input parameters
+(generation slice); reverse-ref sum surface; guard candidates in the solver loop; entailment
+classification; `when`-trigger checking; cross-aggregate guards; nested-entity `ref`/`List`
+fields; values containing refs/lists/values; templates #4/#5/#12.
