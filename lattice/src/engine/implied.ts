@@ -12,6 +12,8 @@ function prefixTerm(t: Term, prefix: Path): Term {
     case 'field': return { ...t, path: [...prefix, ...t.path] };
     case 'plus': return { ...t, left: prefixTerm(t.left, prefix), right: prefixTerm(t.right, prefix) };
     case 'int': case 'enumval': case 'now': return t;
+    // value invariants never carry a param term (method-guard-only) — passthrough for exhaustiveness
+    case 'param': return t;
   }
 }
 /** Prefix every own-scope field path in a Predicate with `prefix` — see prefixTerm. */

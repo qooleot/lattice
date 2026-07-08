@@ -5,7 +5,7 @@ import type { CandidateInvariant } from '../../src/ast/invariant.js';
 import type { LedgerEntry } from '../../src/engine/session.js';
 
 const model: DomainModel = {
-  context: 'C', enums: [], values: [], events: [], entities: [],
+  context: 'C', enums: [], values: [], events: [], entities: [], services: [],
   aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
     { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'units', type: { kind: 'prim', prim: 'Int' } }],

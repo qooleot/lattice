@@ -20,7 +20,7 @@ const revrecMini: DomainModel = {
   ],
   aggregates: [{ kind: 'aggregate', name: 'AccountingPeriod', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }],
     machine: { regions: [{ name: 'Lifecycle', initial: 'Open', states: [{ name: 'Open', tags: ['active'] }, { name: 'Closed', tags: ['terminal'] }] }], transitions: [] } }],
-  events: []
+  events: [], services: []
 };
 
 describe('matchTemplates', () => {
@@ -92,7 +92,7 @@ describe('matchTemplates — qualified-ref exclusion (spec §4.2)', () => {
         { name: 'plan', type: { kind: 'ref', target } }
       ]
     }],
-    events: []
+    events: [], services: []
   });
 
   it('adopts no tpl-9 (refsResolve) invariant when the only ref field is qualified', () => {

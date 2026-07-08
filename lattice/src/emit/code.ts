@@ -23,6 +23,7 @@ function termToText(t: Term): string {
     case 'enumval': return `${t.enum}.${t.value}`;
     case 'now': return 'now';
     case 'plus': return `${termToText(t.left)} + ${termToText(t.right)}`;
+    case 'param': return t.name;
   }
 }
 
@@ -136,6 +137,20 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
     for (const inv of explicit.filter(i => i.candidate.aggregate === a.name)) {
       out.push('');
       invariantLines(inv, '    ', undefined, out);
+    }
+    out.push('  }', '');
+  }
+  for (const s of m.services) {
+    doc(s.doc, '  ', out);
+    out.push(`  service ${s.name} {`);
+    for (const mm of s.methods) {
+      doc(mm.doc, '    ', out);
+      const params = mm.params.map(p => `${p.name}: ${typeStr({ name: p.name, type: p.type })}`).join(', ');
+      const ret = mm.returns ? `: ${typeStr({ name: '', type: mm.returns })}` : '';
+      const kind = 'readOnly' in mm.kind ? 'read-only'
+        : 'creates' in mm.kind ? `creates ${mm.kind.creates}`
+        : `performs ${mm.kind.performs.aggregate}.${mm.kind.performs.transition}`;
+      out.push(`    ${mm.name}(${params})${ret} ${kind}${mm.requires ? ` requires ${predToText(mm.requires)}` : ''}`);
     }
     out.push('  }', '');
   }

@@ -15,7 +15,7 @@ const period: ValueDef = {
 };
 
 const model = (values: ValueDef[]): DomainModel => ({
-  context: 'C', enums: [], entities: [], events: [], aggregates: [], values,
+  context: 'C', enums: [], entities: [], events: [], aggregates: [], values, services: [],
 });
 
 describe('value objects', () => {
@@ -63,7 +63,7 @@ describe('value objects', () => {
     const m: DomainModel = {
       context: 'C', enums: [], events: [], values: [period],
       entities: [{ kind: 'entity', name: 'Period', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
-      aggregates: [],
+      aggregates: [], services: [],
     };
     expect(validateModel(m).map(d => d.code)).toContain('duplicate-name');
   });
@@ -75,6 +75,7 @@ describe('value objects', () => {
         fields: [
           { name: 'leaseId', type: { kind: 'prim', prim: 'Id' }, key: true },
           { name: 'term', type: { kind: 'value', value: 'Period' } }] }],
+      services: [],
     };
     expect(validateModel(m).map(d => d.code)).toContain('unresolved-value');
   });
@@ -86,6 +87,7 @@ describe('value objects', () => {
         fields: [
           { name: 'leaseId', type: { kind: 'prim', prim: 'Id' }, key: true },
           { name: 'term', type: { kind: 'value', value: 'Period' } }] }],
+      services: [],
     };
     expect(validateModel(m)).toEqual([]);
   });

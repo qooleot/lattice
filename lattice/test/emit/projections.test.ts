@@ -72,6 +72,34 @@ describe('emitted .lat smoke tripwire', () => {
   });
 });
 
+describe('astToProse — Services section (design §3.6, Task 12)', () => {
+  const withService = { ...traceAModel, services: [{ name: 'SubscriptionOps', doc: 'Subscription lifecycle API.',
+    methods: [
+      { name: 'createSubscription', params: [{ name: 'customerId', type: { kind: 'prim' as const, prim: 'Id' as const } }],
+        kind: { creates: 'Subscription' as const } },
+      { name: 'getSubscription', params: [{ name: 'subId', type: { kind: 'prim' as const, prim: 'Id' as const } }],
+        kind: { readOnly: true as const } },
+      { name: 'activate', params: [{ name: 'subId', type: { kind: 'prim' as const, prim: 'Id' as const } }],
+        kind: { performs: { aggregate: 'Subscription', transition: 'activate' } },
+        requires: { kind: 'cmp' as const, op: 'ge' as const,
+          left: { kind: 'param' as const, name: 'subId' }, right: { kind: 'int' as const, value: 0 } } },
+    ] }] };
+
+  it('renders a Services section with doc, method kind, params, and requires', () => {
+    const prose = astToProse(withService, [H3], ledger);
+    expect(prose).toContain('## Services');
+    expect(prose).toContain('*Subscription lifecycle API.*');
+    expect(prose).toContain('**createSubscription**(customerId) — creates a Subscription');
+    expect(prose).toContain('**getSubscription**(subId) — reads');
+    expect(prose).toContain('**activate**(subId) — performs Subscription.activate, requires subId ≥ 0');
+  });
+
+  it('omits the Services section entirely when there are no services', () => {
+    const prose = astToProse(traceAModel, [H3], ledger);
+    expect(prose).not.toContain('## Services');
+  });
+});
+
 describe('renderCandidateEnglish', () => {
   it('covers every candidate kind', () => {
     expect(renderCandidateEnglish(H3.candidate)).toContain('Only one Subscription');

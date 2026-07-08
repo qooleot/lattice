@@ -99,7 +99,7 @@ describe('astToQuint', () => {
           }],
         },
       }],
-      events: [],
+      events: [], services: [],
     };
 
     it('conjoins the guard predicate into the declared transition action', () => {

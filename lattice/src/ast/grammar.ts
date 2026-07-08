@@ -193,6 +193,10 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
       }
       case 'plus': checkTerm(t.left, at); checkTerm(t.right, at); break;
       case 'int': case 'now': break;
+      // Candidates never carry param terms (design §3.6) — 'param' is legal ONLY inside a
+      // MethodDef.requires, which never becomes a Candidate. Loud rejection here is the routing
+      // restriction: an LLM-emitted or hand-built candidate carrying one is out-of-grammar.
+      case 'param': out.push({ code: 'ill-typed', message: 'param terms are method-guard-only', at }); break;
     }
   };
   const checkPred = (p: Predicate, at: string) => {

@@ -62,7 +62,7 @@ export const model: DomainModel = { context: 'Shop',
   enums: [{ name: 'Color', values: ['red', 'blue'] }], values: [],
   entities: [{ kind: 'entity', name: 'Customer',
     fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
-  aggregates: [order], events: [] };
+  aggregates: [order], events: [], services: [] };
 
 describe('domainToMermaid', () => {
   it('renders namespace, enum class, external stub, and associations', () => {
@@ -102,8 +102,35 @@ describe('domainToMermaid', () => {
       aggregates: [{ kind: 'aggregate', name: 'Lease', fields: [
         { name: 'leaseId', type: { kind: 'prim', prim: 'Id' }, key: true },
         { name: 'term', type: { kind: 'value', value: 'Period' } }] }],
-      events: [] };
+      events: [], services: [] };
     expect(domainToMermaid(withValue)).toContain('+term : Period');
+  });
+
+  // Task 12: services (design §3.6) — a <<service>> class box (no fields, one +method(params)
+  // member per method) plus one dashed dependency edge per distinct performed/created aggregate.
+  it('renders a service class box and dashed dependency edges', () => {
+    const withService: DomainModel = { context: 'Billing',
+      enums: [], values: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Subscription', fields: [
+        { name: 'subId', type: { kind: 'prim', prim: 'Id' }, key: true }],
+        machine: { regions: [{ name: 'Access', initial: 'trialing',
+            states: [{ name: 'trialing' }, { name: 'active', tags: ['terminal'] }] }],
+          transitions: [{ name: 'activate', region: 'Access', from: ['trialing'], to: 'active' }] } }],
+      events: [],
+      services: [{ name: 'SubscriptionOps', methods: [
+        { name: 'createSubscription', params: [{ name: 'seats', type: { kind: 'prim', prim: 'Int' } }], kind: { creates: 'Subscription' } },
+        { name: 'activate', params: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }], kind: { performs: { aggregate: 'Subscription', transition: 'activate' } } },
+        { name: 'getSubscription', params: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }], kind: { readOnly: true } },
+      ] }] };
+    const src = domainToMermaid(withService);
+    expect(src).toContain('class SubscriptionOps {');
+    expect(src).toContain('<<service>>');
+    expect(src).toContain('+createSubscription(seats)');
+    expect(src).toContain('+activate(subId)');
+    expect(src).toContain('+getSubscription(subId)');
+    expect(src).toContain('SubscriptionOps ..> Subscription : createSubscription');
+    // dedupe: only ONE edge to Subscription even though two methods target it
+    expect(src.split('SubscriptionOps ..> Subscription').length - 1).toBe(1);
   });
 });
 

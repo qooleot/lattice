@@ -77,6 +77,7 @@ function termToQuint(m: DomainModel, t: Term, self: string, ownerName: string): 
     case 'now': return 'now';
     case 'plus': return `${termToQuint(m, t.left, self, ownerName)} + ${termToQuint(m, t.right, self, ownerName)}`;
     case 'field': return pathToQuint(m, t.path, self, ownerName);
+    case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
 }
 function pathToQuint(m: DomainModel, path: Path, self: string, ownerName: string): string {
@@ -134,6 +135,7 @@ function refHopsInTerm(m: DomainModel, t: Term, self: string, ownerName: string)
     case 'field': return refHopsIn(m, t.path, self, ownerName);
     case 'plus': return [...refHopsInTerm(m, t.left, self, ownerName), ...refHopsInTerm(m, t.right, self, ownerName)];
     case 'int': case 'enumval': case 'now': return [];
+    case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
 }
 function predToQuint(m: DomainModel, p: Predicate, self: string, ownerName: string): string {

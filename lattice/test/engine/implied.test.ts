@@ -5,7 +5,7 @@ import { periodModel } from '../fixtures.js';
 import { astToCode } from '../../src/emit/code.js';
 
 const m: DomainModel = {
-  context: 'C', enums: [], values: [], events: [],
+  context: 'C', enums: [], values: [], events: [], services: [],
   entities: [{ kind: 'entity', name: 'Plan', fields: [
     { name: 'planId', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'licenseFee', type: { kind: 'prim', prim: 'Money' } },
@@ -100,7 +100,7 @@ const base = (target: string): DomainModel => ({
       { name: 'plan', type: { kind: 'ref', target } }
     ]
   }],
-  events: []
+  events: [], services: []
 });
 
 // Task 11: type-carried laws (design §3.5/§6) — a value type's own invariant is instantiated as a

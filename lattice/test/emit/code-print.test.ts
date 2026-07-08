@@ -18,6 +18,13 @@ const m: DomainModel = {
       { name: 'queued' }, { name: 'going', tags: ['active'] }, { name: 'done', tags: ['terminal'] }] }],
       transitions: [{ name: 'start', region: 'run', from: ['queued'], to: 'going', when: 'kicked' }] } }],
   events: [{ name: 'kicked', fields: [{ name: 'reason', type: { kind: 'prim', prim: 'Text' } }] }],
+  services: [{ name: 'JobOps', doc: 'Service doc', methods: [
+    { name: 'kickOff', params: [{ name: 'units', type: { kind: 'prim', prim: 'Int' } }],
+      kind: { performs: { aggregate: 'Job', transition: 'start' } },
+      requires: { kind: 'cmp', op: 'ge', left: { kind: 'param', name: 'units' }, right: { kind: 'int', value: 0 } } },
+    { name: 'getJob', params: [{ name: 'jobId', type: { kind: 'prim', prim: 'Id' } }], returns: { kind: 'ref', target: 'Job' },
+      kind: { readOnly: true } },
+  ] }],
 };
 
 const invs: CandidateInvariant[] = [
@@ -67,6 +74,12 @@ context Demo {
 
     /// Units stay sane.
     invariant unitsSane { units >= 0 && (state run in {going} => units <= 100) }
+  }
+
+  /// Service doc
+  service JobOps {
+    kickOff(units: Int) performs Job.start requires units >= 0
+    getJob(jobId: Id): ref Job read-only
   }
 
   invariant planMode on Plan where fee >= 1 { mode == Mode.fast }

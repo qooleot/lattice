@@ -55,6 +55,7 @@ function renderTerm(t: Term): string {
     case 'enumval': return t.value;
     case 'now': return 'now';
     case 'plus': return `${renderTerm(t.left)} + ${renderTerm(t.right)}`;
+    case 'param': return t.name;
   }
 }
 function evalTermOn(t: Term, e: any, s: CaseState): number | string | boolean | undefined {
@@ -63,6 +64,7 @@ function evalTermOn(t: Term, e: any, s: CaseState): number | string | boolean | 
     case 'int': return t.value; case 'enumval': return t.value; case 'now': return s.now;
     case 'plus': { const l = evalTermOn(t.left, e, s), r = evalTermOn(t.right, e, s);
       return typeof l === 'number' && typeof r === 'number' ? l + r : undefined; }
+    case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
 }
 

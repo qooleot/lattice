@@ -8,7 +8,9 @@ export type Term =
   | { kind: 'int'; value: number }
   | { kind: 'enumval'; enum: string; value: string }
   | { kind: 'now' }                                // current tick (Date/Duration are ticks)
-  | { kind: 'plus'; left: Term; right: Term };     // linear arithmetic only
+  | { kind: 'plus'; left: Term; right: Term }      // linear arithmetic only
+  | { kind: 'param'; name: string };               // method param ref — legal ONLY in a MethodDef.requires
+                                                    // (design §3.6); THROWS in evalTerm/termToQuint/termToAlloy
 
 export type Predicate =
   | { kind: 'cmp'; op: Cmp; left: Term; right: Term }

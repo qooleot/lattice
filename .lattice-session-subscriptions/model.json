@@ -300,5 +300,6 @@
     }
   ],
   "events": [],
-  "doc": "Subscriptions API: hybrid license-fee + usage-based billing"
+  "doc": "Subscriptions API: hybrid license-fee + usage-based billing",
+  "services": []
 }

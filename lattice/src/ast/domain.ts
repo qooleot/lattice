@@ -37,6 +37,19 @@ export interface EntityDef { kind: 'entity'; name: string; fields: Field[]; doc?
 export interface AggregateDef { kind: 'aggregate'; name: string; fields: Field[]; entities?: EntityDef[]; machine?: Machine; doc?: string }
 export interface EventDef { name: string; fields: Field[]; doc?: string }
 
+/** Service methods (design §3.6): carried structure only — never solver-encoded. A method's
+ *  `kind` names exactly one of: a read-only query, a `performs`-reference to a declared transition
+ *  on an aggregate (the "one method, one transition" rule), or a `creates` reference to an
+ *  aggregate. `requires` is a method-level guard over params + (for performs/creates) the target
+ *  aggregate's own fields/states — its Term may use the 'param' kind, legal ONLY here. */
+export interface ParamDef { name: string; type: TypeRef }
+export interface MethodDef {
+  name: string; params: ParamDef[]; returns?: TypeRef; doc?: string;
+  kind: { readOnly: true } | { performs: { aggregate: string; transition: string } } | { creates: string };
+  requires?: Predicate;
+}
+export interface ServiceDef { name: string; methods: MethodDef[]; doc?: string }
+
 /** The nested child an owned collection ranges over, or null (design §3.2). */
 export function ownedCollectionChild(a: AggregateDef, f: Field): EntityDef | null {
   if (f.type.kind !== 'list' || f.type.of.kind !== 'ref') return null;
@@ -52,6 +65,7 @@ export interface DomainModel {
   entities: EntityDef[];
   aggregates: AggregateDef[];
   events: EventDef[];
+  services: ServiceDef[];
 }
 
 /** Cross-context reference (spec §4.2): target is 'Context.Type'. Structural only —

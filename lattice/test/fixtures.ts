@@ -20,7 +20,7 @@ export const traceAModel: DomainModel = {
     machine: { regions: [{ name: 'Access', initial: 'Trialing', states: [
       { name: 'Trialing' }, { name: 'Active', tags: ['active'] }, { name: 'Ended', tags: ['terminal'] }] }], transitions: [] }
   }],
-  events: []
+  events: [], services: []
 };
 
 export const traceBModel: DomainModel = {
@@ -39,7 +39,7 @@ export const traceBModel: DomainModel = {
       machine: { regions: [{ name: 'Access', initial: 'Trialing', states: [
         { name: 'Trialing' }, { name: 'Active', tags: ['active'] }, { name: 'Suspended' }, { name: 'Ended', tags: ['terminal'] }] }], transitions: [] } }
   ],
-  events: []
+  events: [], services: []
 };
 
 export const graceCandidate = (withGrace: boolean): Candidate => ({
@@ -74,7 +74,7 @@ export const invoicingModel: DomainModel = {
       machine: { regions: [{ name: 'Lifecycle', initial: 'Draft', states: [
         { name: 'Draft' }, { name: 'Finalized', tags: ['terminal'] }] }], transitions: [] } }
   ],
-  events: []
+  events: [], services: []
 };
 
 export const draftInvoiceUnique: Candidate = { kind: 'unique', aggregate: 'Invoice',
@@ -93,7 +93,7 @@ export const graceCap = (hours: number): Candidate => ({
 // (sum-over-collection) tasks can reuse this same fixture without another variant.
 export const invoiceLinesModel: DomainModel = {
   context: 'Billing', ticksPerDay: 24,
-  enums: [], values: [], entities: [], events: [],
+  enums: [], values: [], entities: [], events: [], services: [],
   aggregates: [{
     kind: 'aggregate', name: 'Invoice',
     fields: [
@@ -131,7 +131,7 @@ export const sumCandidate: Candidate = {
 // nested-record (quint) / flattened-field (alloy) encoding, and type-carried law instantiation.
 export const periodModel: DomainModel = {
   context: 'Billing', ticksPerDay: 24,
-  enums: [], events: [], entities: [],
+  enums: [], events: [], entities: [], services: [],
   values: [{
     kind: 'value', name: 'Period',
     fields: [
@@ -171,5 +171,5 @@ export const revrecModel: DomainModel = {
       { name: 'lockWindow', type: { kind: 'prim', prim: 'Duration' } }],
     machine: { regions: [{ name: 'Lifecycle', initial: 'Open', states: [
       { name: 'Open', tags: ['active'] }, { name: 'Closed', tags: ['terminal'] }] }], transitions: [] } }],
-  events: []
+  events: [], services: []
 };

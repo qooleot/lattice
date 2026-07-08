@@ -306,3 +306,65 @@ describe('value objects', () => {
     expect(reparsed.model.values).toEqual(r.model.values);
   });
 });
+
+// Task 12: services (design §3.6) — carried structure only. Surface block mirrors the design's
+// canonical SubscriptionService example (creates/read-only/performs + a param+field guard).
+describe('services', () => {
+  const SPEC = `context Billing {
+  aggregate Subscription {
+    subId     : Id key
+    available : Int
+
+    lifecycle Access {
+      states { trialing @initial, active @active, held @active, ended @terminal }
+      transition activate { from trialing to active }
+      transition reserve { from active to held }
+    }
+  }
+
+  service SubscriptionService {
+    createSubscription(plan: ref Subscription, seats: Int): Subscription creates Subscription
+    getSubscription(subId: Id): Subscription read-only
+    activate(subId: Id) performs Subscription.activate
+    reserve(subId: Id, delta: Int) performs Subscription.reserve requires available >= delta
+  }
+}
+`;
+
+  it('maps a service declaration into DomainModel.services, incl. all three method kinds', () => {
+    const r = loadLatText(SPEC);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    expect(r.model.services).toEqual([{ name: 'SubscriptionService', methods: [
+      { name: 'createSubscription',
+        params: [{ name: 'plan', type: { kind: 'ref', target: 'Subscription' } }, { name: 'seats', type: { kind: 'prim', prim: 'Int' } }],
+        returns: { kind: 'ref', target: 'Subscription' }, kind: { creates: 'Subscription' } },
+      { name: 'getSubscription', params: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }],
+        returns: { kind: 'ref', target: 'Subscription' }, kind: { readOnly: true } },
+      { name: 'activate', params: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }],
+        kind: { performs: { aggregate: 'Subscription', transition: 'activate' } } },
+      { name: 'reserve', params: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }, { name: 'delta', type: { kind: 'prim', prim: 'Int' } }],
+        kind: { performs: { aggregate: 'Subscription', transition: 'reserve' } },
+        requires: { kind: 'cmp', op: 'ge',
+          left: { kind: 'field', owner: 'self', path: ['available'] }, right: { kind: 'param', name: 'delta' } } },
+    ] }]);
+  });
+
+  it('rejects a performs referencing an unknown transition', () => {
+    const bad = loadLatText(SPEC.replace('performs Subscription.activate', 'performs Subscription.nope'));
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'unknown-transition')).toBe(true);
+  });
+
+  it('round-trips a service declaration through astToCode', async () => {
+    const { astToCode } = await import('../../src/emit/code.js');
+    const r = loadLatText(SPEC);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    const printed = astToCode(r.model, r.invariants);
+    const reparsed = loadLatText(printed);
+    expect(reparsed.ok, JSON.stringify(!reparsed.ok && reparsed.diagnostics)).toBe(true);
+    if (!reparsed.ok) return;
+    expect(reparsed.model.services).toEqual(r.model.services);
+  });
+});

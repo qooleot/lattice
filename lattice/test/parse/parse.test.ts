@@ -168,8 +168,10 @@ describe('RESERVED_WORDS matches the grammar keywords (single source enforced by
     const g = readFileSync(new URL('../../src/parse/lat.langium', import.meta.url), 'utf8');
     // strip terminal/regex definitions (bottom of the grammar) — only rule bodies contain keywords
     const rulesOnly = g.slice(0, g.indexOf('\nhidden terminal WS'));
+    // hyphen included (Task 12's 'read-only' keyword) — IDENT_RE can never produce a hyphenated
+    // identifier, but the quoted grammar literal itself needs to round-trip through this regex.
     const grammarKeywords = new Set(
-      [...rulesOnly.matchAll(/'([A-Za-z_][A-Za-z0-9_]*)'/g)].map(m => m[1]!));
+      [...rulesOnly.matchAll(/'([A-Za-z_][A-Za-z0-9_-]*)'/g)].map(m => m[1]!));
     const { RESERVED_WORDS } = await import('../../src/ast/reserved.js');
     for (const w of RESERVED_WORDS) expect(grammarKeywords.has(w), `'${w}' not found as a quoted keyword in lat.langium`).toBe(true);
     for (const w of grammarKeywords) if (/^[a-z]/i.test(w))

@@ -34,6 +34,7 @@ function evalTerm(t: Term, self: CaseEntity, s: CaseState): number | string | bo
       const l = evalTerm(t.left, self, s), r = evalTerm(t.right, self, s);
       return typeof l === 'number' && typeof r === 'number' ? l + r : undefined;
     }
+    case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
 }
 

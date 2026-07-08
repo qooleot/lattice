@@ -1,6 +1,6 @@
 import { parseLat, type ParseDiagnostic } from './parse.js';
 import type * as G from './generated/ast.js';
-import type { DomainModel, EnumDef, ValueDef, EntityDef, AggregateDef, EventDef, Field, TypeRef, Machine, Region, StateDef, TransitionDef } from '../ast/domain.js';
+import type { DomainModel, EnumDef, ValueDef, EntityDef, AggregateDef, EventDef, Field, TypeRef, Machine, Region, StateDef, TransitionDef, ServiceDef, MethodDef, ParamDef } from '../ast/domain.js';
 import { ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Path } from '../ast/invariant.js';
 import { validateModel } from '../ast/validate.js';
@@ -76,36 +76,59 @@ function mapLifecycles(lifs: G.LifecycleDecl[], ownerName: string, diags: ParseD
   return { regions, transitions };
 }
 
-function mapTerm(e: G.Expr, enums: Map<string, string[]>): Term {
+// Service methods (design §3.6, Task 12): carried structure only. Each method's guard sees its
+// own params (shadowing fields — a `param` PathRef never reaches this far since mapType's
+// resolution happens per-method via the params set threaded into mapPred/mapTerm).
+function mapMethods(methods: G.MethodDecl[], enums: Set<string>, diags: ParseDiagnostic[],
+    owners: Set<string>, values: Set<string>, enumMap: Map<string, string[]>): MethodDef[] {
+  return methods.map(mm => {
+    const params: ParamDef[] = mm.params.map(p => ({ name: p.name, type: mapType(p.type, enums, diags, owners, values) }));
+    const paramNames = new Set(params.map(p => p.name));
+    const kind: MethodDef['kind'] = mm.readOnly ? { readOnly: true }
+      : mm.creates !== undefined ? { creates: mm.creates }
+      : { performs: { aggregate: mm.performsAgg!, transition: mm.performsTransition! } };
+    const def: MethodDef = { name: mm.name, params, kind };
+    if (mm.returns) def.returns = mapType(mm.returns, enums, diags, owners, values);
+    if (mm.requires) def.requires = mapPred(mm.requires, enumMap, paramNames);
+    const d = joinDocs([...mm.docs]); if (d) def.doc = d;
+    return def;
+  });
+}
+
+// `params` (design §3.6, Task 12): inside a METHOD requires, a single-segment PathRef matching a
+// declared param name maps to {kind:'param', name} — params shadow fields (see service.md).
+// Default empty set at every non-method call site (transitions, invariants, value laws).
+function mapTerm(e: G.Expr, enums: Map<string, string[]>, params: Set<string> = new Set()): Term {
   switch (e.$type) {
     case 'IntLit': return { kind: 'int', value: parseInt((e as G.IntLit).value, 10) };
     case 'NowLit': return { kind: 'now' };
     case 'PlusExpr': {
       const p = e as G.PlusExpr;
-      return { kind: 'plus', left: mapTerm(p.left, enums), right: mapTerm(p.right, enums) };
+      return { kind: 'plus', left: mapTerm(p.left, enums, params), right: mapTerm(p.right, enums, params) };
     }
     case 'PathRef': {
       const segs = (e as G.PathRef).segments;
       if (segs.length === 2 && enums.has(segs[0]!) && enums.get(segs[0]!)!.includes(segs[1]!))
         return { kind: 'enumval', enum: segs[0]!, value: segs[1]! };
+      if (segs.length === 1 && params.has(segs[0]!)) return { kind: 'param', name: segs[0]! };
       return { kind: 'field', owner: 'self', path: [...segs] };
     }
     default: throw new Error(`unmapped expr ${(e as any).$type}`);
   }
 }
 
-function mapPred(p: G.Predicate, enums: Map<string, string[]>): Predicate {
+function mapPred(p: G.Predicate, enums: Map<string, string[]>, params: Set<string> = new Set()): Predicate {
   switch (p.$type) {
     case 'BinPred': {
       const b = p as G.BinPred;
-      const l = mapPred(b.left, enums), r = mapPred(b.right, enums);
+      const l = mapPred(b.left, enums, params), r = mapPred(b.right, enums, params);
       if (b.op === '=>') return { kind: 'implies', left: l, right: r };
       const kind = b.op === '&&' ? 'and' as const : 'or' as const;
       // flatten left-assoc chains of the SAME connective into n-ary args
       const args = l.kind === kind ? [...(l as any).args, r] : [l, r];
       return { kind, args };
     }
-    case 'NotPred': return { kind: 'not', arg: mapPred((p as G.NotPred).arg, enums) };
+    case 'NotPred': return { kind: 'not', arg: mapPred((p as G.NotPred).arg, enums, params) };
     case 'StatePred': {
       const s = p as G.StatePred;
       return { kind: 'inState', owner: 'self', region: s.region, states: [...s.states] };
@@ -114,7 +137,7 @@ function mapPred(p: G.Predicate, enums: Map<string, string[]>): Predicate {
       const c = p as G.Comparison;
       const ops: Record<string, 'eq' | 'ne' | 'lt' | 'le' | 'gt' | 'ge'> =
         { '==': 'eq', '!=': 'ne', '<': 'lt', '<=': 'le', '>': 'gt', '>=': 'ge' };
-      return { kind: 'cmp', op: ops[c.op]!, left: mapTerm(c.left, enums), right: mapTerm(c.right, enums) };
+      return { kind: 'cmp', op: ops[c.op]!, left: mapTerm(c.left, enums, params), right: mapTerm(c.right, enums, params) };
     }
     default: throw new Error(`unmapped predicate ${(p as any).$type}`);
   }
@@ -183,6 +206,13 @@ function namingWarnings(m: DomainModel, invNames: string[],
     mach?.transitions.forEach(t => warn('transition', t.name, CAMEL, 'camelCase', `transition:${o.name}.${t.name}`));
   }
   for (const e of m.events) warn('event', e.name, PASCAL, 'PascalCase', `owner:${e.name}`);
+  for (const s of m.services) {
+    warn('service', s.name, PASCAL, 'PascalCase', `owner:${s.name}`);
+    for (const mm of s.methods) {
+      warn('method', mm.name, CAMEL, 'camelCase', `method:${s.name}.${mm.name}`);
+      mm.params.forEach(p => warn('param', p.name, CAMEL, 'camelCase', `method:${s.name}.${mm.name}`));
+    }
+  }
   invNames.forEach(n => warn('invariant', n, CAMEL, 'camelCase', `invariant:${n}`));
   return out;
 }
@@ -227,7 +257,7 @@ export function loadLatText(text: string): LoadResult {
   const model: DomainModel = {
     context: cst.name,
     enums: enumDecls.map(e => ({ name: e.name, values: [...e.values] }) as EnumDef),
-    values: [], entities: [], aggregates: [], events: [],
+    values: [], entities: [], aggregates: [], events: [], services: [],
   };
   const topDoc = joinDocs([...file.docs]);
   if (topDoc) model.doc = topDoc;
@@ -286,6 +316,14 @@ export function loadLatText(text: string): LoadResult {
           for (const t of r.transitions) locs.set(`transition:${a.name}.${t.name}`, at(t));
         }
         model.aggregates.push(def); break;
+      }
+      case 'ServiceDecl': {
+        const s = item as G.ServiceDecl;
+        const def: ServiceDef = { name: s.name, methods: mapMethods([...s.methods], enumSet, diags, ownerNames, valueNames, enumMap) };
+        const d = joinDocs([...s.docs]); if (d) def.doc = d;
+        locs.set(`owner:${s.name}`, at(s));
+        for (const mm of s.methods) locs.set(`method:${s.name}.${mm.name}`, at(mm));
+        model.services.push(def); break;
       }
     }
   }

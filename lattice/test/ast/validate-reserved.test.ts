@@ -18,7 +18,7 @@ const good: DomainModel = {
       transitions: [{ name: 'activate', region: 'Access', from: ['Trialing'], to: 'Active', when: 'PaymentSucceeded' }]
     }
   }],
-  events: [{ name: 'PaymentSucceeded', fields: [] }]
+  events: [{ name: 'PaymentSucceeded', fields: [] }], services: []
 };
 
 describe('validateModel rejects grammar-keyword identifiers (spec §3.4 conformance)', () => {

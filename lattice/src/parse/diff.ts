@@ -183,5 +183,20 @@ export function diffModels(
     }
   }
 
+  // Services (design §3.6, Task 12): structural notes only — services deliberately do NOT join
+  // namedThings (no rename proposals in v1; no ledger references exist for methods/params).
+  const bSvc = new Map(before.model.services.map(s => [s.name, s]));
+  const aSvc = new Map(after.model.services.map(s => [s.name, s]));
+  for (const [n] of aSvc) if (!bSvc.has(n)) notes.push(`added service ${n}`);
+  for (const [n] of bSvc) if (!aSvc.has(n)) notes.push(`removed service ${n}`);
+  for (const [n, sa] of aSvc) {
+    const sb = bSvc.get(n);
+    if (!sb) continue;
+    const bm = new Map(sb.methods.map(x => [x.name, x])), am = new Map(sa.methods.map(x => [x.name, x]));
+    for (const [mn] of am) if (!bm.has(mn)) notes.push(`added method ${n}.${mn}`);
+    for (const [mn] of bm) if (!am.has(mn)) notes.push(`removed method ${n}.${mn}`);
+    for (const [mn, mv] of am) if (bm.has(mn) && cjson(mv) !== cjson(bm.get(mn))) notes.push(`changed method ${n}.${mn}`);
+  }
+
   return { addedInvariants, changedInvariants, removedInvariants, renameProposals: proposals, structuralNotes: notes };
 }

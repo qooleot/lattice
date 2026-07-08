@@ -19,7 +19,8 @@ const good: DomainModel = {
       transitions: [{ name: 'activate', region: 'Access', from: ['Trialing'], to: 'Active', when: 'PaymentSucceeded' }]
     }
   }],
-  events: [{ name: 'PaymentSucceeded', fields: [] }]
+  events: [{ name: 'PaymentSucceeded', fields: [] }],
+  services: [],
 };
 
 describe('validateModel', () => {
@@ -100,7 +101,7 @@ describe('validateModel', () => {
 });
 
 const base = (target: string): DomainModel => ({
-  context: 'Shop', enums: [], values: [], entities: [], events: [],
+  context: 'Shop', enums: [], values: [], entities: [], events: [], services: [],
   aggregates: [{ kind: 'aggregate', name: 'Order', fields: [
     { name: 'orderId', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'plan', type: { kind: 'ref', target } }] }],

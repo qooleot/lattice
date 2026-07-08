@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import type { DomainModel, AggregateDef, EntityDef, Field, EventDef, Machine, StateDef,
-  TransitionDef, TypeRef, ValueDef } from '../../src/ast/domain.js';
+  TransitionDef, TypeRef, ValueDef, ServiceDef, MethodDef, ParamDef } from '../../src/ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Cmp } from '../../src/ast/invariant.js';
 import { ownedCollectionChild } from '../../src/ast/domain.js';
 import { RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
@@ -273,13 +273,76 @@ const eventArb = (name: string): fc.Arbitrary<EventDef> =>
           return ev;
         }));
 
+// Service (design §3.6, Task 12): carried structure only — every `performs` method targets a
+// transition drawn from the generated aggregates (so it always round-trips), plus one `read-only`
+// method with no target. A param-guard is drawn only when the target aggregate has a numeric field
+// (matching validate's own-scalar-only rule): `field >= param`, mirroring machineArb's own
+// `numField >= <int>` guard shape one level up.
+const paramArb: fc.Arbitrary<ParamDef> = fc.tuple(camel, fc.constantFrom('Int', 'Money', 'Date', 'Duration', 'Id'))
+  .map(([n, prim]) => ({ name: n, type: { kind: 'prim' as const, prim: prim as any } }));
+
+// read-only method: params only, no target aggregate — no field guard is possible (validate
+// treats any field reference in a read-only guard as scope-leaving), so its optional guard (when
+// present) draws a param+param or param+int comparison only.
+const readOnlyMethodArb = (name: string): fc.Arbitrary<MethodDef> =>
+  fc.tuple(uniqNames(camel, 0, 2)).chain(([paramNames]) =>
+    fc.tuple(...paramNames.map(() => paramArb)).chain(params => {
+      const numericParams = params.filter(p => p.type.kind === 'prim' && ['Int', 'Money', 'Date', 'Duration'].includes(p.type.prim));
+      const guardArb: fc.Arbitrary<Predicate | null> = numericParams.length
+        ? fc.option(fc.constantFrom(...numericParams).map(p => ({ kind: 'cmp' as const, op: 'ge' as const,
+            left: { kind: 'param' as const, name: p.name }, right: { kind: 'int' as const, value: 0 } })), { nil: null })
+        : fc.constant(null);
+      return guardArb.map(requires => {
+        const def: MethodDef = { name, params, kind: { readOnly: true } };
+        if (requires) def.requires = requires;
+        return def;
+      });
+    }));
+
+function methodArb(name: string, aggs: AggregateDef[]): fc.Arbitrary<MethodDef> {
+  const targets = aggs.filter(a => a.machine && a.machine.transitions.length > 0);
+  if (!targets.length) return readOnlyMethodArb(name);   // no aggregate has a machine to perform against
+  return fc.constantFrom(...targets).chain(agg => {
+    const t = agg.machine!.transitions[0]!;
+    const numFields = agg.fields.filter(isNumericPrim);
+    // param name must be disjoint from the target aggregate's own field names — a same-named
+    // param and field are both legal individually, but `field >= param` prints as `o >= o` (both
+    // sides identically spelled) and re-parses as param-shadows-field on BOTH occurrences,
+    // an irrecoverable surface-syntax collision (params shadow fields — service.md).
+    const fieldNames = new Set(agg.fields.map(f => f.name));
+    const distinctParamArb = paramArb.filter(p => !fieldNames.has(p.name));
+    const guardArb: fc.Arbitrary<{ param: ParamDef; requires: Predicate } | null> = numFields.length
+      ? fc.option(fc.tuple(distinctParamArb, fc.constantFrom(...numFields)).map(([param, f]) => ({ param,
+          requires: { kind: 'cmp' as const, op: 'ge' as const,
+            left: { kind: 'field' as const, owner: 'self', path: [f.name] },
+            right: { kind: 'param' as const, name: param.name } } })), { nil: null })
+      : fc.constant(null);
+    return guardArb.map(guard => {
+      const params = guard ? [guard.param] : [];
+      const def: MethodDef = { name, params, kind: { performs: { aggregate: agg.name, transition: t.name } } };
+      if (guard) def.requires = guard.requires;
+      return def;
+    });
+  });
+}
+
+const serviceArb = (name: string, aggs: AggregateDef[]): fc.Arbitrary<ServiceDef> =>
+  fc.tuple(uniqNames(camel.filter(n => n !== 'peek'), 1, 2), fc.option(docText, { nil: undefined }))
+    .chain(([methodNames, svcDoc]) =>
+      fc.tuple(...methodNames.map(mn => methodArb(mn, aggs)), readOnlyMethodArb('peek'))
+        .map(methods => {
+          const def: ServiceDef = { name, methods };
+          if (svcDoc) def.doc = svcDoc;
+          return def;
+        }));
+
 // Final stage of arbSpec's chain (Task 10 pulled it out to a named function to keep the deep
 // fc.tuple/.chain nesting above it manageable): given every drawn name-scoped piece, generates the
 // per-aggregate candidate invariants and assembles { model, invariants }.
 function finalSpecArb(context: string, doc: string | undefined, ticksPerDay: number | undefined,
     enums: { name: string; values: string[] }[], aggs: AggregateDef[], entities: EntityDef[],
-    events: EventDef[], values: ValueDef[]): fc.Arbitrary<{ model: DomainModel; invariants: CandidateInvariant[] }> {
-  const model: DomainModel = { context, enums, values, entities: [...entities], aggregates: [...aggs], events: [...events] };
+    events: EventDef[], values: ValueDef[], services: ServiceDef[]): fc.Arbitrary<{ model: DomainModel; invariants: CandidateInvariant[] }> {
+  const model: DomainModel = { context, enums, values, entities: [...entities], aggregates: [...aggs], events: [...events], services };
   if (doc) model.doc = doc;
   if (ticksPerDay !== undefined) model.ticksPerDay = ticksPerDay;
   return fc.tuple(...aggs.map(a =>
@@ -327,7 +390,15 @@ export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateIn
             fc.option(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
               && !entityNames.includes(n) && !eventNames.includes(n) && !childNamePool.includes(n)),
               { nil: undefined })
-            .chain(valueName => {
+            .chain(valueName =>
+            // optional single service (design §3.6, Task 12), name disjoint from every other
+            // top-level name (incl. the value name); drawn ~1/2 the time. Its methods are
+            // generated AFTER the aggregates (see the .chain below) so `performs` always targets
+            // a transition that actually exists.
+            fc.option(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
+              && !entityNames.includes(n) && !eventNames.includes(n) && !childNamePool.includes(n) && n !== valueName),
+              { nil: undefined })
+            .chain(serviceName => {
               const valuesArb: fc.Arbitrary<ValueDef[]> = valueName ? valueArb(valueName).map(v => [v]) : fc.constant([]);
               return fc.tuple(...aggNames.map(() => fc.boolean()))
                 .chain(wantsChild => {
@@ -340,9 +411,12 @@ export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateIn
                     fc.tuple(...eventNames.map(name => eventArb(name))),
                     valuesArb);
                 })
-                .chain(([aggs, entities, events, values]) =>
-                  finalSpecArb(context, doc, ticksPerDay, enums, aggs, entities, events, values));
-            }))))));
+                .chain(([aggs, entities, events, values]) => {
+                  const servicesArb: fc.Arbitrary<ServiceDef[]> = serviceName ? serviceArb(serviceName, aggs).map(s => [s]) : fc.constant([]);
+                  return servicesArb.chain(services =>
+                    finalSpecArb(context, doc, ticksPerDay, enums, aggs, entities, events, values, services));
+                });
+            })))))));
 
 export const arbContextMap: fc.Arbitrary<ContextMapModel> = (() => {
   const name = (i: number) => `Ctx${i}`;

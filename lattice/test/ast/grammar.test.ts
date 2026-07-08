@@ -21,7 +21,7 @@ const model: any = {
     ],
     machine: { regions: [{ name: 'Access', initial: 'Trialing', states: [{ name: 'Trialing' }, { name: 'Active', tags: ['active'] }, { name: 'Ended', tags: ['terminal'] }] }], transitions: [] }
   }],
-  events: []
+  events: [], services: []
 };
 
 const uniqueCand: Candidate = {
@@ -188,7 +188,7 @@ const base = (target: string): DomainModel => ({
       { name: 'plan', type: { kind: 'ref', target } }
     ]
   }],
-  events: []
+  events: [], services: []
 });
 
 // Task 11: value semantics — a value-typed field is one flat, inline hop (design §3.5): the path

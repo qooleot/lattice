@@ -121,6 +121,7 @@ function termToAlloy(m: DomainModel, ownerName: string, t: Term, v: string): str
     case 'enumval': return t.value;
     case 'now': throw new Error('now is not expressible structurally — route to quint');
     case 'plus': return `${termToAlloy(m, ownerName, t.left, v)}.plus[${termToAlloy(m, ownerName, t.right, v)}]`;
+    case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
 }
 function predToAlloy(m: DomainModel, ownerName: string, p: Predicate, agg: string, v: string): string {

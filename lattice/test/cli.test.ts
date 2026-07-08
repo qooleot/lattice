@@ -191,7 +191,7 @@ describe('engine CLI', () => {
   it('emit lists an adopted implied-shape rule once in prose even with jumbled key order', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'emit-dedup-'));
     const model = {
-      context: 'Dedup', enums: [], values: [], events: [], entities: [],
+      context: 'Dedup', enums: [], values: [], events: [], entities: [], services: [],
       aggregates: [{ kind: 'aggregate', name: 'Box', fields: [
         { name: 'boxId', type: { kind: 'prim', prim: 'Id' }, key: true },
         { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }],

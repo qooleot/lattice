@@ -4,7 +4,7 @@ import type { DomainModel } from '../../src/ast/domain.js';
 
 const model = (opts: { emits: string }): DomainModel => ({
   context: 'C', enums: [], values: [], entities: [],
-  events: [{ name: 'Paid', fields: [] }],
+  events: [{ name: 'Paid', fields: [] }], services: [],
   aggregates: [{ kind: 'aggregate', name: 'A',
     fields: [{ name: 'aId', type: { kind: 'prim', prim: 'Id' }, key: true }],
     machine: { regions: [{ name: 'lc', initial: 's1',

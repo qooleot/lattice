@@ -9,9 +9,10 @@ function termEn(t: Term): string {
     case 'enumval': return t.value;
     case 'now': return 'now';
     case 'plus': return `${termEn(t.left)} + ${termEn(t.right)}`;
+    case 'param': return t.name;
   }
 }
-function predEn(p: Predicate): string {
+export function predEn(p: Predicate): string {
   switch (p.kind) {
     case 'cmp': { const ops = { eq: 'is', ne: 'is not', lt: '<', le: '≤', gt: '>', ge: '≥' }; return `${termEn(p.left)} ${ops[p.op]} ${termEn(p.right)}`; }
     case 'inState': return `it is ${p.states.join(' or ')}`;
@@ -58,6 +59,19 @@ export function astToProse(m: DomainModel, adopted: CandidateInvariant[], ledger
       } else {
         lines.push(`**${r.name} states:** ${r.states.map(s => label(s.name)).join(', ')}`, '');
       }
+    }
+  }
+  if (m.services.length) {
+    lines.push('## Services', '');
+    for (const s of m.services) {
+      if (s.doc) lines.push(`*${s.doc}*`, '');
+      for (const mm of s.methods) {
+        const what = 'readOnly' in mm.kind ? 'reads'
+          : 'creates' in mm.kind ? `creates a ${mm.kind.creates}`
+          : `performs ${mm.kind.performs.aggregate}.${mm.kind.performs.transition}`;
+        lines.push(`- **${mm.name}**(${mm.params.map(p => p.name).join(', ')}) — ${what}${mm.requires ? `, requires ${predEn(mm.requires)}` : ''}`);
+      }
+      lines.push('');
     }
   }
   lines.push('## Always true', '');

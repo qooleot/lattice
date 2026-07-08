@@ -4,7 +4,7 @@ import { ownedCollectionChild } from '../../src/ast/domain.js';
 import type { DomainModel, AggregateDef } from '../../src/ast/domain.js';
 
 const inv = (childFields: any[], listOf = 'InvoiceLine'): DomainModel => ({
-  context: 'C', enums: [], values: [], entities: [], events: [],
+  context: 'C', enums: [], values: [], entities: [], events: [], services: [],
   aggregates: [{ kind: 'aggregate', name: 'Invoice',
     fields: [
       { name: 'invId', type: { kind: 'prim', prim: 'Id' }, key: true },

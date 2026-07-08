@@ -71,7 +71,8 @@
     ],
     "aggregates": [],
     "events": [],
-    "doc": "Product catalog: plan definitions consumed by Subscriptions."
+    "doc": "Product catalog: plan definitions consumed by Subscriptions.",
+    "services": []
   },
   "candidates": [
     {

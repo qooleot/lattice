@@ -15,12 +15,24 @@ export const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * own `value-cross-field` — same walker, distinct vocabulary per call site (§5.2.1). `label` is the
  * message prefix (e.g. "transition settle" or "value Period.wellOrdered"), `at` the diagnostic's
  * `at` location.
+ *
+ * `params` (design §3.6, Task 12): an optional param-name set makes `param` terms legal — any
+ * `param` term whose name isn't in the set is `unknown-param`. When `fields` is empty AND `params`
+ * is non-empty (a `read-only` method's guard, which has no target aggregate), an ordinary `field`
+ * term is treated the same as a scope-leaving path (`crossCode`) rather than `unknown-path` — a
+ * read-only method has no own scope to read fields FROM, so any field reference "leaves scope" by
+ * construction, distinct from a performs/creates method that legitimately has zero fields.
  */
 function checkScopedPred(fields: Field[], regions: { name: string; states: { name: string }[] }[],
-    enums: Map<string, string[]>, label: string, at: string, p: Predicate, out: Diagnostic[], crossCode: string): void {
+    enums: Map<string, string[]>, label: string, at: string, p: Predicate, out: Diagnostic[], crossCode: string,
+    params?: Set<string>, noOwnScope = false): void {
   const term = (tm: Term): void => {
     switch (tm.kind) {
       case 'field': {
+        if (noOwnScope) {
+          out.push({ code: crossCode, message: `${label}: path ${tm.path.join('.')} leaves the own scope — v1 reads own fields only`, at });
+          return;
+        }
         if (tm.path.length !== 1) {
           // multi-segment = ref-hop or nested-value path; scoped predicates are own-scalar-only in v1
           out.push({ code: crossCode, message: `${label}: path ${tm.path.join('.')} leaves the own scope — v1 reads own fields only`, at });
@@ -38,6 +50,11 @@ function checkScopedPred(fields: Field[], regions: { name: string; states: { nam
       }
       case 'plus': term(tm.left); term(tm.right); break;
       case 'int': case 'now': break;
+      case 'param': {
+        if (!params || !params.has(tm.name))
+          out.push({ code: 'unknown-param', message: `${label}: references unknown param ${tm.name}`, at });
+        break;
+      }
     }
   };
   const walk = (q: Predicate): void => {
@@ -99,6 +116,13 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   for (const e of m.events) {
     checkName('event', e.name, e.name);
     for (const f of e.fields) checkName('field', f.name, `${e.name}.${f.name}`);
+  }
+  for (const s of m.services) {
+    checkName('service', s.name, s.name);
+    for (const mm of s.methods) {
+      checkName('method', mm.name, `${s.name}.${mm.name}`);
+      for (const p of mm.params) checkName('param', p.name, `${s.name}.${mm.name}.${p.name}`);
+    }
   }
 
   const names = new Map<string, number>();
@@ -188,6 +212,39 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       if (t.requires) checkGuard(a, enumMap, t.name, t.requires, out);
       if (t.emits && !events.has(t.emits))
         out.push({ code: 'unknown-event', message: `transition ${t.name} emits undeclared event ${t.emits}`, at: t.name });
+    }
+  });
+
+  // Services (design §3.6, Task 12): carried structure only — never solver-encoded. Each method
+  // names exactly one target (read-only query, `performs` a declared transition, or `creates` an
+  // aggregate); `requires` is a method-level guard over params + (for performs/creates) the target
+  // aggregate's own fields/states, reusing the shared checkScopedPred walker with a param-name set.
+  m.services.forEach(s => {
+    for (const mm of s.methods) {
+      const at = `${s.name}.${mm.name}`;
+      for (const p of mm.params) checkType(p.type, `${at}.${p.name}`);
+      if (mm.returns) checkType(mm.returns, `${at}.returns`);
+      const paramNames = new Set(mm.params.map(p => p.name));
+
+      if ('performs' in mm.kind) {
+        const { aggregate, transition } = mm.kind.performs;
+        const agg = m.aggregates.find(a => a.name === aggregate);
+        if (!agg) { out.push({ code: 'unknown-aggregate', message: `method ${at}: performs names missing aggregate ${aggregate}`, at }); continue; }
+        const t = agg.machine?.transitions.find(x => x.name === transition);
+        if (!t) { out.push({ code: 'unknown-transition', message: `method ${at}: performs names missing transition ${aggregate}.${transition}`, at }); continue; }
+        if (mm.requires)
+          checkScopedPred(agg.fields, agg.machine?.regions ?? [], enumMap, `method ${at}: requires`, at, mm.requires, out, 'guard-cross-aggregate', paramNames);
+      } else if ('creates' in mm.kind) {
+        const aggregate = mm.kind.creates;
+        const agg = m.aggregates.find(a => a.name === aggregate);
+        if (!agg) { out.push({ code: 'unknown-aggregate', message: `method ${at}: creates names missing aggregate ${aggregate}`, at }); continue; }
+        if (mm.requires)
+          checkScopedPred(agg.fields, agg.machine?.regions ?? [], enumMap, `method ${at}: requires`, at, mm.requires, out, 'guard-cross-aggregate', paramNames);
+      } else {
+        // read-only: no target aggregate — requires may reference params only
+        if (mm.requires)
+          checkScopedPred([], [], enumMap, `method ${at}: requires`, at, mm.requires, out, 'guard-cross-aggregate', paramNames, true);
+      }
     }
   });
   return out;

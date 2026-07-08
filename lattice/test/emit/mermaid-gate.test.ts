@@ -6,7 +6,7 @@ import { domainToMermaid } from '../../src/emit/mermaid/domainDiagram.js';
 import { contextMapToMermaid } from '../../src/emit/mermaid/contextMap.js';
 import { specDiagramFiles, workspaceDiagramFiles } from '../../src/emit/mermaid/docs.js';
 import { order, model, map } from './mermaid.test.js';
-import type { AggregateDef } from '../../src/ast/domain.js';
+import type { AggregateDef, DomainModel } from '../../src/ast/domain.js';
 
 mermaid.initialize({ startOnLoad: false });
 // mermaid.parse with suppressErrors:false never resolves to `false` — it resolves to a
@@ -21,6 +21,25 @@ describe('generated mermaid parses (the GitHub-renderability gate)', () => {
   it('statechart', async () => expect(await valid(machineToMermaid(order, order.machine!.regions[0]!))).toBe(true));
   it('domain diagram (incl. «key», List~T~, external stub, namespace)', async () =>
     expect(await valid(domainToMermaid(model))).toBe(true));
+
+  // Task 12: services (design §3.6) — a <<service>> class box and its dashed dependency edges
+  // must be valid mermaid classDiagram syntax through the real parser, not just string-matched.
+  it('domain diagram with a service class box and dependency edges', async () => {
+    const withService: DomainModel = { context: 'Billing',
+      enums: [], values: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Subscription', fields: [
+        { name: 'subId', type: { kind: 'prim', prim: 'Id' }, key: true }],
+        machine: { regions: [{ name: 'Access', initial: 'trialing',
+            states: [{ name: 'trialing' }, { name: 'active', tags: ['terminal'] }] }],
+          transitions: [{ name: 'activate', region: 'Access', from: ['trialing'], to: 'active' }] } }],
+      events: [],
+      services: [{ name: 'SubscriptionOps', doc: 'Subscription lifecycle API.', methods: [
+        { name: 'createSubscription', params: [{ name: 'seats', type: { kind: 'prim', prim: 'Int' } }], kind: { creates: 'Subscription' } },
+        { name: 'activate', params: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }], kind: { performs: { aggregate: 'Subscription', transition: 'activate' } } },
+        { name: 'getSubscription', params: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }], kind: { readOnly: true } },
+      ] }] };
+    expect(await valid(domainToMermaid(withService))).toBe(true);
+  });
   it('context map (incl. label edges and ---|kind| edges)', async () =>
     expect(await valid(contextMapToMermaid(map))).toBe(true));
 
