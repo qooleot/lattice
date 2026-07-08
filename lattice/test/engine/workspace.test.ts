@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadWorkspace, compileWorkspace } from '../../src/engine/workspace.js';
 
@@ -102,6 +102,40 @@ describe('loadWorkspace', () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.diagnostics.some((x: any) => x.code === 'context-name-mismatch')).toBe(true);
+  });
+
+  it('rejects a member path that escapes the workspace via ../', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'lat-outside-'));
+    writeMember(outside, 'catalog', CATALOG_SPEC);   // exists, but must never be read
+    writeFileSync(join(dir, 'context-map.lat'),
+      `contextMap Acme {\n  contains Catalog from "${join('..', basename(outside), 'catalog')}"\n}\n`);
+    const r = loadWorkspace(dir);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    const d = r.diagnostics.find((x: any) => x.code === 'invalid-member-path');
+    expect(d).toBeDefined();
+    expect(JSON.stringify(d)).toContain('Catalog');
+  });
+
+  it('rejects an absolute member path', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'lat-outside-'));
+    writeMember(outside, 'catalog', CATALOG_SPEC);
+    writeFileSync(join(dir, 'context-map.lat'),
+      `contextMap Acme {\n  contains Catalog from "${join(outside, 'catalog')}"\n}\n`);
+    const r = loadWorkspace(dir);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.diagnostics.some((x: any) => x.code === 'invalid-member-path')).toBe(true);
+  });
+
+  it('accepts a nested relative member path inside the workspace', () => {
+    writeFileSync(join(dir, 'context-map.lat'),
+      `contextMap Acme {\n  contains Catalog from "packages/catalog"\n}\n`);
+    writeMember(dir, join('packages', 'catalog'), CATALOG_SPEC);
+    const r = loadWorkspace(dir);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    expect(r.members[0]!.dir).toBe(join(dir, 'packages', 'catalog'));
   });
 
   it('bubbles up uncovered cross-context ref from validateWorkspace', () => {
