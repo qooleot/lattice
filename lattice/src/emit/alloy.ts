@@ -1,5 +1,5 @@
 import type { DomainModel, AggregateDef, EntityDef } from '../ast/domain.js';
-import { isQualifiedRef } from '../ast/domain.js';
+import { isQualifiedRef, ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, Path, Predicate, Term } from '../ast/invariant.js';
 import type { SalientFact } from '../engine/session.js';
 
@@ -43,6 +43,32 @@ function emitOwnerSig(o: AggregateDef | EntityDef): string {
   const machine = (o as AggregateDef).machine;
   for (const r of machine?.regions ?? []) fields.push(`  ${r.name}_state: one ${o.name}_${r.name}`);
   return `sig ${o.name} {\n${fields.join(',\n')}\n}`;
+}
+
+/**
+ * Owned-collection children (design §6.1/§6.3): each `list` field ranging over a nested entity
+ * becomes its own sig with a by-construction `owner: one <Parent>` relation — containment, not a
+ * bare ref. This is the mirror image of emitOwnerSig, which already has no branch matching `list`
+ * fields and so silently omits the parent-side relation (children point up, parents don't point
+ * down). Child `key` fields are dropped, same as every other sig here — keys are witness-invisible
+ * across the board (entity.md); within-parent key uniqueness is enforced by validateModel +
+ * evaluator convention only, never by the solver encoding.
+ */
+function emitChildSigs(a: AggregateDef): string[] {
+  const out: string[] = [];
+  for (const f of a.fields) {
+    const child = ownedCollectionChild(a, f);
+    if (!child) continue;
+    const fields = [`  owner: one ${a.name}`];
+    for (const cf of child.fields) {
+      if (cf.key) continue;
+      if (cf.type.kind === 'enum') fields.push(`  ${cf.name}: one ${cf.type.enum}`);
+      else if (cf.type.kind === 'prim' && isIntPrim(cf.type.prim)) fields.push(`  ${cf.name}: one Int`);
+      // Text/Id dropped — atom identity suffices, same convention as emitOwnerSig
+    }
+    out.push(`sig ${child.name} {\n${fields.join(',\n')}\n}`);
+  }
+  return out;
 }
 
 function emitStateSigs(a: AggregateDef): string {
@@ -196,7 +222,7 @@ export function astToAlloy(m: DomainModel, q: AlloyQuery): string {
   const parts: string[] = [`module lattice_q`];
   for (const e of m.enums) parts.push(`abstract sig ${e.name} {}\n` + e.values.map(v => `one sig ${v} extends ${e.name} {}`).join('\n'));
   for (const e of m.entities) parts.push(emitOwnerSig(e));
-  for (const a of m.aggregates) { parts.push(emitStateSigs(a)); parts.push(emitOwnerSig(a)); }
+  for (const a of m.aggregates) { parts.push(emitStateSigs(a)); parts.push(emitOwnerSig(a)); parts.push(...emitChildSigs(a)); }
   parts.push(candidateToPred(q.hi, 'Hi'));
   if (q.hj) parts.push(candidateToPred(q.hj, 'Hj'));
   q.exclusions.forEach((facts, i) => parts.push(shapeToPred(facts, q.hi, `shape${i}`)));

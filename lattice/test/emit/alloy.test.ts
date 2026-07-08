@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { astToAlloy } from '../../src/emit/alloy.js';
 import type { Candidate } from '../../src/ast/invariant.js';
-import { traceAModel } from '../fixtures.js';
+import { traceAModel, invoiceLinesModel, someStatePredicateOnInvoice } from '../fixtures.js';
 
 const h1: Candidate = { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] };
 const h2: Candidate = { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer'], ['plan']] };
@@ -96,5 +96,18 @@ describe('astToAlloy', () => {
       { dim: 'customer equal', value: true }
     ]], scope: 4 });
     expect(als).toContain('run q { ((Hi and not Hj) or (not Hi and Hj)) and (not shape0) } for 4 but 5 Int');
+  });
+
+  // Task 7: owned collections (design §6.1/§6.3) — the child entity behind a `list` field becomes
+  // its own sig with a by-construction `owner: one <Parent>` relation (containment, not a bare
+  // ref); the parent sig itself carries NO relation for the list field (children point up, not
+  // down — see emitOwnerSig, which already only matches ref/enum/prim fields and so silently
+  // drops list fields with no branch change needed).
+  it('emits owned children as sigs with one owner, and no list relation on the parent', () => {
+    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-permit', hi: someStatePredicateOnInvoice, exclusions: [], scope: 4 });
+    expect(src).toContain('sig InvoiceLine {');
+    expect(src).toContain('owner: one Invoice');
+    expect(src).toContain('amount: one Int');
+    expect(src).not.toContain('lines:');
   });
 });
