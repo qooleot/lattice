@@ -49,6 +49,10 @@ export function candidateBodyText(c: Candidate): string {
       if (c.parts.length < 2) throw new Error(`cannot print conservation on ${c.aggregate}: needs >= 2 parts, got ${c.parts.length}`);
       return `conserve ${c.parts.map(p => p.join('.')).join(' + ')} == ${c.total.join('.')}`;
     case 'leadsTo': return `from ${predToText(c.from)} leads to ${predToText(c.to)} under fairness "${c.fairness}"`;
+    case 'sumOverCollection': {
+      const ops = { eq: '==', le: '<=', ge: '>=' } as const;
+      return `${c.total.join('.')} ${ops[c.op]} sum(${c.collection}, ${c.field})`;
+    }
   }
 }
 

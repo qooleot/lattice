@@ -113,6 +113,18 @@ export function evaluateCandidate(c: Candidate, s: CaseState): Verdict {
       return 'permit';
     }
     case 'leadsTo': return 'permit'; // liveness is not judgeable on a finite case; template-only (§6.1)
+    case 'sumOverCollection': {
+      for (const e of subjects()) {
+        const kids = s.entities.filter(x => x.type === c.child && x.fields['owner'] === e.id);
+        const vals = kids.map(k => k.fields[c.field]);
+        const total = resolveValue(s, e, c.total);
+        if (vals.some(v => typeof v !== 'number') || typeof total !== 'number') continue;  // unknown facts don't convict
+        const sum = (vals as number[]).reduce((a, b) => a + b, 0);
+        const ok = c.op === 'eq' ? total === sum : c.op === 'le' ? total <= sum : total >= sum;
+        if (!ok) return 'forbid';
+      }
+      return 'permit';
+    }
   }
 }
 

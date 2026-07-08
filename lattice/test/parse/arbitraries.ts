@@ -2,6 +2,7 @@ import fc from 'fast-check';
 import type { DomainModel, AggregateDef, EntityDef, Field, EventDef, Machine, StateDef,
   TransitionDef, TypeRef } from '../../src/ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Cmp } from '../../src/ast/invariant.js';
+import { ownedCollectionChild } from '../../src/ast/domain.js';
 import { RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
 import type { ContextMapModel, Relationship, RelationshipKind, Role } from '../../src/ast/contextmap.js';
 import { defaultPath } from '../../src/ast/contextmap.js';
@@ -126,6 +127,14 @@ function candidateArb(agg: AggregateDef, enums: { name: string; values: string[]
     fc.constantFrom(...paths).map(field => ({ kind: 'monotonic' as const, aggregate: agg.name, field })));
   if (paths.length >= 3) arbs.push(fc.constant({ kind: 'conservation' as const, aggregate: agg.name,
     parts: [paths[0]!, paths[1]!], total: paths[2]! }));
+  const owned = agg.fields.map(f => ({ f, child: ownedCollectionChild(agg, f) })).filter(x => x.child);
+  const numPaths = agg.fields.filter(isNumericPrim).map(f => [f.name]);
+  if (owned.length && numPaths.length) {
+    const numChildFields = owned[0]!.child!.fields.filter(isNumericPrim).map(f => f.name);
+    if (numChildFields.length) arbs.push(fc.constantFrom<'eq' | 'le' | 'ge'>('eq', 'le', 'ge').map(op =>
+      ({ kind: 'sumOverCollection' as const, aggregate: agg.name, collection: owned[0]!.f.name,
+         child: owned[0]!.child!.name, field: numChildFields[0]!, op, total: numPaths[0]! })));
+  }
   if (agg.machine) {
     const r = agg.machine.regions[0]!;
     if (paths.length) arbs.push(fc.uniqueArray(fc.constantFrom(...r.states.map(s => s.name)), { minLength: 1, maxLength: 2 })

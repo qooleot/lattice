@@ -1,6 +1,6 @@
 # Invariant forms
 
-An [invariant](invariant.md)'s `{ <body> }` is one of eight closed forms (the "closed candidate
+An [invariant](invariant.md)'s `{ <body> }` is one of nine closed forms (the "closed candidate
 grammar," spec §6.1 — growing this set is a versioned act, not something a spec author can do
 locally). Each is shown below with a complete, parseable example.
 
@@ -171,6 +171,30 @@ context Billing {
       from state standing in {trialing} leads to state standing in {active}
         under fairness "activate is enabled infinitely often"
     }
+  }
+}
+```
+
+## 9. `sumOverCollection` — a field equals/bounds the sum over an owned collection
+
+`<path> ('=='|'<='|'>=') sum(<collection>, <field>)` — the named own field on the aggregate
+equals (or bounds) the sum of `<field>` across every row of an *owned collection* (design §3.2:
+a `List<Child>` field whose child is a nested entity declared inside the aggregate). Quint-routed
+only (spec §6.1) — Alloy encodes this form as an adopted constraint, not a checked one.
+
+```lat
+context Billing {
+  aggregate Invoice {
+    invId    : Id key
+    totalDue : Money @total
+    lines    : List<InvoiceLine>
+
+    entity InvoiceLine {
+      lineId : Id key
+      amount : Money
+    }
+
+    invariant totalMatchesLines { totalDue == sum(lines, amount) }
   }
 }
 ```

@@ -31,6 +31,10 @@ export function renderCandidateEnglish(c: Candidate): string {
     case 'monotonic': return `${c.aggregate}.${c.field.join('.')} never decreases.`;
     case 'conservation': return `On every ${c.aggregate}, ${c.parts.map(p => p.join('.')).join(' + ')} always equals ${c.total.join('.')}.`;
     case 'leadsTo': return `${c.aggregate}: ${predEn(c.from)} eventually leads to ${predEn(c.to)} (under fairness: ${c.fairness}).`;
+    case 'sumOverCollection': {
+      const rel = c.op === 'eq' ? 'always equals' : c.op === 'le' ? 'never exceeds' : 'is never below';
+      return `On every ${c.aggregate}, ${c.total.join('.')} ${rel} the sum of ${c.field} over its ${c.collection}.`;
+    }
   }
 }
 

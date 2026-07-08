@@ -15,6 +15,6 @@ export const RESERVED_WORDS: ReadonlySet<string> = new Set([
   'contextMap', 'count', 'downstream', 'emits', 'entity', 'enum', 'event', 'exposes', 'fairness',
   'from', 'in', 'invariant', 'key', 'leads', 'lifecycle', 'List', 'monotonic', 'now', 'of', 'on', 'openHost',
   'partnership', 'publishedLanguage', 'ref', 'refs', 'requires', 'resolve', 'roles', 'sharedKernel',
-  'state', 'states', 'terminal', 'ticksPerDay', 'to', 'transition', 'under', 'unique', 'upstream',
+  'state', 'states', 'sum', 'terminal', 'ticksPerDay', 'to', 'transition', 'under', 'unique', 'upstream',
   'when', 'where', 'while', 'with',
 ]);

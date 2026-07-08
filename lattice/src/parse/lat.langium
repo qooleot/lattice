@@ -87,7 +87,7 @@ InvariantDecl:
     docs+=DOC* 'invariant' name=ID ('on' target=ID)? ('where' where=Predicate)? '{' body=InvariantBody '}';
 
 InvariantBody:
-    UniqueBody | RefsResolveBody | CardinalityBody | TerminalBody | MonotonicBody | ConserveBody | LeadsToBody | PredicateBody;
+    UniqueBody | RefsResolveBody | CardinalityBody | TerminalBody | MonotonicBody | ConserveBody | LeadsToBody | SumBody | PredicateBody;
 
 UniqueBody:
     'unique' 'while' region=ID 'in' '{' states+=ID (',' states+=ID)* '}' 'by' '(' by+=PathExpr (',' by+=PathExpr)* ')';
@@ -109,6 +109,9 @@ ConserveBody:
 
 LeadsToBody:
     'from' from=Predicate 'leads' 'to' to=Predicate 'under' 'fairness' fairness=STRING;
+
+SumBody:
+    total=PathExpr op=('=='|'<='|'>=') 'sum' '(' collection=ID ',' field=ID ')';
 
 PredicateBody:
     pred=Predicate;

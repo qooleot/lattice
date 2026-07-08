@@ -26,7 +26,14 @@ export type Candidate =
   | { kind: 'terminal'; aggregate: string; region: string; state: string }
   | { kind: 'monotonic'; aggregate: string; field: Path }
   | { kind: 'conservation'; aggregate: string; parts: Path[]; total: Path }
-  | { kind: 'leadsTo'; aggregate: string; from: Predicate; to: Predicate; fairness: string }; // template-instantiated ONLY
+  | { kind: 'leadsTo'; aggregate: string; from: Predicate; to: Predicate; fairness: string } // template-instantiated ONLY
+  // elicitable; quint-routed; alloy encodes as adopted constraint only
+  | { kind: 'sumOverCollection'; aggregate: string;
+      collection: string;                 // owned List field name on the aggregate
+      child: string;                      // the nested entity's name (== ownedCollectionChild(...).name)
+      field: string;                      // numeric field on the child
+      op: 'eq' | 'le' | 'ge';
+      total: Path };                      // single-segment numeric path on the aggregate
 
 export interface CandidateInvariant {
   id: string;

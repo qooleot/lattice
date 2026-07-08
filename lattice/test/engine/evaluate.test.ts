@@ -100,4 +100,17 @@ describe('evaluateCandidate', () => {
     };
     expect(evaluateCandidate(c, s)).toBe('forbid');
   });
+
+  const sum = (over: Partial<any> = {}): any => ({ kind: 'sumOverCollection', aggregate: 'Invoice',
+    collection: 'lines', child: 'InvoiceLine', field: 'amount', op: 'eq', total: ['totalDue'], ...over });
+  const st = (amounts: number[], total: number): CaseState => ({ entities: [
+    { type: 'Invoice', id: 'i1', fields: { totalDue: total, 'lines.count': amounts.length } },
+    ...amounts.map((a, i) => ({ type: 'InvoiceLine', id: `i1#lines${i}`, fields: { amount: a, owner: 'i1' } })),
+  ]});
+  it('sumOverCollection: forbids mismatched totals, permits exact and unknown', () => {
+    expect(evaluateCandidate(sum(), st([3, 4], 7))).toBe('permit');
+    expect(evaluateCandidate(sum(), st([3, 4], 8))).toBe('forbid');
+    expect(evaluateCandidate(sum({ op: 'le' }), st([3, 4], 9))).toBe('forbid');   // total <= sum fails: 9 > 7
+    expect(evaluateCandidate(sum(), { entities: [{ type: 'Invoice', id: 'i1', fields: {} }] })).toBe('permit'); // unknown
+  });
 });

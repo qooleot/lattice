@@ -1,6 +1,7 @@
 import { parseLat, type ParseDiagnostic } from './parse.js';
 import type * as G from './generated/ast.js';
 import type { DomainModel, EnumDef, EntityDef, AggregateDef, EventDef, Field, TypeRef, Machine, Region, StateDef, TransitionDef } from '../ast/domain.js';
+import { ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Path } from '../ast/invariant.js';
 import { validateModel } from '../ast/validate.js';
 import { validateCandidate } from '../ast/grammar.js';
@@ -116,7 +117,7 @@ function mapPred(p: G.Predicate, enums: Map<string, string[]>): Predicate {
 
 const mapPath = (p: G.PathExpr): Path => [...p.segments];
 
-function mapBody(inv: G.InvariantDecl, aggregate: string, enums: Map<string, string[]>): Candidate {
+function mapBody(inv: G.InvariantDecl, aggregate: string, aggDef: AggregateDef | undefined, enums: Map<string, string[]>): Candidate {
   const b = inv.body;
   const where = inv.where ? mapPred(inv.where, enums) : undefined;
   switch (b.$type) {
@@ -137,6 +138,14 @@ function mapBody(inv: G.InvariantDecl, aggregate: string, enums: Map<string, str
       // Langium's default value converter already strips STRING-terminal quotes (rule name STRING
       // triggers ValueConverter.convertString); slicing again here truncated the first/last real chars.
       fairness: (b as G.LeadsToBody).fairness };
+    case 'SumBody': {
+      const b2 = b as G.SumBody;
+      const f = aggDef?.fields.find(x => x.name === b2.collection);
+      const child = aggDef && f ? ownedCollectionChild(aggDef, f) : null;
+      const ops: Record<string, 'eq' | 'le' | 'ge'> = { '==': 'eq', '<=': 'le', '>=': 'ge' };
+      return { kind: 'sumOverCollection', aggregate, collection: b2.collection,
+        child: child?.name ?? '', field: b2.field, op: ops[b2.op]!, total: mapPath(b2.total) };
+    }
     default: {
       const c: Candidate = { kind: 'statePredicate', aggregate, body: mapPred((b as G.PredicateBody).pred, enums) };
       if (where) (c as any).where = where;
@@ -274,7 +283,7 @@ export function loadLatText(text: string): LoadResult {
   const invariants: CandidateInvariant[] = [];
   for (const { decl, owner } of rawInvs) {
     let candidate: Candidate;
-    try { candidate = mapBody(decl, owner, enumMap); }
+    try { candidate = mapBody(decl, owner, model.aggregates.find(x => x.name === owner), enumMap); }
     catch (err) { diags.push(diag('unmapped-construct', String(err), decl)); continue; }
     if (decl.where && candidate.kind !== 'statePredicate') {
       // grammar accepts a header `where` on any body; only statePredicate carries one in the AST
