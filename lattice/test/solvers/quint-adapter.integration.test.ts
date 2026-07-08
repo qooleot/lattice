@@ -7,8 +7,9 @@ import { nextQuestion } from '../../src/engine/planner.js';
 import { registerCandidates } from '../../src/engine/hypothesis.js';
 import { newSession } from '../../src/engine/session.js';
 import { realDeps } from '../../src/cli.js';
-import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice, sumCandidate } from '../fixtures.js';
+import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice, sumCandidate, periodModel } from '../fixtures.js';
 import type { Candidate } from '../../src/ast/invariant.js';
+import { remapValueKeys } from '../../src/engine/witness.js';
 
 describe('quint adapter (integration)', () => {
   it('finds a disagreement witness between grace-0 and grace-window rules', async () => {
@@ -147,5 +148,37 @@ describe('quint adapter (integration)', () => {
     // witness's own child rows + parent total, not just "differ from each other" by accident.
     expect(eqVerdict).toBe(total === sum ? 'permit' : 'forbid');
     expect(leVerdict).toBe(total <= sum ? 'permit' : 'forbid');
+  }, 180_000);
+
+  // Task 11 (design §3.5): value semantics round-trip through the real quint/Apalache solver.
+  // period is emitted as an inline nested record (astToQuint's fieldQType value case); the ITF
+  // witness represents it as a plain (non-'#map') object, which the adapter flattens to
+  // period_start/period_end (quint-adapter.ts's stateToEntities), then remapValueKeys (the same
+  // normalization realDeps applies at the cli.ts boundary) converts to dotted period.start/
+  // period.end — judged consistently by evaluateCandidate against the witness's own values.
+  it('round-trips a value field through the real solver: witness carries period.start/period.end post-remap, judged consistently', async () => {
+    const periodCand: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt',
+        left: { kind: 'field', owner: 'self', path: ['period', 'start'] },
+        right: { kind: 'field', owner: 'self', path: ['period', 'end'] } } };
+    const em = astToQuint(periodModel, { kind: 'probe-forbid', hi: periodCand, exclusions: [], maxSteps: 4 });
+    expect(em.source).toContain('period: { start: int, end: int }');
+
+    const r = await runQuint(em, 4);
+    expect(r.violated).toBe(true);
+    const raw = r.witness!;
+    const rawSub = raw.entities.find(e => e.type === 'Subscription')!;
+    expect(rawSub.fields).toHaveProperty('period_start');   // guard: pre-remap shape is underscore-flattened
+
+    const w = remapValueKeys(periodModel, raw);
+    const sub = w.entities.find(e => e.type === 'Subscription')!;
+    expect(sub.fields['period.start']).toBeTypeOf('number');
+    expect(sub.fields['period.end']).toBeTypeOf('number');
+    expect(sub.fields).not.toHaveProperty('period_start');
+
+    // probe-forbid asked for a violation of `period.start < period.end` — evaluateCandidate must
+    // agree with the witness's own (now-dotted) field values, not just report SOME verdict.
+    expect(evaluateCandidate(periodCand, w)).toBe('forbid');
+    expect(Number(sub.fields['period.start'])).toBeGreaterThanOrEqual(Number(sub.fields['period.end']));
   }, 180_000);
 });

@@ -3,6 +3,9 @@ import { isQualifiedRef, ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, Path, Predicate, Term } from '../ast/invariant.js';
 import type { SalientFact } from '../engine/session.js';
 
+const ownerByName = (m: DomainModel, name: string): AggregateDef | EntityDef | undefined =>
+  [...m.entities, ...m.aggregates].find(o => o.name === name);
+
 export interface AlloyQuery {
   kind: 'distinguish' | 'probe-forbid' | 'probe-permit';
   hi: Candidate; hj?: Candidate;
@@ -27,7 +30,7 @@ export interface AlloyQuery {
 
 const isIntPrim = (p: string) => ['Int', 'Money', 'Date', 'Duration'].includes(p);
 
-function emitOwnerSig(o: AggregateDef | EntityDef): string {
+function emitOwnerSig(m: DomainModel, o: AggregateDef | EntityDef): string {
   const fields: string[] = [];
   for (const f of o.fields) {
     if (f.key) continue;
@@ -38,6 +41,18 @@ function emitOwnerSig(o: AggregateDef | EntityDef): string {
     }
     else if (f.type.kind === 'enum') fields.push(`  ${f.name}: one ${f.type.enum}`);
     else if (f.type.kind === 'prim' && isIntPrim(f.type.prim)) fields.push(`  ${f.name}: one Int`);
+    // Value fields (design §3.5): a keyless, flat structural type flattens to underscore-joined
+    // sig relations — `period: Period{start,end}` becomes `period_start: one Int, period_end: one
+    // Int` — never a nested sig (values have no identity for Alloy to quantify over).
+    else if (f.type.kind === 'value') {
+      const valueName = f.type.value;
+      const vdef = m.values.find(v => v.name === valueName);
+      for (const sub of vdef?.fields ?? []) {
+        if (sub.type.kind === 'enum') fields.push(`  ${f.name}_${sub.name}: one ${sub.type.enum}`);
+        else if (sub.type.kind === 'prim' && isIntPrim(sub.type.prim)) fields.push(`  ${f.name}_${sub.name}: one Int`);
+        // Text/Id sub-fields dropped, same convention as top-level fields
+      }
+    }
     // Text/Id dropped — atom identity suffices
   }
   const machine = (o as AggregateDef).machine;
@@ -80,49 +95,64 @@ function emitStateSigs(a: AggregateDef): string {
 
 const alloyPath = (v: string, p: Path) => [v, ...p].join('.');
 
+/**
+ * Value-aware field path rendering (design §3.5): a path hopping through a value-typed field
+ * flattens with `_` for that hop (matching emitOwnerSig's `<field>_<subfield>` sig relations) —
+ * every other hop (ref hops, the leading var) still joins with `.`. Values are flat/keyless (v1:
+ * one hop, no nesting — see resolveFieldPath's value-hop case in grammar.ts), so this only needs
+ * to special-case a path whose FIRST segment names a value-typed field on `ownerName` — deeper
+ * ref-hop paths (e.g. `plan.family`) never cross a value field in v1's closed grammar.
+ */
+function alloyFieldPath(m: DomainModel, ownerName: string, v: string, p: Path): string {
+  const owner = ownerByName(m, ownerName);
+  const head = owner?.fields.find(f => f.name === p[0]);
+  if (head?.type.kind === 'value' && p.length >= 2) return [v, `${p[0]}_${p[1]}`, ...p.slice(2)].join('.');
+  return alloyPath(v, p);
+}
+
 function inStateExpr(agg: string, v: string, region: string, states: string[]): string {
   return '(' + states.map(s => `${v}.${region}_state = ${agg}_${region}_${s}`).join(' or ') + ')';
 }
 
-function termToAlloy(t: Term, v: string): string {
+function termToAlloy(m: DomainModel, ownerName: string, t: Term, v: string): string {
   switch (t.kind) {
-    case 'field': return alloyPath(v, t.path);
+    case 'field': return alloyFieldPath(m, ownerName, v, t.path);
     case 'int': return String(t.value);
     case 'enumval': return t.value;
     case 'now': throw new Error('now is not expressible structurally — route to quint');
-    case 'plus': return `${termToAlloy(t.left, v)}.plus[${termToAlloy(t.right, v)}]`;
+    case 'plus': return `${termToAlloy(m, ownerName, t.left, v)}.plus[${termToAlloy(m, ownerName, t.right, v)}]`;
   }
 }
-function predToAlloy(p: Predicate, agg: string, v: string): string {
+function predToAlloy(m: DomainModel, ownerName: string, p: Predicate, agg: string, v: string): string {
   switch (p.kind) {
     case 'cmp': {
-      const l = termToAlloy(p.left, v), r = termToAlloy(p.right, v);
+      const l = termToAlloy(m, ownerName, p.left, v), r = termToAlloy(m, ownerName, p.right, v);
       const ops: Record<string, string> = { eq: '=', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' };
       return `(${l} ${ops[p.op]} ${r})`;
     }
     case 'inState': return inStateExpr(agg, v, p.region, p.states);
-    case 'and': return '(' + p.args.map(a => predToAlloy(a, agg, v)).join(' and ') + ')';
-    case 'or': return '(' + p.args.map(a => predToAlloy(a, agg, v)).join(' or ') + ')';
-    case 'not': return `(not ${predToAlloy(p.arg, agg, v)})`;
-    case 'implies': return `(${predToAlloy(p.left, agg, v)} implies ${predToAlloy(p.right, agg, v)})`;
+    case 'and': return '(' + p.args.map(a => predToAlloy(m, ownerName, a, agg, v)).join(' and ') + ')';
+    case 'or': return '(' + p.args.map(a => predToAlloy(m, ownerName, a, agg, v)).join(' or ') + ')';
+    case 'not': return `(not ${predToAlloy(m, ownerName, p.arg, agg, v)})`;
+    case 'implies': return `(${predToAlloy(m, ownerName, p.left, agg, v)} implies ${predToAlloy(m, ownerName, p.right, agg, v)})`;
   }
 }
 
-function candidateToPred(c: Candidate, name: string): string {
+function candidateToPred(m: DomainModel, c: Candidate, name: string): string {
   switch (c.kind) {
     case 'unique': {
       const inS = (v: string) => inStateExpr(c.aggregate, v, c.whileStates.region, c.whileStates.states);
-      const eqs = c.by.map(p => `${alloyPath('a', p)} = ${alloyPath('b', p)}`).join(' and ');
+      const eqs = c.by.map(p => `${alloyFieldPath(m, c.aggregate, 'a', p)} = ${alloyFieldPath(m, c.aggregate, 'b', p)}`).join(' and ');
       return `pred ${name} { all disj a, b: ${c.aggregate} | (${inS('a')} and ${inS('b')}) implies not (${eqs}) }`;
     }
     case 'refsResolve': return `pred ${name} { }`;   // refs are total in Alloy sigs by construction — vacuously true
     case 'cardinality': {
-      const guard = c.where ? predToAlloy(c.where, c.aggregate, 'x') : 'x = x';
+      const guard = c.where ? predToAlloy(m, c.aggregate, c.where, c.aggregate, 'x') : 'x = x';
       return `pred ${name} { #{ x: ${c.aggregate} | ${guard} } <= ${c.atMost} }`;
     }
     case 'statePredicate': {
-      const guard = c.where ? `${predToAlloy(c.where, c.aggregate, 'x')} implies ` : '';
-      return `pred ${name} { all x: ${c.aggregate} | ${guard}${predToAlloy(c.body, c.aggregate, 'x')} }`;
+      const guard = c.where ? `${predToAlloy(m, c.aggregate, c.where, c.aggregate, 'x')} implies ` : '';
+      return `pred ${name} { all x: ${c.aggregate} | ${guard}${predToAlloy(m, c.aggregate, c.body, c.aggregate, 'x')} }`;
     }
     // sumOverCollection is query-routed to quint (routeCandidate), but reaches here as an ADOPTED
     // constraint (AlloyQuery.adopted) — Alloy's `sum` comprehension over the owned child sig
@@ -131,7 +161,7 @@ function candidateToPred(c: Candidate, name: string): string {
     // `x.total <op> (sum …)` as-is, no op flip needed.
     case 'sumOverCollection': {
       const ops = { eq: '=', le: '<=', ge: '>=' } as const;
-      return `pred ${name} { all x: ${c.aggregate} | ${alloyPath('x', c.total)} ${ops[c.op]} (sum l: { l: ${c.child} | l.owner = x } | l.${c.field}) }`;
+      return `pred ${name} { all x: ${c.aggregate} | ${alloyFieldPath(m, c.aggregate, 'x', c.total)} ${ops[c.op]} (sum l: { l: ${c.child} | l.owner = x } | l.${c.field}) }`;
     }
     default: throw new Error(`${c.kind} routes to quint, not alloy`);
   }
@@ -153,7 +183,7 @@ function candidateToPred(c: Candidate, name: string): string {
  * them. Left as a known latent gap rather than fixed, since fixing it blind (without a witnessed
  * repro reaching this code path) risks a subtler, harder-to-verify regression than the gap itself.
  */
-function shapeToPred(facts: SalientFact[], subject: Candidate, name: string): string {
+function shapeToPred(m: DomainModel, facts: SalientFact[], subject: Candidate, name: string): string {
   const agg = subject.aggregate;
   const w = subject.kind === 'unique' ? subject.whileStates : null;
   const conj: string[] = [];
@@ -172,9 +202,9 @@ function shapeToPred(facts: SalientFact[], subject: Candidate, name: string): st
     if (mSum && subject.kind === 'sumOverCollection')
       { conj.push(`(sum l: { l: ${subject.child} | l.owner = a } | l.${mSum[2]}) = ${f.value}`); continue; }
     const mTot = f.dim.match(/^([\w.]+) value$/);
-    if (mTot) { conj.push(`${alloyPath('a', mTot[1]!.split('.'))} = ${f.value}`); continue; }
+    if (mTot) { conj.push(`${alloyFieldPath(m, agg, 'a', mTot[1]!.split('.'))} = ${f.value}`); continue; }
     const mEq = f.dim.match(/^(.+) equal$/);
-    if (mEq) { const p = mEq[1]!.split('.'); conj.push(`${alloyPath('a', p)} ${f.value ? '=' : '!='} ${alloyPath('b', p)}`); continue; }
+    if (mEq) { const p = mEq[1]!.split('.'); conj.push(`${alloyFieldPath(m, agg, 'a', p)} ${f.value ? '=' : '!='} ${alloyFieldPath(m, agg, 'b', p)}`); continue; }
     const mVal = f.dim.match(/^(.+) = (.+)$/);
     if (mVal) {
       // A dim whose path is `<Region>.state` (extractSalient's machine-state capture, same format
@@ -185,7 +215,7 @@ function shapeToPred(facts: SalientFact[], subject: Candidate, name: string): st
       // Open`) for this case, so it must be special-cased ahead of the generic branch.
       const stateMatch = mVal[1]!.match(/^(\w+)\.state$/);
       if (stateMatch) { conj.push(`a.${stateMatch[1]}_state = ${agg}_${stateMatch[1]}_${mVal[2]}`); continue; }
-      conj.push(`${alloyPath('a', mVal[1]!.split('.'))} = ${mVal[2]}`); continue;
+      conj.push(`${alloyFieldPath(m, agg, 'a', mVal[1]!.split('.'))} = ${mVal[2]}`); continue;
     }
     // 'inState count' and comparison dims don't constrain structural shapes further
   }
@@ -232,25 +262,25 @@ function extraComparisonPaths(m: DomainModel, aggName: string, exclude: Path[]):
   return out;
 }
 
-function nonVacuousPred(c: Candidate): string {
+function nonVacuousPred(m: DomainModel, c: Candidate): string {
   if (c.kind === 'unique') {
     const inS = (v: string) => inStateExpr(c.aggregate, v, c.whileStates.region, c.whileStates.states);
     return `pred nonVacuous { some disj a, b: ${c.aggregate} | ${inS('a')} and ${inS('b')} }`;
   }
   if (c.kind === 'statePredicate' && c.body.kind === 'implies')
-    return `pred nonVacuous { some x: ${c.aggregate} | ${predToAlloy(c.body.left, c.aggregate, 'x')} }`;
+    return `pred nonVacuous { some x: ${c.aggregate} | ${predToAlloy(m, c.aggregate, c.body.left, c.aggregate, 'x')} }`;
   return `pred nonVacuous { some ${c.aggregate} }`;
 }
 
 export function astToAlloy(m: DomainModel, q: AlloyQuery): string {
   const parts: string[] = [`module lattice_q`];
   for (const e of m.enums) parts.push(`abstract sig ${e.name} {}\n` + e.values.map(v => `one sig ${v} extends ${e.name} {}`).join('\n'));
-  for (const e of m.entities) parts.push(emitOwnerSig(e));
-  for (const a of m.aggregates) { parts.push(emitStateSigs(a)); parts.push(emitOwnerSig(a)); parts.push(...emitChildSigs(a)); }
-  parts.push(candidateToPred(q.hi, 'Hi'));
-  if (q.hj) parts.push(candidateToPred(q.hj, 'Hj'));
-  q.exclusions.forEach((facts, i) => parts.push(shapeToPred(facts, q.hi, `shape${i}`)));
-  (q.adopted ?? []).forEach((c, i) => parts.push(candidateToPred(c, `Adopted${i}`)));
+  for (const e of m.entities) parts.push(emitOwnerSig(m, e));
+  for (const a of m.aggregates) { parts.push(emitStateSigs(a)); parts.push(emitOwnerSig(m, a)); parts.push(...emitChildSigs(a)); }
+  parts.push(candidateToPred(m, q.hi, 'Hi'));
+  if (q.hj) parts.push(candidateToPred(m, q.hj, 'Hj'));
+  q.exclusions.forEach((facts, i) => parts.push(shapeToPred(m, facts, q.hi, `shape${i}`)));
+  (q.adopted ?? []).forEach((c, i) => parts.push(candidateToPred(m, c, `Adopted${i}`)));
   // Alloy's `and` binds tighter than `or`, so a disjunctive body (the distinguish query) must be
   // parenthesized before conjoining extras — `A or B and C` scopes C to B only, which silently
   // limited exclusions to the `(not Hi and Hj)` disjunct.
@@ -265,7 +295,7 @@ export function astToAlloy(m: DomainModel, q: AlloyQuery): string {
     if (!q.varyUnreferenced || q.hi.kind !== 'unique' || (q.kind !== 'probe-forbid' && q.kind !== 'probe-permit')) return '';
     const extra = extraComparisonPaths(m, q.hi.aggregate, ownPaths(q.hi));
     if (extra.length === 0) return '';
-    return ' and (' + extra.map(p => `${alloyPath('a', p)} != ${alloyPath('b', p)}`).join(' or ') + ')';
+    return ' and (' + extra.map(p => `${alloyFieldPath(m, q.hi.aggregate, 'a', p)} != ${alloyFieldPath(m, q.hi.aggregate, 'b', p)}`).join(' or ') + ')';
   })();
 
   const wrapVary = (body: string) => varyClause ? `some disj a, b: ${(q.hi as { aggregate: string }).aggregate} | ${body}${varyClause}` : body;
@@ -280,6 +310,6 @@ export function astToAlloy(m: DomainModel, q: AlloyQuery): string {
 
   if (q.kind === 'distinguish') parts.push(`run q { ${constrain('(Hi and not Hj) or (not Hi and Hj)')} } for ${q.scope} but ${intW} Int`);
   else if (q.kind === 'probe-forbid') parts.push(`run q { ${wrapVary(constrain('(not Hi)'))} } for ${q.scope} but ${intW} Int`);
-  else { parts.push(nonVacuousPred(q.hi)); parts.push(`run q { ${wrapVary(constrain('Hi and nonVacuous'))} } for ${q.scope} but ${intW} Int`); }
+  else { parts.push(nonVacuousPred(m, q.hi)); parts.push(`run q { ${wrapVary(constrain('Hi and nonVacuous'))} } for ${q.scope} but ${intW} Int`); }
   return parts.join('\n\n') + '\n';
 }

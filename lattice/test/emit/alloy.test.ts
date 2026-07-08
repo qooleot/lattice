@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { astToAlloy } from '../../src/emit/alloy.js';
 import type { Candidate } from '../../src/ast/invariant.js';
-import { traceAModel, invoiceLinesModel, someStatePredicateOnInvoice, someUniqueOnInvoice, sumCandidate } from '../fixtures.js';
+import { traceAModel, invoiceLinesModel, someStatePredicateOnInvoice, someUniqueOnInvoice, sumCandidate, periodModel } from '../fixtures.js';
 
 const h1: Candidate = { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] };
 const h2: Candidate = { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer'], ['plan']] };
@@ -137,26 +137,25 @@ describe('astToAlloy', () => {
     expect(src).toContain('a.totalDue = 7');
   });
 
-  // Task 10: value objects add TypeRef kind 'value', but this task is surface/AST/printer only —
-  // no solver encoding yet. emitOwnerSig has no branch matching 'value' (same as it already has
-  // none for 'list'), so a value-typed field is silently dropped from the sig instead of crashing.
-  it('drops a value-typed field with no encoding (does not crash)', () => {
-    const withValue = {
-      context: 'Billing', enums: [], values: [{ kind: 'value' as const, name: 'Period',
-        fields: [{ name: 'start', type: { kind: 'prim' as const, prim: 'Date' as const } },
-          { name: 'end', type: { kind: 'prim' as const, prim: 'Date' as const } }] }],
-      entities: [],
-      aggregates: [{ kind: 'aggregate' as const, name: 'Lease', fields: [
-        { name: 'leaseId', type: { kind: 'prim' as const, prim: 'Id' as const }, key: true },
-        { name: 'term', type: { kind: 'value' as const, value: 'Period' } },
-        { name: 'rent', type: { kind: 'prim' as const, prim: 'Money' as const } }] }],
-      events: [],
-    };
-    const cand: Candidate = { kind: 'statePredicate', aggregate: 'Lease', body: { kind: 'cmp', op: 'ge',
-      left: { kind: 'field', owner: 'self', path: ['rent'] }, right: { kind: 'int', value: 0 } } };
-    const src = astToAlloy(withValue, { kind: 'probe-permit', hi: cand, exclusions: [], scope: 4 });
-    expect(src).toContain('sig Lease');
-    expect(src).not.toContain('term:');
-    expect(src).toContain('rent: one Int');
+  // Task 11: value objects (design §3.5) get real alloy encoding — a value-typed field flattens
+  // to `<field>_<subfield>: one Int` sig relations (no nested sig: values are keyless/flat).
+  describe('value fields — flattened field encoding', () => {
+    const periodCand: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt',
+        left: { kind: 'field', owner: 'self', path: ['period', 'start'] },
+        right: { kind: 'field', owner: 'self', path: ['period', 'end'] } } };
+
+    it('emits the value field as underscore-flattened sig relations', () => {
+      const src = astToAlloy(periodModel, { kind: 'probe-permit', hi: periodCand, exclusions: [], scope: 4 });
+      expect(src).toContain('period_start: one Int');
+      expect(src).toContain('period_end: one Int');
+      expect(src).not.toContain('period:');
+    });
+    it('renders a value-hop path as the underscore-joined field, not a dotted path', () => {
+      const src = astToAlloy(periodModel, { kind: 'probe-permit', hi: periodCand, exclusions: [], scope: 4 });
+      expect(src).toContain('x.period_start');
+      expect(src).toContain('x.period_end');
+      expect(src).not.toContain('x.period.start');
+    });
   });
 });

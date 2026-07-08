@@ -125,6 +125,29 @@ export const sumCandidate: Candidate = {
   collection: 'lines', child: 'InvoiceLine', field: 'amount', op: 'eq', total: ['totalDue'],
 };
 
+// Task 11: value semantics — a Subscription aggregate with a `period: Period` value field, where
+// Period = {start: Date, end: Date, invariant wellOrdered { start < end }}. Shared across
+// grammar/evaluate/quint/alloy/implied/templates/integration tests for value path resolution,
+// nested-record (quint) / flattened-field (alloy) encoding, and type-carried law instantiation.
+export const periodModel: DomainModel = {
+  context: 'Billing', ticksPerDay: 24,
+  enums: [], events: [], entities: [],
+  values: [{
+    kind: 'value', name: 'Period',
+    fields: [
+      { name: 'start', type: { kind: 'prim', prim: 'Date' } },
+      { name: 'end', type: { kind: 'prim', prim: 'Date' } }],
+    invariants: [{ name: 'wellOrdered', body: { kind: 'cmp', op: 'lt',
+      left: { kind: 'field', owner: 'self', path: ['start'] }, right: { kind: 'field', owner: 'self', path: ['end'] } } }],
+  }],
+  aggregates: [{
+    kind: 'aggregate', name: 'Subscription',
+    fields: [
+      { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'period', type: { kind: 'value', value: 'Period' } }],
+  }],
+};
+
 export const revrecModel: DomainModel = {
   context: 'RevRec', ticksPerDay: 24,
   enums: [{ name: 'EntryKind', values: ['Recognition', 'Correction'] }, { name: 'PeriodState', values: ['Open', 'Closed'] }], values: [],

@@ -5,6 +5,15 @@ export interface CaseState { now?: number; entities: CaseEntity[]; trace?: CaseE
 export type Verdict = 'permit' | 'forbid';
 
 export function resolveValue(s: CaseState, e: CaseEntity, path: Path): string | number | boolean | undefined {
+  // Value-field fast path (design §3.5): remapValueKeys (witness.ts) normalizes both solvers'
+  // flattened output to a dotted witness key (e.g. 'period.start') for every value-typed field —
+  // try that directly before falling into the per-segment ref-hop walk below, which would
+  // otherwise misinterpret a multi-segment value path as a ref hop through an entity named by the
+  // first segment's value.
+  if (path.length > 1) {
+    const direct = e.fields[path.join('.')];
+    if (direct !== undefined) return direct;
+  }
   let cur: CaseEntity | undefined = e;
   for (let i = 0; i < path.length; i++) {
     if (!cur) return undefined;

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { matchTemplates } from '../../src/engine/templates.js';
+import { impliedInvariants, isImplied } from '../../src/engine/implied.js';
 import type { DomainModel } from '../../src/ast/domain.js';
+import { periodModel } from '../fixtures.js';
 
 const revrecMini: DomainModel = {
   context: 'RevRec', ticksPerDay: 24,
@@ -45,6 +47,34 @@ describe('matchTemplates', () => {
     const { traceAModel } = await import('../fixtures.js');
     const r = matchTemplates(traceAModel);
     expect(r.seeds.some(s => s.candidate.kind === 'unique')).toBe(true);
+  });
+});
+
+// Task 11: type-carried laws (design §3.5/§6) — mirrors the Money non-negativity pattern (#2
+// above) exactly: adopted here for enforcement + template provenance, and the SAME candidate
+// shape is separately derived by implied.ts for parse-dedup/never-printed. Both derive from the
+// shared valueLawInstances helper (implied.ts), so they can never drift apart.
+describe('matchTemplates — type-carried value laws', () => {
+  const { adopt } = matchTemplates(periodModel);
+  const law = adopt.find(a => a.id.startsWith('tpl-val-'));
+
+  it('adopts a value invariant as a prefixed statePredicate at its use site', () => {
+    expect(law).toBeDefined();
+    expect(law!.id).toBe('tpl-val-Period-Subscription-period-wellOrdered');
+    expect(law!.name).toBe('ValueLaw_Subscription_period_wellOrdered');
+    expect(law!.candidate).toMatchObject({ kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt', left: { kind: 'field', path: ['period', 'start'] }, right: { kind: 'field', path: ['period', 'end'] } } });
+  });
+
+  it('the adopted value-law candidate matches an implied candidate by shape (same source of truth)', () => {
+    expect(isImplied(law!.candidate, periodModel)).toBe(true);
+    const impliedLaw = impliedInvariants(periodModel).find(i => i.id.includes('val'))!;
+    expect(impliedLaw.candidate).toEqual(law!.candidate);
+  });
+
+  it('all adopted value laws have template source + deterministic ids', () => {
+    expect(adopt.every(a => a.source === 'template')).toBe(true);
+    expect(new Set(adopt.map(a => a.id)).size).toBe(adopt.length);
   });
 });
 

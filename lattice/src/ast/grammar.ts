@@ -40,6 +40,13 @@ export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path, 
         return null;
       }
       def = ownerDef(m, target);
+    } else if (f.type.kind === 'value') {
+      // One flat value hop (design §3.5, v1): the next segment must name a field on the ValueDef,
+      // and it must be the path's last segment — values carry prim/enum fields only, so there is
+      // never a further hop past the sub-field.
+      const vdef = m.values.find(x => x.name === (f.type as { kind: 'value'; value: string }).value);
+      const sub = vdef?.fields.find(x => x.name === path[i + 1]);
+      return i + 2 === path.length ? (sub ?? null) : null;
     } else def = undefined;
   }
   return null;

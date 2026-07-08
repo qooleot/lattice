@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { validateCandidate, routeCandidate } from '../../src/ast/grammar.js';
+import { validateCandidate, routeCandidate, resolveFieldPath } from '../../src/ast/grammar.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 import type { DomainModel } from '../../src/ast/domain.js';
+import { periodModel } from '../fixtures.js';
 
 // Minimal model stub — real DomainModel arrives in Task 2; grammar.ts only reads these arrays.
 const model: any = {
@@ -188,6 +189,34 @@ const base = (target: string): DomainModel => ({
     ]
   }],
   events: []
+});
+
+// Task 11: value semantics — a value-typed field is one flat, inline hop (design §3.5): the path
+// resolves through the ValueDef's own fields, never nested further (values carry prim/enum fields
+// only in v1 — see validate.ts's `value-flat` diagnostic).
+describe('resolveFieldPath — value hop', () => {
+  it('resolves a path into a value-typed field\'s own field', () => {
+    expect(resolveFieldPath(periodModel, 'Subscription', ['period', 'start'])?.type).toEqual({ kind: 'prim', prim: 'Date' });
+    expect(resolveFieldPath(periodModel, 'Subscription', ['period', 'end'])?.type).toEqual({ kind: 'prim', prim: 'Date' });
+  });
+  it('resolves the bare value field itself as the terminal segment', () => {
+    const f = resolveFieldPath(periodModel, 'Subscription', ['period']);
+    expect(f?.name).toBe('period');
+    expect(f?.type).toEqual({ kind: 'value', value: 'Period' });
+  });
+  it('rejects an unknown sub-field of a value type', () => {
+    expect(resolveFieldPath(periodModel, 'Subscription', ['period', 'bogus'])).toBeNull();
+  });
+  it('rejects a path with more than one hop past a value field (v1: flat values only)', () => {
+    expect(resolveFieldPath(periodModel, 'Subscription', ['period', 'start', 'extra'])).toBeNull();
+  });
+  it('validateCandidate accepts a statePredicate comparing period.start vs period.end', () => {
+    const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt',
+        left: { kind: 'field', owner: 'self', path: ['period', 'start'] },
+        right: { kind: 'field', owner: 'self', path: ['period', 'end'] } } };
+    expect(validateCandidate(c, periodModel)).toEqual([]);
+  });
 });
 
 describe('validateCandidate — cross-context ref exclusion (spec §4.2)', () => {

@@ -30,6 +30,17 @@ function fieldQType(m: DomainModel, f: Field): string | null {
   if (f.type.kind === 'ref') return 'str';
   if (f.type.kind === 'enum') return 'str';
   if (f.type.kind === 'prim') return isIntPrim(f.type.prim) ? 'int' : null;   // Text/Id dropped
+  // Value fields (design §3.5): a keyless, flat structural type embeds inline as a nested record —
+  // e.g. `period: { start: int, end: int }` — never a map hop (values have no identity to look up
+  // by). Sub-fields with no quint encoding (Text/Id) are dropped from the record, same as any
+  // other owner's fields; a value with zero encodable sub-fields degenerates to `{}`.
+  if (f.type.kind === 'value') {
+    const valueName = f.type.value;
+    const vdef = m.values.find(v => v.name === valueName);
+    if (!vdef) return null;
+    const subs = vdef.fields.map(sf => { const t = fieldQType(m, sf); return t ? `${sf.name}: ${t}` : null; }).filter(Boolean);
+    return `{ ${subs.join(', ')} }`;
+  }
   return null;   // lists unsupported in slice-1 quint emission
 }
 function initValue(m: DomainModel, f: Field, nondets: string[], tag: string): string | null {
@@ -41,6 +52,20 @@ function initValue(m: DomainModel, f: Field, nondets: string[], tag: string): st
     nondets.push(`nondet ${nd} = oneOf(Set(${vals}))`);
   } else if (f.type.kind === 'ref') {
     nondets.push(`nondet ${nd} = oneOf(${(f.type as any).target.toUpperCase()}_IDS)`);
+  } else if (f.type.kind === 'value') {
+    // Per-subfield nondet draws (design §3.5): each sub-field gets its own `nondet` at the SAME
+    // tag scope as a plain field (init/create/owned-slot — wherever initValue is itself called),
+    // then the record literal composes them — mirrors the owned-collection per-index draws above.
+    const valueName = f.type.value;
+    const vdef = m.values.find(v => v.name === valueName)!;
+    const subs: string[] = [];
+    for (const sf of vdef.fields) {
+      const sndKind = fieldQType(m, sf);
+      if (!sndKind) continue;
+      const sndName = initValue(m, sf, nondets, `${tag}_${f.name}`);
+      if (sndName) subs.push(`${sf.name}: ${sndName}`);
+    }
+    return `{ ${subs.join(', ')} }`;
   } else nondets.push(`nondet ${nd} = oneOf(${INT_POOL})`);
   return nd;
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { astToQuint } from '../../src/emit/quint.js';
-import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice, sumCandidate } from '../fixtures.js';
+import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice, sumCandidate, periodModel } from '../fixtures.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 
@@ -147,24 +147,26 @@ describe('astToQuint', () => {
     expect(p.source).toContain('x.totalDue == 7');
   });
 
-  // Task 10: value objects add TypeRef kind 'value', but this task is surface/AST/printer only —
-  // no solver encoding yet. fieldQType must fall through to null for it (same as it already does
-  // for 'list'), so a value-typed field is silently dropped from the sig instead of crashing.
-  it('drops a value-typed field with no encoding (does not crash)', () => {
-    const withValue: DomainModel = {
-      context: 'Billing', enums: [], values: [{ kind: 'value', name: 'Period',
-        fields: [{ name: 'start', type: { kind: 'prim', prim: 'Date' } }, { name: 'end', type: { kind: 'prim', prim: 'Date' } }] }],
-      entities: [],
-      aggregates: [{ kind: 'aggregate', name: 'Lease', fields: [
-        { name: 'leaseId', type: { kind: 'prim', prim: 'Id' }, key: true },
-        { name: 'term', type: { kind: 'value', value: 'Period' } },
-        { name: 'rent', type: { kind: 'prim', prim: 'Money' } }] }],
-      events: [],
-    };
-    const cand: Candidate = { kind: 'statePredicate', aggregate: 'Lease', body: { kind: 'cmp', op: 'ge',
-      left: { kind: 'field', owner: 'self', path: ['rent'] }, right: { kind: 'int', value: 0 } } };
-    const em = astToQuint(withValue, { kind: 'probe-permit', hi: cand, exclusions: [], maxSteps: 2 });
-    expect(em.source).not.toContain('term');
-    expect(em.source).toContain('rent');
+  // Task 11: value objects (design §3.5) get real quint encoding — a value-typed field becomes an
+  // inline nested record (no map indirection: values are keyless/flat, embedded by value).
+  describe('value fields — nested record encoding', () => {
+    const periodCand: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt',
+        left: { kind: 'field', owner: 'self', path: ['period', 'start'] },
+        right: { kind: 'field', owner: 'self', path: ['period', 'end'] } } };
+    const em = astToQuint(periodModel, { kind: 'probe-permit', hi: periodCand, exclusions: [], maxSteps: 2 });
+
+    it('emits the value field as an inline nested record type', () => {
+      expect(em.source).toContain('period: { start: int, end: int }');
+    });
+    it('renders a value-hop path as a plain dotted accessor (no map-get)', () => {
+      expect(em.source).toContain('x.period.start');
+      expect(em.source).toContain('x.period.end');
+    });
+    it('initializes each value sub-field with its own nondet draw', () => {
+      expect(em.source).toMatch(/nondet nd_subscription_period_start = oneOf/);
+      expect(em.source).toMatch(/nondet nd_subscription_period_end = oneOf/);
+      expect(em.source).toContain('period: { start: nd_subscription_period_start, end: nd_subscription_period_end }');
+    });
   });
 });

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { impliedInvariants, isImplied, canonicalCandidate } from '../../src/engine/implied.js';
+import { impliedInvariants, isImplied, canonicalCandidate, valueLawInstances } from '../../src/engine/implied.js';
 import type { DomainModel } from '../../src/ast/domain.js';
+import { periodModel } from '../fixtures.js';
+import { astToCode } from '../../src/emit/code.js';
 
 const m: DomainModel = {
   context: 'C', enums: [], values: [], events: [],
@@ -99,6 +101,43 @@ const base = (target: string): DomainModel => ({
     ]
   }],
   events: []
+});
+
+// Task 11: type-carried laws (design §3.5/§6) — a value type's own invariant is instantiated as a
+// statePredicate candidate on every OWNER field of that value type, with every path prefixed
+// [fieldName, ...]. periodModel: Subscription.period: Period, Period.wellOrdered { start < end }.
+describe('impliedInvariants — type-carried value laws', () => {
+  it('instantiates a value invariant as a prefixed statePredicate candidate per use site', () => {
+    const laws = impliedInvariants(periodModel).filter(i => i.id.includes('val'));
+    expect(laws.length).toBe(1);
+    expect(laws[0]!.candidate).toMatchObject({ kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt', left: { kind: 'field', path: ['period', 'start'] }, right: { kind: 'field', path: ['period', 'end'] } } });
+  });
+
+  it('valueLawInstances is the shared source of truth (implied + templates derive from it)', () => {
+    const instances = valueLawInstances(periodModel);
+    expect(instances).toHaveLength(1);
+    expect(instances[0]!.owner.name).toBe('Subscription');
+    expect(instances[0]!.field).toBe('period');
+    expect(instances[0]!.value.name).toBe('Period');
+    expect(instances[0]!.inv.name).toBe('wellOrdered');
+  });
+
+  it('isImplied matches the per-site instantiated law by shape', () => {
+    const c = impliedInvariants(periodModel).find(i => i.id.includes('val'))!.candidate;
+    expect(isImplied(c, periodModel)).toBe(true);
+  });
+
+  it('a value law never prints per-site (as a Subscription invariant), even when explicitly adopted — only the value block\'s own declaration prints', () => {
+    const law = impliedInvariants(periodModel).find(i => i.id.includes('val'))!;
+    const code = astToCode(periodModel, [law]);
+    // The value block's own `invariant wellOrdered { start < end }` declaration is expected —
+    // what must NOT appear is a second, per-site printed copy on the Subscription aggregate
+    // (which would read `period.start < period.end`, the prefixed candidate body).
+    expect(code).not.toContain('period.start < period.end');
+    const subscriptionBlock = code.slice(code.indexOf('aggregate Subscription'));
+    expect(subscriptionBlock).not.toContain('invariant');
+  });
 });
 
 describe('impliedInvariants — qualified-ref exclusion (spec §4.2)', () => {

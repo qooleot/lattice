@@ -1,6 +1,7 @@
 import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
 import { isQualifiedRef } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant } from '../ast/invariant.js';
+import { valueLawInstances } from './implied.js';
 
 const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
 const mk = (id: string, name: string, candidate: Candidate, prior = 0.9): CandidateInvariant =>
@@ -9,6 +10,14 @@ const mk = (id: string, name: string, candidate: Candidate, prior = 0.9): Candid
 export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; seeds: CandidateInvariant[] } {
   const adopt: CandidateInvariant[] = [];
   const seeds: CandidateInvariant[] = [];
+
+  // Type-carried laws (design §3.5/§6): every value-typed field's own invariants, adopted at each
+  // use site — mirrors Money non-negativity (#2 below) exactly: implied.ts derives the same
+  // candidate shape for parse-dedup (never printed), this gives it template provenance so the
+  // elicitation/enforcement loop treats it as an adopted invariant like any other template match.
+  for (const { owner, field, value, inv, candidate } of valueLawInstances(m))
+    adopt.push(mk(`tpl-val-${value.name}-${owner.name}-${field}-${inv.name}`,
+      `ValueLaw_${owner.name}_${field}_${inv.name}`, candidate));
 
   for (const o of owners(m)) {
     const refs = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type));

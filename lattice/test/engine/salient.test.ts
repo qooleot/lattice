@@ -90,6 +90,22 @@ describe('extractSalient — sumOverCollection dims (masking regressions)', () =
   });
 });
 
+// Task 11: value semantics (design §3.5) — renderTerm already joins a field path with '.', so a
+// value-hop path (['period', 'start']) renders as the dotted dim key `period.start` with no code
+// changes needed; resolveFieldPath (grammar.ts) now resolves that same dotted key back through
+// its value hop. This is the salient-side verification the task-11 brief asks for.
+describe('extractSalient — value-field (dotted) comparison dims', () => {
+  it('renders a comparison dim over value sub-field paths as dotted, matching resolveFieldPath', () => {
+    const periodCmp: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt',
+        left: { kind: 'field', owner: 'self', path: ['period', 'start'] },
+        right: { kind: 'field', owner: 'self', path: ['period', 'end'] } } };
+    const s: CaseState = { entities: [{ type: 'Subscription', id: 's1', fields: { 'period.start': 3, 'period.end': 9 } }] };
+    const facts = extractSalient([periodCmp], s);
+    expect(facts.find(f => f.dim === 'period.start lt period.end')!.value).toBe(true);
+  });
+});
+
 describe('renderWitnessTable', () => {
   it('renders a deterministic markdown table with humanized ticks', () => {
     const s: CaseState = { now: 220, entities: [

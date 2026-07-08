@@ -91,6 +91,17 @@ function stateToEntities(st: Record<string, any>, varTypes: Record<string, strin
         if (fk.endsWith('Count') && varTypes[childVarKey(k, fk.slice(0, -'Count'.length))]) {
           fields[`${fk.slice(0, -'Count'.length)}.count`] = deBig(fv); continue;
         }
+        // Value fields (design §3.5): quint encodes them as an inline nested record (astToQuint's
+        // fieldQType value case — `period: { start: int, end: int }`), so the ITF represents a
+        // value instance as a plain object (no '#map' key, unlike owned collections/refs above).
+        // Flatten it to underscore-joined keys here so BOTH adapters produce the same
+        // underscore-flattened shape (Alloy does this natively via its sig relation names) —
+        // remapValueKeys (witness.ts) is the single downstream point that converts those to the
+        // dotted-path convention the rest of the engine expects.
+        if (fv !== null && typeof fv === 'object' && !('#map' in (fv as any)) && !('#bigint' in (fv as any))) {
+          for (const [sk, sv] of Object.entries(fv as Record<string, unknown>)) fields[`${fk}_${sk}`] = deBig(sv);
+          continue;
+        }
         fields[fk.replace(/_state$/, '.state')] = deBig(fv);
       }
       entities.push({ type, id: String(id), fields }, ...children);

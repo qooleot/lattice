@@ -23,10 +23,23 @@ import { reconcile } from './engine/reconcile.js';
 import type { RenameSpec, RenameScope } from './engine/renames.js';
 import { renameEntries, currentInvariantName } from './engine/renames.js';
 import { compileWorkspace } from './engine/workspace.js';
+import { remapValueKeys } from './engine/witness.js';
 
+// Both solver adapters hand back CaseStates with underscore-flattened value-field keys (design
+// §3.5) — remapValueKeys is the single choke point that normalizes them to the dotted-path
+// convention the rest of the engine (evaluate.ts, salient.ts, validated Candidate paths) expects.
+// Wired here, at the boundary where solver results become CaseStates, rather than deeper in
+// hypothesis.ts/planner.ts, so every consumer downstream of `deps.alloy`/`deps.quint` sees
+// already-normalized witnesses.
 export const realDeps: SolverDeps = {
-  alloy: async (m, q, max) => runAlloy(astToAlloy(m, q), max),
-  quint: async (m, q) => runQuint(astToQuint(m, q), q.maxSteps)
+  alloy: async (m, q, max) => {
+    const r = await runAlloy(astToAlloy(m, q), max);
+    return { ...r, instances: r.instances.map(cs => remapValueKeys(m, cs)) };
+  },
+  quint: async (m, q) => {
+    const r = await runQuint(astToQuint(m, q), q.maxSteps);
+    return { ...r, witness: r.witness ? remapValueKeys(m, r.witness) : r.witness };
+  }
 };
 
 const BAD_JSON = Symbol('bad-json-or-path');
