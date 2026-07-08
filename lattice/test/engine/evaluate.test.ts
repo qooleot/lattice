@@ -139,4 +139,14 @@ describe('evaluateCandidate', () => {
       expect(evaluateCandidate(c, bad)).toBe('forbid');
     });
   });
+
+  // Defense-in-depth below validateCandidate (which REJECTS any param-bearing candidate as
+  // ill-typed — see test/ast/validate-services.test.ts): a param term must never reach the
+  // evaluator at runtime either. evalTerm's 'param' case throws rather than silently misjudging.
+  it('evalTerm throws on a param term — candidates never carry params (validateCandidate rejects them upstream; this is the runtime backstop)', () => {
+    const paramLeak: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['grace'] }, right: { kind: 'param', name: 'delta' } } };
+    const s: CaseState = { entities: [{ type: 'Subscription', id: 's1', fields: { grace: 72 } }] };
+    expect(() => evaluateCandidate(paramLeak, s)).toThrow(/param terms/);
+  });
 });

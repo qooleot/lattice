@@ -158,4 +158,15 @@ describe('astToAlloy', () => {
       expect(src).not.toContain('x.period.start');
     });
   });
+
+  // Defense-in-depth below validateCandidate (which REJECTS any param-bearing candidate as
+  // ill-typed — see test/ast/validate-services.test.ts): a param term must never reach alloy
+  // emission either. termToAlloy's 'param' case throws rather than silently emitting nonsense
+  // alloy source referencing a method parameter that doesn't exist as a sig relation. Uses a
+  // non-arithmetic cmp (no `plus`) so the candidate would otherwise route structurally to alloy.
+  it('astToAlloy throws on a param-bearing candidate — param terms never reach the emitter (validateCandidate rejects them upstream; this is the routing backstop)', () => {
+    const paramLeak: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['customer'] }, right: { kind: 'param', name: 'delta' } } };
+    expect(() => astToAlloy(traceAModel, { kind: 'probe-forbid', hi: paramLeak, exclusions: [], scope: 4 })).toThrow(/param terms/);
+  });
 });

@@ -75,6 +75,6 @@ describe('services', () => {
     const bad = { kind: 'statePredicate' as const, aggregate: 'Invoice',
       body: { kind: 'cmp' as const, op: 'ge' as const, left: { kind: 'param' as const, name: 'x' }, right: { kind: 'int' as const, value: 0 } } };
     const diags = validateCandidate(bad, m);
-    expect(diags.length).toBeGreaterThan(0);
+    expect(diags.map(d => d.code)).toContain('ill-typed');
   });
 });

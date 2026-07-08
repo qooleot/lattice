@@ -169,4 +169,14 @@ describe('astToQuint', () => {
       expect(em.source).toContain('period: { start: nd_subscription_period_start, end: nd_subscription_period_end }');
     });
   });
+
+  // Defense-in-depth below validateCandidate (which REJECTS any param-bearing candidate as
+  // ill-typed — see test/ast/validate-services.test.ts): a param term must never reach quint
+  // emission either. termToQuint's (and refHopsInTerm's) 'param' case throws rather than silently
+  // emitting nonsense quint source referencing a method parameter that doesn't exist as state.
+  it('astToQuint throws on a param-bearing candidate — param terms never reach the emitter (validateCandidate rejects them upstream; this is the routing backstop)', () => {
+    const paramLeak: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['grace'] }, right: { kind: 'param', name: 'delta' } } };
+    expect(() => astToQuint(traceBModel, { kind: 'probe-forbid', hi: paramLeak, exclusions: [], maxSteps: 8 })).toThrow(/param terms/);
+  });
 });
