@@ -593,8 +593,11 @@ vitest run` before every commit; goldens A/B/C never weakened; never `git add -A
    assertions. The domain carries a `value` object (e.g. `Period` with `start < end`) so value
    round-trip, solver inlining, and the type-carried auto-adoption are exercised for real.
 4. **Seven checklist points** demonstrably satisfied for each new form (`requires`, `emits`,
-   `sumOverCollection`), with the two explicit routing restrictions (guards: Quint-only; sums:
-   both engines) tested, not implied.
+   `sumOverCollection`, value structural invariants — which ride the existing statePredicate
+   machinery per use site), with the three explicit routing restrictions (guards: Quint-only;
+   sums: both engines; services: neither engine) tested, not implied. Multi-source transitions
+   and service declarations get the surface treatment (validate / print / round-trip / diff /
+   render) plus the Quint from-disjunction test.
 5. **Closed-grammar surfaces** (reserved words, reference docs, `not-elicitable`, skill text,
    committed spec migration) updated in the same commits as the features they describe.
 
