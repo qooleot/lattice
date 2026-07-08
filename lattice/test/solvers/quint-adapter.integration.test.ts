@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { DomainModel } from '../../src/ast/domain.js';
 import { runQuint } from '../../src/solvers/quint-adapter.js';
 import { astToQuint } from '../../src/emit/quint.js';
 import { evaluateCandidate } from '../../src/engine/evaluate.js';
@@ -45,19 +46,61 @@ describe('quint adapter (integration)', () => {
     expect(evaluateCandidate(draftInvoiceUnique, w)).toBe('permit');
   }, 180_000);
 
-  // Task 6: owned collections (design §6.1) round-trip through the real solver — the bounded-map
-  // encoding must actually verify/produce a witness, and the adapter must materialize any
-  // InvoiceLine children found in that witness with numeric fields and a matching owner.
-  it('round-trips an owned collection through the real solver', async () => {
-    const em = astToQuint(invoiceLinesModel, { kind: 'probe-permit', hi: someStatePredicateOnInvoice, exclusions: [], maxSteps: 2 });
-    const r = await runQuint(em, 2);
+  // Task 6 (review fix): owned collections (design §6.1) round-trip through the real solver, with
+  // a witness that ACTUALLY carries at least one live InvoiceLine child. The plain `invoiceLinesModel`
+  // Invoice is a non-machine aggregate (exists: false at init, only populated by create_Invoice), so
+  // the original probe-permit query (`not(Hi)`, `Hi` a forall over existing records) was vacuously
+  // true at the empty init state — Apalache always returned the trivial 0-step, zero-entity
+  // counterexample, and the child-materialization assertions below iterated zero times. Confirmed via
+  // raw ITF: exists:false, linesCount:0.
+  //
+  // Fix, two parts:
+  //  1. Give Invoice a minimal lifecycle (test-local clone, NOT the shared fixture — later tasks
+  //     depend on invoiceLinesModel's current shape). Machine-bearing aggregates are `exists: true`
+  //     from init (astToQuint: `exists: ${machine ? 'true' : 'false'}`), so the record is live
+  //     immediately without needing a create_Invoice step.
+  //  2. Force a non-degenerate witness by strengthening the emitted q_inv for this test only: instead
+  //     of the always-vacuous `not(Hi)`, require any counterexample to exhibit an Invoice with
+  //     linesCount >= 1. This is test scaffolding only — the model/encoding under test (bounded-map
+  //     owned-collection emission, ITF parsing, child materialization) is 100% emitter-generated and
+  //     untouched; only the query predicate driving which counterexample Apalache is asked to find is
+  //     replaced, exactly as astToQuint's own `q.kind` branches already do per query kind.
+  const invoiceLinesModelWithLifecycle: DomainModel = {
+    ...invoiceLinesModel,
+    aggregates: [{
+      ...invoiceLinesModel.aggregates[0]!,
+      machine: { regions: [{ name: 'settlement', initial: 'draft', states: [
+        { name: 'draft' }, { name: 'open' }] }], transitions: [] },
+    }],
+  };
+
+  it('round-trips an owned collection through the real solver, materializing live children', async () => {
+    const em = astToQuint(invoiceLinesModelWithLifecycle,
+      { kind: 'probe-permit', hi: someStatePredicateOnInvoice, exclusions: [], maxSteps: 2 });
+    // Strengthen q_inv: force Apalache to find a witness containing an Invoice whose owned
+    // InvoiceLine collection is non-empty (linesCount >= 1), instead of the vacuous `not(Hi)`.
+    const strengthened = em.source.replace(
+      /val q_inv = .*$/m,
+      'val q_inv = not(invoices.keys().exists(k => { val x = invoices.get(k) x.exists and x.linesCount >= 1 }))');
+    expect(strengthened).not.toBe(em.source);   // guard: the replace actually matched q_inv
+    const emForced = { ...em, source: strengthened };
+
+    const r = await runQuint(emForced, 2);
     expect(r.violated).toBe(true);
     const w = r.witness!;
-    const invoiceIds = new Set(w.entities.filter(e => e.type === 'Invoice').map(e => e.id));
-    const lines = w.entities.filter(e => e.type === 'InvoiceLine');
+
+    const invoices = w.entities.filter(e => e.type === 'Invoice');
+    const withLines = invoices.filter(e => Number(e.fields['lines.count']) >= 1);
+    expect(withLines.length).toBeGreaterThan(0);
+    const parent = withLines[0]!;
+
+    const lines = w.entities.filter(e => e.type === 'InvoiceLine' && String(e.fields.owner) === parent.id);
+    expect(lines.length).toBeGreaterThan(0);   // guard: can never silently pass on an empty witness
+    expect(lines.length).toBe(Number(parent.fields['lines.count']));
     for (const line of lines) {
       expect(line.fields.amount).toBeTypeOf('number');
-      expect(invoiceIds.has(String(line.fields.owner))).toBe(true);
+      expect(line.fields.owner).toBe(parent.id);
+      expect(line.id.startsWith(`${parent.id}#lines`)).toBe(true);
     }
   }, 180_000);
 });
