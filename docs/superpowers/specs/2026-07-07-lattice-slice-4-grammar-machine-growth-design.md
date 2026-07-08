@@ -24,6 +24,11 @@ Grow the language and its elicitation coverage along the two evidence-driven axe
   inside an aggregate** with owned `List<ChildEntity>` collections (CML-inspired, DECIDED §3.2).
   Plus **value objects** (`value Period { … }`, flat, structural equality, optional structural
   invariant auto-adopted per use site) to cover CML's aggregate-contents triad (DECIDED §3.5).
+- **Pillar C — services (added in review).** A `service` construct whose methods *reference*
+  transitions (`performs Subscription.activate`) rather than redeclaring them — plus typed
+  params, `creates`/`read-only` kinds, method-level `requires` over params, and multi-source
+  transitions. Carried structure in v1: validated, printed, diffed, rendered; never
+  solver-encoded (DECIDED §3.6–3.7).
 
 Both pillars ship through the full seven-point institutional checklist (brief §2) and the
 closed-grammar ceremony (reserved words, reference docs, `not-elicitable` guard, skill text) in
@@ -159,7 +164,62 @@ aggregate Subscription {
   a value *sig* would acquire identity, which is exactly the wrong semantics for structural
   equality. Path resolution and salient dims extend to value-field paths in both.
 
-### 3.6 Sequencing — DECIDED (brief fork 5)
+### 3.6 Services via `performs`-reference — DECIDED (user, review pass 2026-07-07)
+
+The `service` construct joins this slice (pulled forward from the generation slice, which becomes
+a pure consumer). The CML shape — transitions declared inline on operations, no machine — was
+considered and rejected: not every transition is an operation (`expireTrial` is clock-driven,
+`dunningExhausted` is a system process — the b10 evidence rule); the solvers walk the machine and
+phase 0 builds it before services exist; plan §9.1 prefers machine-encoded safety. Instead,
+**reference, not redeclaration**: a method *names* the transition it performs; the transition
+remains the single owner of `from/to/requires/emits`; the method adds what only an operation has
+— parameters, return type, read/write character:
+
+```
+service SubscriptionService {
+  createSubscription(plan: ref Catalog.Plan, seats: Int): Subscription creates Subscription
+  getSubscription(subId: Id): Subscription read-only
+  activate(subId: Id) performs Subscription.activate
+  cancel(subId: Id) performs Subscription.cancel
+  reserve(subId: Id, delta: Int) performs Subscription.reserve
+      requires available >= delta            // method-level guard: params + target fields
+}
+```
+
+Drift between service and machine is impossible by construction — deleting a transition breaks
+the `performs` reference at validation. This also resolves the user's `command`-vocabulary
+objection (generation brief fork 0): the surface is methods with typed parameters, no
+`command {}` record block; transport stays a generated projection.
+
+**One method, one transition (the `archive` rule).** `performs` references exactly one
+transition (which may be multi-source, §3.7). A UI verb whose *outcomes* diverge by state
+("archive = cancel if active, delete if draft") is not a domain intention — Evans'
+intention-revealing-interfaces principle; production precedent: Stripe's invoice API, where
+drafts are `delete`d but finalized invoices must be `void`ed, two operations with state guards.
+Divergent outcomes = separate methods; a one-button UX is a UI/projection concern. The language
+makes the anti-pattern unrepresentable, and `service.md` documents the rationale.
+
+**Method kinds (exhaustive in v1):** `read-only` (no lifecycle effect), `performs A.t`
+(lifecycle operation), `creates A` (constructor — enters the `@initial` state; CML's
+`[-> CREATED]`). Data-write methods with no lifecycle move (`recordUsage` mutating
+`accruedUnits`) are NOT representable in v1 — they need the effects language and stay with the
+generation slice (registry §11.1).
+
+**Method-level `requires`** may reference the method's parameters and the target aggregate's
+fields — plan §9.1's canonical `reserve requires available >= delta`, finally expressible
+because methods have inputs (transitions never will). `Term` gains a `param` kind, legal only in
+method guards. v1: validated + rendered + carried; not solver-encoded (§6.3).
+
+### 3.7 Multi-source transitions — DECIDED (with §3.6)
+
+`transition cancel { from trialing, active, pastDue to canceled }` — one intention, several
+legal sources, mirroring CML's `[ S1, S2 -> S3 ]` and collapsing the committed spec's
+`cancelFromTrial`/`cancelFromActive`/`cancelFromPastDue` triplet. The guard (if any) is shared
+across sources; if the guard should differ per source, that is two intentions → two transitions.
+AST: `TransitionDef.from` becomes `string[]`. Quint: the from-state check becomes a disjunction
+in the action guard. Templates/evaluator/diff treat the transition as one named object.
+
+### 3.8 Sequencing — DECIDED (brief fork 5)
 
 Slice 3 landed first; this slice extends the landed `.lat` grammar/parser/printer as part of its
 own definition of done. The generation slice is told (via its brief) that machine enrichment
@@ -183,12 +243,27 @@ LifecycleDecl:                                   // replaces MachineDecl + Regio
         transitions+=TransitionDecl*
     '}';
 
-TransitionDecl:                                  // 'region' param gone; requires/emits new
-    'transition' name=ID '{' 'from' from=ID 'to' to=ID
+TransitionDecl:                                  // 'region' param gone; requires/emits new;
+    'transition' name=ID '{'                     // multi-source 'from'
+        'from' from+=ID (',' from+=ID)* 'to' to=ID
         (';' 'when' when=ID)?
         (';' 'requires' requires=Predicate)?
         (';' 'emits' emits=ID)?
     '}';
+
+ServiceDecl:                                     // new ContextItem alternative
+    docs+=DOC* 'service' name=ID '{' methods+=MethodDecl* '}';
+
+MethodDecl:
+    docs+=DOC* name=ID '(' (params+=ParamDecl (',' params+=ParamDecl)*)? ')'
+        (':' returns=LatType)?
+        ( readOnly?='read-only'
+        | 'performs' performsAgg=ID '.' performsTransition=ID
+        | 'creates' creates=ID )
+        ('requires' requires=Predicate)?;
+
+ParamDecl:
+    name=ID ':' type=LatType;
 
 SumBody:                                         // new InvariantBody alternative (closed form,
     total=PathExpr op=('=='|'<='|'>=')           //  like ConserveBody — NOT a general term)
@@ -210,8 +285,9 @@ Notes:
 
 ### 4.2 Reserved words (`src/ast/reserved.ts` + grammar-sync test)
 
-Add: `lifecycle`, `requires`, `emits`, `sum`, `value`. Remove: `machine`, `region` (no longer
-keywords). The existing sync test enforces the lockstep.
+Add: `lifecycle`, `requires`, `emits`, `sum`, `value`, `service`, `performs`, `creates`,
+`read-only`. Remove: `machine`, `region` (no longer keywords). The existing sync test enforces
+the lockstep.
 
 ### 4.3 Migration of committed specs
 
@@ -227,11 +303,20 @@ regenerate in that commit.
 
 ```ts
 export interface TransitionDef {
-  name: string; region: string; from: string; to: string;
+  name: string; region: string; from: string[]; to: string;   // from: multi-source (§3.7)
   when?: string;
   requires?: Predicate;      // from ast/invariant.ts — same predicate AST as candidates
   emits?: string;            // name of a declared EventDef
 }
+export interface ParamDef { name: string; type: TypeRef }
+export interface MethodDef {
+  name: string; params: ParamDef[]; returns?: TypeRef; doc?: string;
+  kind: { readOnly: true }
+      | { performs: { aggregate: string; transition: string } }
+      | { creates: string };
+  requires?: Predicate;      // may use Term kind 'param' (only here)
+}
+export interface ServiceDef { name: string; methods: MethodDef[]; doc?: string }
 export interface AggregateDef {
   kind: 'aggregate'; name: string; fields: Field[];
   entities?: EntityDef[];    // NEW: children owned by this aggregate
@@ -243,7 +328,9 @@ export interface ValueDef {  // NEW
   invariants?: { name: string; body: Predicate; doc?: string }[];  // own-field structural laws
   doc?: string;
 }
-// DomainModel gains `values: ValueDef[]`; TypeRef gains { kind: 'value'; value: string }.
+// DomainModel gains `values: ValueDef[]` and `services: ServiceDef[]`;
+// TypeRef gains { kind: 'value'; value: string };
+// Term gains { kind: 'param'; name: string } — legal only in method-level requires.
 ```
 
 `Candidate` grows one member:
@@ -274,6 +361,14 @@ export interface ValueDef {  // NEW
   existing Region validations, re-homed.
 - Values: fields prim/enum only (`value-flat`); no `key` (`value-no-key`); structural invariants
   reference own fields only; value names share the context identifier namespace.
+- Transitions: `from` sources are distinct states of the region (`duplicate-source`); the
+  `to` state may not appear in `from` (self-loops need evidence before we admit them).
+- Services: `performs` target must be a declared transition of a declared aggregate
+  (`unknown-transition`); `creates` target a declared aggregate (`unknown-aggregate`); method
+  `requires` may reference method params plus the target aggregate's own fields/states — `param`
+  terms anywhere else are `ill-typed`, and a `requires` on a `read-only` method (which has no
+  target aggregate) may reference params only; method/param names follow existing identifier
+  hygiene; a method's return type must name a declared type.
 
 ### 5.2.1 Guard expressiveness (reviewed against the formal-verification claim)
 
@@ -360,11 +455,17 @@ silently — spurious or missed witnesses. Policy:
 
 - **Quint:** declared-transition actions gain the guard as one more conjunct beside the
   from-state check: `all { rec.settlement_state == "open", <requires compiled by predToQuint>,
-  … }`. `emits` has **no Quint semantics** this slice (no event-trace variable) — it is carried
+  … }`. Multi-source transitions compile the from-check to a disjunction over the source states.
+  `emits` has **no Quint semantics** this slice (no event-trace variable) — it is carried
   structure for projections/generation; stated in the reference docs.
 - **Alloy:** no transition concept (structural solver, by slice-1 division). Guards/emits do not
   route to Alloy; per checklist point 3 this is an **explicit routing restriction** — behavioral
   guard queries are Quint-only, and the restriction is documented + tested, not silent.
+- **Services: not solver-encoded at all in v1** (second explicit routing restriction). The
+  machine remains the verified object; method contracts (params, `performs`, method `requires`)
+  are validated, printed, diffed, and rendered, but no Quint action or Alloy sig derives from a
+  service. Execution semantics arrive with the generation slice; entailment between method
+  guards and transition guards is inference-slice work (§11.1).
 
 ### 6.4 Salient dims & shape rebuilders (checklist points 4, 5, 7)
 
@@ -398,10 +499,14 @@ into the ledger as today:
    add it — the pre-aggregated-field pattern the live session already used.
 4. **Event elicitation**: propose past-tense event names for the notable transitions
    (`InvoicePaid`); confirm/decline; declared `event`s and `emits` links recorded.
+5. **Service seeding**: one question per aggregate — "which of these moves are operations
+   someone invokes (vs. system/time-driven)?" — the invokable ones seed `performs` methods, plus
+   proposed `creates`/read methods; user corrects the list. (The compressible step if the budget
+   strains.)
 
-Question budget: the structure budget grows from ~10 to **~14** — the transition-set proposal is
+Question budget: the structure budget grows from ~10 to **~15** — the transition-set proposal is
 one question per lifecycle, plus 1–3 skip/guard probes per lifecycle chosen by domain-prior
-salience, not exhaustive pair enumeration. (REVIEW #2, §10.)
+salience (not exhaustive pair enumeration), plus service seeding. (REVIEW #2, §10.)
 
 ## 8. Template triage (brief fork 3)
 
@@ -421,12 +526,14 @@ Per new form, in the same commits as the code:
   sub-tables; sum invariants render as English with their ledger anchors.
 - **Diagrams** (`emit/mermaid*`): statechart edges gain labels
   `finalize [totalDue == …] / InvoiceFinalized`; domain classDiagram shows nested entities inside
-  their aggregate with a composition edge.
+  their aggregate with a composition edge, and service boxes with method signatures — filling the
+  follow-up slot the mermaid slice explicitly left for the service construct.
 - **`.lat` printer** (`emit/code.ts`) + round-trip arbitraries (`test/parse/arbitraries.ts`):
   print/parse identity for lifecycle blocks, requires/emits, nested entities, sum bodies.
 - **Reference docs** (`docs/language/`): `machine.md` → `lifecycle.md` (rewrite),
-  `transition.md` (requires/emits), `entity.md` (nesting + ownership), `invariant-forms.md`
-  (sum), new `value.md`, all passing the existing docs parse gate.
+  `transition.md` (requires/emits/multi-source), `entity.md` (nesting + ownership),
+  `invariant-forms.md` (sum), new `value.md`, new `service.md` (including the one-method-one-
+  transition rationale, §3.6), all passing the existing docs parse gate.
 - **Elicitable-kind guard** (`src/cli.ts`): `sumOverCollection` joins the proposable set;
   `not-elicitable` list otherwise unchanged.
 - **Skill** (`.claude/skills/elicit-spec/SKILL.md`): Phase 0 gains §7's transition elicitation;
@@ -449,7 +556,9 @@ No guard-completeness/deadlock checking; no reachability analysis; no entailment
 `neverOverpaidAndPaidExact`), and we keep the invariants as regression anchors rather than
 classifying them; no effects → machine-evolved data dynamics unmodeled (b10 declarative-only,
 §3.4); `emits` carries no verification semantics; collections are frozen after init in Quint;
-guards are not solver-loop candidates. Each restriction is stated in the reference docs.
+guards are not solver-loop candidates; services are carried structure — validated and rendered,
+never solver-encoded or executed (no atomicity/saga analysis, no transport, no entailment
+between method guards and transition guards). Each restriction is stated in the reference docs.
 
 ### 11.1 Deferred-work registry (every ceiling item has an address, not a shrug)
 
@@ -458,7 +567,8 @@ guards are not solver-loop candidates. Each restriction is stated in the referen
 | Effects/`do` language; collection mutation actions | New brief, demanded by the **generation slice** | Generation needs machine-evolved state; its design says what shape effects must take |
 | Guard candidates in the solver loop; entailment classification; CTI-guided inference; guard-completeness / deadlock / reachability | An **inference slice** (plan §9.1) — no brief yet; **write its brief once slice 4 ships** and real guard usage exists | Guards on committed specs = the corpus §9.1 classifies |
 | `emits` verification semantics (event traces) | **Conformance slice** (already sequenced after generation) | Outbox trace diffing per generation brief §5 |
-| Guard input parameters (`requires available >= delta`) | **Generation slice** (service construct owns inputs) | Service surface design (its fork 0) |
+| Method execution semantics (atomicity, sagas, `external`, transport/OpenAPI); data-write methods with no lifecycle move | **Generation slice** (now a pure consumer of the §3.6 surface) | Its brainstorm; effects evidence |
+| Method-guard ⊨ transition-guard entailment; solver encoding of methods | **Inference slice** | Real `performs` + method-`requires` usage from this slice |
 | Cross-aggregate guards; reverse-ref sums; collection atoms in predicates | Evidence-gated grammar growth | r04-class or new gate/live-session failures |
 | Templates #4 idempotency, #12 saga net-zero | `external`/saga slice of their own | Per brief triage |
 | Template #5 reservation-release | Small follow-up | First real domain with a reservation bucket |
@@ -470,8 +580,10 @@ vitest run` before every commit; goldens A/B/C never weakened; never `git add -A
 
 1. **Subscriptions demo (Pillar A):** transition elicitation runs on the committed Subscriptions
    spec; the machine gains guarded transitions (the b03-shaped `activate` guard via a surfaced
-   field, the b10-shaped `dunningExhausted` guard); guards and events render in prose AND
-   diagrams; `.lat` round-trips.
+   field, the b10-shaped `dunningExhausted` guard); the `cancelFrom*` triplet collapses into one
+   multi-source `cancel`; a `SubscriptionService` with `performs`/`creates`/`read-only` methods
+   is elicited and rendered; guards, events, and services render in prose AND diagrams; `.lat`
+   round-trips.
 2. **b02 one-shot re-formalization:** the gate's b02 formalizer prompt (fresh context, same
    protocol) against the grown grammar formalizes sum-over-collection and passes its own judged
    cases — a one-rule smoke, not a gate re-run.
@@ -488,7 +600,9 @@ vitest run` before every commit; goldens A/B/C never weakened; never `git add -A
 
 ## 13. Out of scope
 
-Effects/`do` blocks; CML metadata attributes; `service`/endpoints and guard input parameters
-(generation slice); reverse-ref sum surface; guard candidates in the solver loop; entailment
-classification; `when`-trigger checking; cross-aggregate guards; nested-entity `ref`/`List`
-fields; values containing refs/lists/values; templates #4/#5/#12.
+Effects/`do` blocks; CML metadata attributes; service *execution* semantics — atomicity, sagas,
+`external`, transport/OpenAPI projection, data-write methods (generation slice); solver encoding
+of methods and method↔transition guard entailment (inference slice); reverse-ref sum surface;
+guard candidates in the solver loop; entailment classification; `when`-trigger checking;
+cross-aggregate guards; nested-entity `ref`/`List` fields; values containing refs/lists/values;
+self-loop transitions; templates #4/#5/#12.
