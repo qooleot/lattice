@@ -88,6 +88,29 @@ export const graceCap = (hours: number): Candidate => ({
   body: { kind: 'cmp', op: 'le', left: { kind: 'field', owner: 'self', path: ['grace'] }, right: { kind: 'int', value: hours } }
 });
 
+// Task 5/6: an Invoice aggregate with an owned collection of InvoiceLine children (design §3.2 /
+// §6.1). Shared across emit/adapter/evaluator tests. Carries `totalDue: Money @total` so later
+// (sum-over-collection) tasks can reuse this same fixture without another variant.
+export const invoiceLinesModel: DomainModel = {
+  context: 'Billing', ticksPerDay: 24,
+  enums: [], entities: [], events: [],
+  aggregates: [{
+    kind: 'aggregate', name: 'Invoice',
+    fields: [
+      { name: 'invId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'totalDue', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
+      { name: 'lines', type: { kind: 'list', of: { kind: 'ref', target: 'InvoiceLine' } } }],
+    entities: [{ kind: 'entity', name: 'InvoiceLine', fields: [
+      { name: 'lineId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }],
+  }],
+};
+
+export const someStatePredicateOnInvoice: Candidate = {
+  kind: 'statePredicate', aggregate: 'Invoice',
+  body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['totalDue'] }, right: { kind: 'int', value: 0 } },
+};
+
 export const revrecModel: DomainModel = {
   context: 'RevRec', ticksPerDay: 24,
   enums: [{ name: 'EntryKind', values: ['Recognition', 'Correction'] }, { name: 'PeriodState', values: ['Open', 'Closed'] }],

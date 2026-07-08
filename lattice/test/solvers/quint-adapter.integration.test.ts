@@ -6,7 +6,7 @@ import { nextQuestion } from '../../src/engine/planner.js';
 import { registerCandidates } from '../../src/engine/hypothesis.js';
 import { newSession } from '../../src/engine/session.js';
 import { realDeps } from '../../src/cli.js';
-import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap } from '../fixtures.js';
+import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice } from '../fixtures.js';
 
 describe('quint adapter (integration)', () => {
   it('finds a disagreement witness between grace-0 and grace-window rules', async () => {
@@ -43,5 +43,21 @@ describe('quint adapter (integration)', () => {
     expect(q.type).toBe('question');   // the candidates genuinely differ — a witness must exist
     const w = (q as any).witness;
     expect(evaluateCandidate(draftInvoiceUnique, w)).toBe('permit');
+  }, 180_000);
+
+  // Task 6: owned collections (design §6.1) round-trip through the real solver — the bounded-map
+  // encoding must actually verify/produce a witness, and the adapter must materialize any
+  // InvoiceLine children found in that witness with numeric fields and a matching owner.
+  it('round-trips an owned collection through the real solver', async () => {
+    const em = astToQuint(invoiceLinesModel, { kind: 'probe-permit', hi: someStatePredicateOnInvoice, exclusions: [], maxSteps: 2 });
+    const r = await runQuint(em, 2);
+    expect(r.violated).toBe(true);
+    const w = r.witness!;
+    const invoiceIds = new Set(w.entities.filter(e => e.type === 'Invoice').map(e => e.id));
+    const lines = w.entities.filter(e => e.type === 'InvoiceLine');
+    for (const line of lines) {
+      expect(line.fields.amount).toBeTypeOf('number');
+      expect(invoiceIds.has(String(line.fields.owner))).toBe(true);
+    }
   }, 180_000);
 });

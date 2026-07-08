@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { astToQuint } from '../../src/emit/quint.js';
-import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap } from '../fixtures.js';
+import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice } from '../fixtures.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 
@@ -113,5 +113,17 @@ describe('astToQuint', () => {
       expect(em.source).toContain('action trans_Invoice_settle =');
       expect(em.source).toContain('invoices.get(id).amountPaid >= invoices.get(id).totalDue');
     });
+  });
+
+  // Task 6: owned collections (design §6.1) — bounded map `f: int -> {childFields}` plus an
+  // `fCount: int` sibling inside the owner record, with per-index nondet draws at init.
+  it('encodes owned collections as bounded maps with a count', () => {
+    const em = astToQuint(invoiceLinesModel, { kind: 'probe-permit', hi: someStatePredicateOnInvoice, exclusions: [], maxSteps: 3 });
+    expect(em.source).toContain('lines: int -> { amount: int }');
+    expect(em.source).toContain('linesCount: int');
+    // per-index init draws, bounded by OWNED_BOUND
+    expect(em.source).toContain('nondet nd_invoice_lines_0_amount');
+    expect(em.source).toContain('nondet nd_invoice_linesCount = oneOf(0.to(3))');
+    expect(em.varTypes['invoices#lines']).toBe('InvoiceLine');
   });
 });

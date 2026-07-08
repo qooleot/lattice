@@ -1,6 +1,8 @@
 import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
+import { ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, Cmp, Path, Predicate, Term } from '../ast/invariant.js';
 import type { SalientFact } from '../engine/session.js';
+import { OWNED_BOUND, childVarKey } from '../engine/owned.js';
 
 export interface QuintQuery {
   kind: 'distinguish' | 'probe-forbid' | 'probe-permit';
@@ -215,6 +217,15 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
     const fields = o.fields.map(f => { const t = fieldQType(m, f); return t ? `${f.name}: ${t}` : null; }).filter(Boolean) as string[];
     const machine = (o as AggregateDef).machine;
     for (const r of machine?.regions ?? []) fields.push(`${r.name}_state: str`);
+    // Owned collections (design §6.1): a bounded map `f: int -> {childFields}` plus a companion
+    // `fCount: int` inside the owner record. Only aggregates can own nested entities.
+    const ownedFields = (o.kind === 'aggregate' ? o.fields.filter(f => ownedCollectionChild(o, f)) : []);
+    for (const f of ownedFields) {
+      const child = ownedCollectionChild(o as AggregateDef, f)!;
+      const childFields = child.fields.map(cf => { const t = fieldQType(m, cf); return t ? `${cf.name}: ${t}` : null; }).filter(Boolean) as string[];
+      fields.push(`${f.name}: int -> { ${childFields.join(', ')} }`, `${f.name}Count: int`);
+      varTypes[childVarKey(v, f.name)] = child.name;
+    }
     decls.push(`var ${v}: str -> { exists: bool, ${fields.join(', ')} }`);
     pools.push(`val ${o.name.toUpperCase()}_IDS = Set("${o.name.toLowerCase()}1", "${o.name.toLowerCase()}2")`);
 
@@ -224,6 +235,23 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
       if (nd) inits.push(`${f.name}: ${nd}`);
     }
     for (const r of machine?.regions ?? []) inits.push(`${r.name}_state: "${r.initial}"`);
+    // Per-index nondet draws at init: action-scope `nondet` can't be drawn per-element inside a
+    // fold, so each of the OWNED_BOUND slots gets its own flat draw (every bounded map is still
+    // reachable — see design deviation note in the commit body).
+    for (const f of ownedFields) {
+      const child = ownedCollectionChild(o as AggregateDef, f)!;
+      const entries: string[] = [];
+      for (let i = 0; i < OWNED_BOUND; i++) {
+        const kv: string[] = [];
+        for (const cf of child.fields) {
+          const nd = initValue(m, cf, initNondets, `${o.name.toLowerCase()}_${f.name}_${i}`);
+          if (nd) kv.push(`${cf.name}: ${nd}`);
+        }
+        entries.push(`${i} -> { ${kv.join(', ')} }`);
+      }
+      initNondets.push(`nondet nd_${o.name.toLowerCase()}_${f.name}Count = oneOf(0.to(${OWNED_BOUND}))`);
+      inits.push(`${f.name}: Map(${entries.join(', ')})`, `${f.name}Count: nd_${o.name.toLowerCase()}_${f.name}Count`);
+    }
     initSets.push(`${v}' = ${o.name.toUpperCase()}_IDS.mapBy(id => { ${inits.join(', ')} })`);
 
     // actions: declared transitions; generic region mutator when a region has none; create for non-machine entities; enum mutators
@@ -241,6 +269,23 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
     if (!machine) {
       const nds: string[] = []; const sets: string[] = ['exists: true'];
       for (const f of o.fields) { const nd = initValue(m, f, nds, `c_${o.name.toLowerCase()}`); if (nd) sets.push(`${f.name}: ${nd}`); }
+      // A fresh record literal must match the declared row type exactly (Quint's row-typing
+      // rejects a `.set(id, {...})` missing fields the var's type carries) — so a create action
+      // for an aggregate with owned collections needs the same bounded-map + count fields as init.
+      for (const f of ownedFields) {
+        const child = ownedCollectionChild(o as AggregateDef, f)!;
+        const entries: string[] = [];
+        for (let i = 0; i < OWNED_BOUND; i++) {
+          const kv: string[] = [];
+          for (const cf of child.fields) {
+            const nd = initValue(m, cf, nds, `c_${o.name.toLowerCase()}_${f.name}_${i}`);
+            if (nd) kv.push(`${cf.name}: ${nd}`);
+          }
+          entries.push(`${i} -> { ${kv.join(', ')} }`);
+        }
+        nds.push(`nondet nd_c_${o.name.toLowerCase()}_${f.name}Count = oneOf(0.to(${OWNED_BOUND}))`);
+        sets.push(`${f.name}: Map(${entries.join(', ')})`, `${f.name}Count: nd_c_${o.name.toLowerCase()}_${f.name}Count`);
+      }
       actions.push(`action create_${o.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) ${nds.join(' ')} all { ${v}' = ${v}.set(id, { ${sets.join(', ')} }), ${frame([v]).join(', ')} } }`);
     }
     for (const f of o.fields.filter(f => f.type.kind === 'enum')) {
