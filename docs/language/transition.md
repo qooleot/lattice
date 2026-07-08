@@ -1,13 +1,18 @@
 # Transition
 
 An edge in a [lifecycle](lifecycle.md) block: a named move from one or more source states to a
-target state, optionally triggered by a declared [event](event.md).
+target state, optionally triggered by a declared [event](event.md) and optionally announcing one
+on firing.
 
 ## Syntax
 
 ```lat
 context Billing {
   event PaymentReceived {
+    invoiceId : Id key
+  }
+
+  event InvoicePaid {
     invoiceId : Id key
   }
 
@@ -18,18 +23,25 @@ context Billing {
 
     lifecycle settlement {
       states { open @initial, paid @terminal }
-      transition settle { from open to paid; when PaymentReceived; requires amountPaid == totalDue }
+      transition settle {
+        from open to paid;
+        when PaymentReceived;
+        requires amountPaid == totalDue;
+        emits InvoicePaid
+      }
     }
   }
 }
 ```
 
-`transition <camelId> { from <s> (, <s>)* to <s> (; when <EventName>)? (; requires <predicate>)? }`.
-The `from`/`to`, optional `when`, and optional `requires` clauses are separated by `;` inside the
-braces, in that order. `from` names one or more source states and `to` names a single target
-state, all declared in the enclosing `lifecycle` block; `when`, if present, names a declared
-[event](event.md) — the domain fact that causes this transition to fire; `requires`, if present,
-is a guard [predicate](invariant.md) — a condition that must hold for the transition to fire.
+`transition <camelId> { from <s> (, <s>)* to <s> (; when <EventName>)? (; requires <predicate>)? (; emits <EventName>)? }`.
+The `from`/`to`, optional `when`, optional `requires`, and optional `emits` clauses are separated
+by `;` inside the braces, in that order. `from` names one or more source states and `to` names a
+single target state, all declared in the enclosing `lifecycle` block; `when`, if present, names a
+declared [event](event.md) — the domain fact that causes this transition to fire; `requires`, if
+present, is a guard [predicate](invariant.md) — a condition that must hold for the transition to
+fire; `emits`, if present, names a declared [event](event.md) — the domain fact this transition
+announces when it fires.
 
 Multiple `from` states (`from a, b to c`) collapse several distinct transitions that all land on
 the same target into a single named edge — the transition fires whenever the instance is in *any*
@@ -64,6 +76,8 @@ condition, not a temporal claim (design §3.4).
   so this reports `self-loop`.
 - `when`, if given, must name a declared [event](event.md); an undeclared name reports
   `unknown-event`.
+- `emits`, if given, must name a declared [event](event.md); an undeclared name also reports
+  `unknown-event` (message names `emits` rather than `when` so the two are distinguishable).
 - `requires`, if given, is validated own-aggregate-only:
   - a multi-segment field path (a ref-hop) reports `guard-cross-aggregate`;
   - a single-segment path naming an undeclared field reports `unknown-path`;

@@ -50,7 +50,7 @@ export function astToProse(m: DomainModel, adopted: CandidateInvariant[], ledger
       const declared = (a.machine?.transitions ?? []).filter(t => t.region === r.name);
       if (declared.length > 0) {
         lines.push(`**${r.name} lifecycle:** ${declared.map(t =>
-          `${t.from.map(label).join('/')} → ${label(t.to)} (${t.name}${t.requires ? ` — only if ${predEn(t.requires)}` : ''})`).join(', ')}`, '');
+          `${t.from.map(label).join('/')} → ${label(t.to)} (${t.name}${t.requires ? ` — only if ${predEn(t.requires)}` : ''}${t.emits ? `, announces ${t.emits}` : ''})`).join(', ')}`, '');
       } else {
         lines.push(`**${r.name} states:** ${r.states.map(s => label(s.name)).join(', ')}`, '');
       }

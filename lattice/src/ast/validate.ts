@@ -135,6 +135,8 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       if (t.when && !events.has(t.when))
         out.push({ code: 'unknown-event', message: `transition ${t.name} triggered by undeclared event ${t.when}`, at: t.name });
       if (t.requires) checkGuard(a, enumMap, t.name, t.requires, out);
+      if (t.emits && !events.has(t.emits))
+        out.push({ code: 'unknown-event', message: `transition ${t.name} emits undeclared event ${t.emits}`, at: t.name });
     }
   });
   return out;

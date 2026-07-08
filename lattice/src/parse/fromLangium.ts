@@ -63,6 +63,7 @@ function mapLifecycles(lifs: G.LifecycleDecl[], ownerName: string, diags: ParseD
     const tr: TransitionDef = { name: t.name, region: r.name, from: [...t.from], to: t.to };
     if (t.when) tr.when = t.when;
     if (t.requires) tr.requires = mapPred(t.requires, enums);
+    if (t.emits) tr.emits = t.emits;
     return tr;
   }));
   return { regions, transitions };

@@ -3,7 +3,8 @@
 A past-tense fact — something that happened, not something the system holds state for. Events
 carry fields like an [entity](entity.md), but they are never mutated and never own a
 [lifecycle](lifecycle.md) or [invariants](invariant.md) of their own; instead they are referenced by
-name from a [transition](transition.md)'s `when` clause, marking what triggers that transition.
+name from a [transition](transition.md)'s `when` clause, marking what triggers that transition, or
+from a transition's `emits` clause, marking what it announces when it fires.
 
 ## Syntax
 
@@ -42,6 +43,8 @@ is about, plus whatever facts the event carries (a timestamp, an amount, a reaso
   field named `state`, `unresolved-enum`, `unresolved-ref`).
 - A [transition](transition.md)'s `when <EventName>` clause must name a declared event; naming an
   undeclared one reports `unknown-event`.
+- A [transition](transition.md)'s `emits <EventName>` clause must likewise name a declared event;
+  naming an undeclared one also reports `unknown-event`.
 - Events do not carry a `key` requirement — `missing-key` only applies to entities and aggregates.
 
 ## Example

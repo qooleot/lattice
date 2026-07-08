@@ -20,7 +20,7 @@ const guardLabel = (p: Predicate): string =>
 export function machineToMermaid(agg: AggregateDef, region: Region): string {
   const out = ['stateDiagram-v2', `  [*] --> ${region.initial}`];
   for (const t of (agg.machine?.transitions ?? []).filter(t => t.region === region.name)) {
-    const label = `${t.name}${t.requires ? ` [${guardLabel(t.requires)}]` : ''}`;
+    const label = `${t.name}${t.requires ? ` [${guardLabel(t.requires)}]` : ''}${t.emits ? ` / ${t.emits}` : ''}`;
     for (const f of t.from) out.push(`  ${f} --> ${t.to}: ${label}`);
   }
   for (const s of region.states.filter(s => s.tags?.includes('terminal')))

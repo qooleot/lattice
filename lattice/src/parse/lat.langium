@@ -80,6 +80,7 @@ TransitionDecl:
     'transition' name=ID '{' 'from' from+=ID (',' from+=ID)* 'to' to=ID
         (';' 'when' when=ID)?
         (';' 'requires' requires=Predicate)?
+        (';' 'emits' emits=ID)?
     '}';
 
 InvariantDecl:

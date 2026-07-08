@@ -63,6 +63,26 @@ describe('generated mermaid parses (the GitHub-renderability gate)', () => {
     expect(src).toContain('[not state settlement in (paid)]');
     expect(await valid(src)).toBe(true);
   });
+
+  // Task 4: `emits` composes after the guard bracket as ` / EventName`, applied to EVERY edge of
+  // the transition — exercise a multi-source guarded+emitting transition through the real mermaid
+  // parser so the composed label (`[guard] / Event`) is validated for real.
+  it('statechart with an emitting transition (label composes [guard] / Event on every source edge)', async () => {
+    const emitting: AggregateDef = { kind: 'aggregate', name: 'Invoice', doc: 'An invoice',
+      fields: [
+        { name: 'invId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'amountPaid', type: { kind: 'prim', prim: 'Money' } },
+        { name: 'totalDue', type: { kind: 'prim', prim: 'Money' } }],
+      machine: { regions: [{ name: 'settlement', initial: 'open',
+          states: [{ name: 'open' }, { name: 'overdue' }, { name: 'paid', tags: ['terminal'] }] }],
+        transitions: [{ name: 'settle', region: 'settlement', from: ['open', 'overdue'], to: 'paid',
+          requires: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['amountPaid'] }, right: { kind: 'field', owner: 'self', path: ['totalDue'] } },
+          emits: 'InvoicePaid' }] } };
+    const src = machineToMermaid(emitting, emitting.machine!.regions[0]!);
+    expect(src).toContain('open --> paid: settle [amountPaid >= totalDue] / InvoicePaid');
+    expect(src).toContain('overdue --> paid: settle [amountPaid >= totalDue] / InvoicePaid');
+    expect(await valid(src)).toBe(true);
+  });
 });
 
 /** Extracts every ```mermaid ... ``` fenced block from a markdown document. */

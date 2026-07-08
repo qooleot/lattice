@@ -20,6 +20,7 @@ export interface TransitionDef {
   name: string; region: string; from: string[]; to: string;
   when?: string;
   requires?: Predicate;   // guard over the OWN aggregate's fields + machine state (design §3.3)
+  emits?: string;         // declared event this transition announces on firing (design §3.6)
 }
 export interface Machine { regions: Region[]; transitions: TransitionDef[] }
 export interface EnumDef { name: string; values: string[] }
