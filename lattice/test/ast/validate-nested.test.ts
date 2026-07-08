@@ -35,4 +35,18 @@ describe('nested entities', () => {
     const a = m.aggregates[0] as AggregateDef;
     expect(ownedCollectionChild(a, a.fields[1]!)).toBeNull();
   });
+  it('rejects two owned-collection fields targeting the same child entity', () => {
+    const m = inv(goodChild);
+    const a = m.aggregates[0] as AggregateDef;
+    a.fields.push({ name: 'archived', type: { kind: 'list', of: { kind: 'ref', target: 'InvoiceLine' } } });
+    expect(validateModel(m).map(d => d.code)).toContain('duplicate-owned-collection-target');
+  });
+  it('accepts two owned-collection fields targeting different child entities', () => {
+    const m = inv(goodChild);
+    const a = m.aggregates[0] as AggregateDef;
+    a.entities!.push({ kind: 'entity', name: 'Attachment', fields: [
+      { name: 'attId', type: { kind: 'prim', prim: 'Id' }, key: true } ] });
+    a.fields.push({ name: 'attachments', type: { kind: 'list', of: { kind: 'ref', target: 'Attachment' } } });
+    expect(validateModel(m).map(d => d.code)).not.toContain('duplicate-owned-collection-target');
+  });
 });

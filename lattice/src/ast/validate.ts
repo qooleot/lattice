@@ -1,5 +1,6 @@
 import type { Diagnostic, Predicate, Term } from './invariant.js';
 import type { DomainModel, Field, TypeRef } from './domain.js';
+import { ownedCollectionChild } from './domain.js';
 import { RESERVED_WORDS } from './reserved.js';
 
 export const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -127,6 +128,17 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       for (const f of child.fields)
         if (f.type.kind === 'ref' || f.type.kind === 'list')
           out.push({ code: 'nested-entity-flat', message: `nested entity ${a.name}.${child.name}.${f.name}: children carry prim/enum fields only in v1 (design §5.2)`, at: `${a.name}.${child.name}.${f.name}` });
+    }
+    const collectionOwners = new Map<string, string>();   // child entity name -> first owning field
+    for (const f of a.fields) {
+      const child = ownedCollectionChild(a, f);
+      if (!child) continue;
+      const prior = collectionOwners.get(child.name);
+      if (prior) {
+        out.push({ code: 'duplicate-owned-collection-target', message: `aggregate ${a.name}: fields ${prior} and ${f.name} both own collections of ${child.name} — one owned collection per child entity (the solver encodings key children by entity name)`, at: `${a.name}.${f.name}` });
+      } else {
+        collectionOwners.set(child.name, f.name);
+      }
     }
     for (const r of a.machine?.regions ?? []) {
       if (!r.states.some(s => s.name === r.initial))

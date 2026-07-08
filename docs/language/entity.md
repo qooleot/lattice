@@ -85,6 +85,9 @@ declared in the same aggregate, is an **owned collection** — the aggregate hol
 - A nested entity's name joins the same flat namespace as top-level enums/entities/aggregates —
   it must be unique context-wide (`duplicate-name`) and is itself a valid `ref` target: a bare
   field type naming a nested entity resolves as a reference to it, the same as a top-level owner.
+- Exactly one owned-collection field per child entity: two `List<Child>` fields on the same
+  aggregate targeting the same child report `duplicate-owned-collection-target` — the solver
+  encodings key children by entity name, so a second field would collide.
 - No solver encoding yet: owned collections are structurally validated and round-trip through the
   printer, but list-typed fields are dropped before solving (quint/alloy) and candidate paths that
   reach into a collection are rejected.
