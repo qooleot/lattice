@@ -45,8 +45,8 @@ function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic
   });
 }
 
-function mapMachine(m: G.MachineDecl, ownerName: string, diags: ParseDiagnostic[]): Machine {
-  const regions: Region[] = m.regions.map(r => {
+function mapLifecycles(lifs: G.LifecycleDecl[], ownerName: string, diags: ParseDiagnostic[]): Machine {
+  const regions: Region[] = lifs.map(r => {
     const states: StateDef[] = r.states.map(s => {
       const tags = s.tags.map(t => t.name).filter(t => t === 'active' || t === 'terminal') as ('active' | 'terminal')[];
       const st: StateDef = { name: s.name };
@@ -56,14 +56,14 @@ function mapMachine(m: G.MachineDecl, ownerName: string, diags: ParseDiagnostic[
     const initials = r.states.filter(s => s.tags.some(t => t.name === 'initial'));
     if (initials.length !== 1)
       diags.push(diag('multiple-initial',
-        `region ${ownerName}.${r.name} must have exactly one @initial state (found ${initials.length})`, r));
+        `lifecycle ${ownerName}.${r.name} must have exactly one @initial state (found ${initials.length})`, r));
     return { name: r.name, initial: initials[0]?.name ?? r.states[0]!.name, states };
   });
-  const transitions: TransitionDef[] = m.transitions.map(t => {
-    const tr: TransitionDef = { name: t.name, region: t.region, from: [t.from], to: t.to };
+  const transitions: TransitionDef[] = lifs.flatMap(r => r.transitions.map(t => {
+    const tr: TransitionDef = { name: t.name, region: r.name, from: [...t.from], to: t.to };
     if (t.when) tr.when = t.when;
     return tr;
-  });
+  }));
   return { regions, transitions };
 }
 
@@ -214,14 +214,14 @@ export function loadLatText(text: string): LoadResult {
       case 'AggregateDecl': {
         const a = item as G.AggregateDecl;
         const def: AggregateDef = { kind: 'aggregate', name: a.name, fields: mapFields([...a.fields], enumSet, diags) };
-        if (a.machine) def.machine = mapMachine(a.machine, a.name, diags);
+        if (a.lifecycles.length) def.machine = mapLifecycles([...a.lifecycles], a.name, diags);
         const d = joinDocs([...a.docs]); if (d) def.doc = d;
         locs.set(`owner:${a.name}`, at(a)); noteFields(a.name, [...a.fields]);
-        for (const r of a.machine?.regions ?? []) {
+        for (const r of a.lifecycles) {
           locs.set(`region:${a.name}.${r.name}`, at(r));
           for (const st of r.states) locs.set(`state:${a.name}.${r.name}.${st.name}`, at(st));
+          for (const t of r.transitions) locs.set(`transition:${a.name}.${t.name}`, at(t));
         }
-        for (const t of a.machine?.transitions ?? []) locs.set(`transition:${a.name}.${t.name}`, at(t));
         model.aggregates.push(def); break;
       }
     }

@@ -2,7 +2,7 @@
 
 A structural type with identity but no consistency boundary of its own — a value referenced from
 an [aggregate](aggregate.md) (or another entity) by `ref`, not a thing directly mutated by a
-[machine](machine.md) or protected by its own [invariants](invariant.md). Compare with aggregate,
+[lifecycle](lifecycle.md) or protected by its own [invariants](invariant.md). Compare with aggregate,
 which owns both.
 
 ## Syntax
@@ -33,8 +33,8 @@ context Billing {
 - The entity name must be PascalCase by convention (`naming-convention`) and a valid,
   non-[reserved](naming-conventions.md) identifier (`invalid-name`, `reserved-word`).
 - Field names must be camelCase by convention and valid identifiers; a field named `state` is
-  rejected outright (`reserved-field-name`) — `state` is reserved for machine-state accessors
-  (`<Region>.state`).
+  rejected outright (`reserved-field-name`) — `state` is reserved for lifecycle-state accessors
+  (`<Lifecycle>.state`).
 - A field's type must resolve: an enum name must be declared (`unresolved-enum`), and an
   unqualified `ref Target` must name a real entity or aggregate in the same context
   (`unresolved-ref`).

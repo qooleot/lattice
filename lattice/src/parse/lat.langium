@@ -48,7 +48,7 @@ EventDecl:
     docs+=DOC* 'event' name=ID '{' fields+=FieldDecl* '}';
 
 AggregateDecl:
-    docs+=DOC* 'aggregate' name=ID '{' fields+=FieldDecl* machine=MachineDecl? invariants+=InvariantDecl* '}';
+    docs+=DOC* 'aggregate' name=ID '{' fields+=FieldDecl* lifecycles+=LifecycleDecl* invariants+=InvariantDecl* '}';
 
 FieldDecl:
     name=ID ':' type=LatType (key?='key')? tags+=Tag*;
@@ -67,17 +67,17 @@ Tag:
 TagName returns string:
     ID | 'terminal' | 'monotonic' | 'state' | 'key';
 
-MachineDecl:
-    'machine' '{' regions+=RegionDecl+ transitions+=TransitionDecl* '}';
-
-RegionDecl:
-    'region' name=ID '{' 'states' '{' states+=StateDecl (',' states+=StateDecl)* '}' '}';
+LifecycleDecl:
+    'lifecycle' name=ID '{'
+        'states' '{' states+=StateDecl (',' states+=StateDecl)* '}'
+        transitions+=TransitionDecl*
+    '}';
 
 StateDecl:
     name=ID tags+=Tag*;
 
 TransitionDecl:
-    'transition' name=ID '{' 'region' region=ID ';' 'from' from=ID 'to' to=ID (';' 'when' when=ID)? '}';
+    'transition' name=ID '{' 'from' from+=ID (',' from+=ID)* 'to' to=ID (';' 'when' when=ID)? '}';
 
 InvariantDecl:
     docs+=DOC* 'invariant' name=ID ('on' target=ID)? ('where' where=Predicate)? '{' body=InvariantBody '}';

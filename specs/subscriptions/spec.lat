@@ -10,16 +10,16 @@ context Subscriptions {
     periodEnd    : Date
     accruedUnits : Int
 
-    machine {
-      region lifecycle { states { trialing @initial, active @active, pastDue @active, canceled @terminal, expired @terminal } }
-      transition activate { region lifecycle; from trialing to active }
-      transition expireTrial { region lifecycle; from trialing to expired }
-      transition paymentFailed { region lifecycle; from active to pastDue }
-      transition recover { region lifecycle; from pastDue to active }
-      transition cancelFromTrial { region lifecycle; from trialing to canceled }
-      transition cancelFromActive { region lifecycle; from active to canceled }
-      transition cancelFromPastDue { region lifecycle; from pastDue to canceled }
-      transition dunningExhausted { region lifecycle; from pastDue to canceled }
+    lifecycle lifecycle {
+      states { trialing @initial, active @active, pastDue @active, canceled @terminal, expired @terminal }
+      transition activate { from trialing to active }
+      transition expireTrial { from trialing to expired }
+      transition paymentFailed { from active to pastDue }
+      transition recover { from pastDue to active }
+      transition cancelFromTrial { from trialing to canceled }
+      transition cancelFromActive { from active to canceled }
+      transition cancelFromPastDue { from pastDue to canceled }
+      transition dunningExhausted { from pastDue to canceled }
     }
 
     /// A billing period is well-ordered and accrued usage never goes negative.
@@ -35,13 +35,13 @@ context Subscriptions {
     totalDue         : Money @total
     amountPaid       : Money @balance
 
-    machine {
-      region settlement { states { draft @initial, open @active, paid @terminal, void @terminal, uncollectible @terminal } }
-      transition finalize { region settlement; from draft to open }
-      transition settle { region settlement; from open to paid }
-      transition voidDraft { region settlement; from draft to void }
-      transition voidOpen { region settlement; from open to void }
-      transition writeOff { region settlement; from open to uncollectible }
+    lifecycle settlement {
+      states { draft @initial, open @active, paid @terminal, void @terminal, uncollectible @terminal }
+      transition finalize { from draft to open }
+      transition settle { from open to paid }
+      transition voidDraft { from draft to void }
+      transition voidOpen { from open to void }
+      transition writeOff { from open to uncollectible }
     }
 
     /// An invoice never bills more than the sum of its parts.

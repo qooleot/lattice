@@ -1,7 +1,7 @@
 # Aggregate
 
 The DDD consistency boundary: a cluster of state that changes together, guarded by its own
-[invariants](invariant.md) and (optionally) driven by a [machine](machine.md) of lifecycle states.
+[invariants](invariant.md) and (optionally) driven by one or more [lifecycle](lifecycle.md) blocks.
 Where an [entity](entity.md) is a referenced value, an aggregate is a thing the system enforces
 rules about directly.
 
@@ -19,10 +19,10 @@ context Billing {
     plan         : ref Plan
     accruedUnits : Int
 
-    machine {
-      region lifecycle { states { trialing @initial, active @active, canceled @terminal } }
-      transition activate { region lifecycle; from trialing to active }
-      transition cancel { region lifecycle; from active to canceled }
+    lifecycle standing {
+      states { trialing @initial, active @active, canceled @terminal }
+      transition activate { from trialing to active }
+      transition cancel { from active to canceled }
     }
 
     invariant nonNegativeUsage { accruedUnits >= 0 }
@@ -30,8 +30,8 @@ context Billing {
 }
 ```
 
-`aggregate <PascalId> { <field>* <machine>? <invariant>* }`, with an optional leading `///` doc.
-Fields use the same grammar as an entity's; the `machine` block (see [machine](machine.md)) is
+`aggregate <PascalId> { <field>* <lifecycle>* <invariant>* }`, with an optional leading `///` doc.
+Fields use the same grammar as an entity's; `lifecycle` blocks (see [lifecycle](lifecycle.md)) are
 optional — an aggregate with no lifecycle is legal — and any number of `invariant` blocks follow,
 implicitly scoped to this aggregate (no `on` needed; see [invariant](invariant.md)).
 
@@ -45,8 +45,8 @@ implicitly scoped to this aggregate (no `on` needed; see [invariant](invariant.m
 - Field types resolve the same way as an entity's (`unresolved-enum`, `unresolved-ref`).
 - An in-aggregate `invariant` block that redundantly names `on <SameAggregate>` is flagged
   `redundant-target` — the target is already implicit.
-- If present, the `machine` block's own rules apply in full — see [machine](machine.md) and
-  [transition](transition.md) for `multiple-initial`, `unknown-region`,
+- Each `lifecycle` block's own rules apply in full — see [lifecycle](lifecycle.md) and
+  [transition](transition.md) for `multiple-initial`, `duplicate-source`, `self-loop`,
   `unknown-transition-state`, and `unknown-event`.
 - An aggregate with a `Money` field, a `ref` field, or an `@terminal` state carries
   [derived invariants](derived-invariants.md) automatically — non-negativity, refs-resolve, and
@@ -68,7 +68,7 @@ context Billing {
 ## See also
 
 - [Entity](entity.md)
-- [Machine](machine.md)
+- [Lifecycle](lifecycle.md)
 - [Invariant](invariant.md)
 - [Derived invariants](derived-invariants.md)
 - [Tags](tags.md)

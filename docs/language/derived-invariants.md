@@ -11,11 +11,11 @@ invariant-removing edit.
 
 | Structure | Implied rule | Derived name | Opt out |
 |---|---|---|---|
-| A state `s` tagged `@terminal` in region `r` of owner `A` | once in `s`, stays in `s` (a `terminal` body) | `terminal<A><R><S>` | Remove the `@terminal` tag. |
+| A state `s` tagged `@terminal` in lifecycle block `r` of owner `A` | once in `s`, stays in `s` (a `terminal` body) | `terminal<A><R><S>` | Remove the `@terminal` tag. |
 | Owner `A` has at least one same-context `ref` field | every `ref` field on `A` resolves (a `refsResolve` body) | `refsResolve<A>` | None — a `ref` field must resolve; a **qualified** cross-context `ref` does not trigger this (see [field types](field-types.md)). |
 | A `Money` field `f` on owner `A`, not tagged `@signed` | `f >= 0` (a `statePredicate` body) | `nonNegative<A><F>` | Tag the field `@signed`. |
 
-Derived names are deterministic, camelCase-joined from the owner, region/field, and state names —
+Derived names are deterministic, camelCase-joined from the owner, lifecycle/field, and state names —
 e.g. `terminalInvoiceSettlementVoid`, `refsResolveSubscription`, `nonNegativeInvoiceTotalDue`.
 
 ```lat
@@ -24,9 +24,9 @@ context Billing {
     invoiceId : Id key
     total     : Money
 
-    machine {
-      region settlement { states { open @initial, void @terminal } }
-      transition voidIt { region settlement; from open to void }
+    lifecycle settlement {
+      states { open @initial, void @terminal }
+      transition voidIt { from open to void }
     }
   }
 }

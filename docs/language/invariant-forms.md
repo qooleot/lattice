@@ -30,8 +30,9 @@ context Billing {
 
 ## 2. `unique` — at most one match per key, while in given states
 
-`unique while <region> in {<state>, …} by (<path>, …)` — while the instance's `<region>` is one of
-the listed states, no two instances may share the same value(s) for the `by` path(s).
+`unique while <lifecycle> in {<state>, …} by (<path>, …)` — while the instance's `<lifecycle>`
+block is one of the listed states, no two instances may share the same value(s) for the `by`
+path(s).
 
 ```lat
 context Billing {
@@ -43,10 +44,10 @@ context Billing {
     invoiceId    : Id key
     subscription : ref Subscription
 
-    machine {
-      region settlement { states { draft @initial, open @active, paid @terminal } }
-      transition finalize { region settlement; from draft to open }
-      transition settle { region settlement; from open to paid }
+    lifecycle settlement {
+      states { draft @initial, open @active, paid @terminal }
+      transition finalize { from draft to open }
+      transition settle { from open to paid }
     }
 
     invariant oneDraftPerSubscription { unique while settlement in {draft} by (subscription) }
@@ -93,7 +94,7 @@ context Billing {
 
 ## 5. `terminal` — a state, once entered, is never left
 
-`terminal <region>.<state>`. Normally implied automatically for every state tagged `@terminal`
+`terminal <lifecycle>.<state>`. Normally implied automatically for every state tagged `@terminal`
 (see [derived invariants](derived-invariants.md)) — writing it explicitly only adds information
 when the state is *not* tagged `@terminal`, as here:
 
@@ -102,13 +103,13 @@ context Billing {
   aggregate Subscription {
     subId : Id key
 
-    machine {
-      region lifecycle { states { trialing @initial, active @active, paused @active } }
-      transition activate { region lifecycle; from trialing to active }
-      transition pause { region lifecycle; from active to paused }
+    lifecycle standing {
+      states { trialing @initial, active @active, paused @active }
+      transition activate { from trialing to active }
+      transition pause { from active to paused }
     }
 
-    invariant pausedIsSticky { terminal lifecycle.paused }
+    invariant pausedIsSticky { terminal standing.paused }
   }
 }
 ```
@@ -160,14 +161,14 @@ context Billing {
   aggregate Subscription {
     subId : Id key
 
-    machine {
-      region lifecycle { states { trialing @initial, active @active, canceled @terminal } }
-      transition activate { region lifecycle; from trialing to active }
-      transition cancel { region lifecycle; from active to canceled }
+    lifecycle standing {
+      states { trialing @initial, active @active, canceled @terminal }
+      transition activate { from trialing to active }
+      transition cancel { from active to canceled }
     }
 
     invariant trialEventuallyResolves {
-      from state lifecycle in {trialing} leads to state lifecycle in {active}
+      from state standing in {trialing} leads to state standing in {active}
         under fairness "activate is enabled infinitely often"
     }
   }
@@ -178,5 +179,5 @@ context Billing {
 
 - [Invariant](invariant.md)
 - [Derived invariants](derived-invariants.md)
-- [Machine](machine.md)
+- [Lifecycle](lifecycle.md)
 - [Tags](tags.md)

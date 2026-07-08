@@ -111,7 +111,7 @@ describe('qualified ref shape validation', () => {
     expect(validateModel(base('Catalog.Plan'))).toEqual([]);
   });
   it('rejects a reserved word segment', () => {
-    const d = validateModel(base('Catalog.machine'));
+    const d = validateModel(base('Catalog.lifecycle'));
     expect(d.some(x => x.code === 'reserved-word')).toBe(true);
   });
   it('isQualifiedRef distinguishes local from qualified', () => {

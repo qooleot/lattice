@@ -62,17 +62,17 @@ function fieldLines(fields: Field[], indent: string, out: string[]): void {
 }
 
 function machineLines(mach: Machine, out: string[]): void {
-  out.push('    machine {');
   for (const r of mach.regions) {
+    out.push(`    lifecycle ${r.name} {`);
     const states = r.states.map(s => {
       const tags = [...(s.name === r.initial ? ['initial'] : []), ...(s.tags ?? [])];
       return s.name + (tags.length ? ' @' + tags.join(' @') : '');
     }).join(', ');
-    out.push(`      region ${r.name} { states { ${states} } }`);
+    out.push(`      states { ${states} }`);
+    for (const t of mach.transitions.filter(t => t.region === r.name))
+      out.push(`      transition ${t.name} { from ${t.from.join(', ')} to ${t.to}${t.when ? `; when ${t.when}` : ''} }`);
+    out.push('    }');
   }
-  for (const t of mach.transitions)
-    out.push(`      transition ${t.name} { region ${t.region}; from ${t.from.join(', ')} to ${t.to}${t.when ? `; when ${t.when}` : ''} }`);
-  out.push('    }');
 }
 
 function invariantLines(inv: CandidateInvariant, indent: string, on: string | undefined, out: string[]): void {

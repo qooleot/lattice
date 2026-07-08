@@ -13,7 +13,7 @@ a digit — `invalid-name` if violated) and a case *convention* layered on top, 
 | enum value | camelCase | `monthly` |
 | entity / aggregate / event | PascalCase | `Invoice` |
 | field | camelCase | `licenseFee` |
-| machine region | camelCase | `lifecycle` |
+| lifecycle block | camelCase | `standing` |
 | state | camelCase | `pastDue` |
 | transition | camelCase | `cancelFromTrial` |
 | invariant | camelCase | `nonNegativeTotal` |
@@ -27,9 +27,9 @@ context Billing {
     invoiceId : Id key
     total     : Money
 
-    machine {
-      region settlement { states { open @initial, closed @terminal } }
-      transition close { region settlement; from open to closed }
+    lifecycle settlement {
+      states { open @initial, closed @terminal }
+      transition close { from open to closed }
     }
 
     invariant nonNegativeTotal { total >= 0 }
@@ -55,9 +55,9 @@ poor style — the printer could not even re-emit it as valid syntax. See
 [`RESERVED_WORDS`](../../lattice/src/ast/reserved.ts) for the complete, hand-maintained list
 (kept in lockstep with the grammar by a sync test): `aggregate`, `anticorruption`, `by`,
 `conformist`, `conserve`, `contains`, `context`, `contextMap`, `count`, `downstream`, `entity`,
-`enum`, `event`, `exposes`, `fairness`, `from`, `in`, `invariant`, `key`, `leads`, `List`,
-`machine`, `monotonic`, `now`, `of`, `on`, `openHost`, `partnership`, `publishedLanguage`, `ref`,
-`refs`, `region`, `resolve`, `roles`, `sharedKernel`, `state`, `states`, `terminal`, `ticksPerDay`,
+`enum`, `event`, `exposes`, `fairness`, `from`, `in`, `invariant`, `key`, `leads`, `lifecycle`,
+`List`, `monotonic`, `now`, `of`, `on`, `openHost`, `partnership`, `publishedLanguage`, `ref`,
+`refs`, `resolve`, `roles`, `sharedKernel`, `state`, `states`, `terminal`, `ticksPerDay`,
 `to`, `transition`, `under`, `unique`, `upstream`, `when`, `where`, `while`, `with`.
 
 ## Semantic Rules
@@ -69,7 +69,7 @@ poor style — the printer could not even re-emit it as valid syntax. See
   identifier can be both correctly-cased and reserved-word-clean, or neither, independently.
 - A field literally named `state` gets its own dedicated diagnostic, `reserved-field-name`, ahead
   of the generic reserved-word check — `state` is meaningful in this position (it would collide
-  with machine-state path accessors like `lifecycle.state`).
+  with lifecycle-state path accessors like `standing.state`).
 
 ## See also
 

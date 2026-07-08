@@ -65,7 +65,7 @@ context. It is accepted by the grammar and by per-file validation, but it is str
 - An enum-typed field must name a declared enum (`unresolved-enum`).
 - `List<T>` recurses: the element type `T` is validated by the same rules.
 - A field named `state` is always rejected (`reserved-field-name`), regardless of type — `state`
-  is reserved for machine-state path accessors.
+  is reserved for lifecycle-state path accessors.
 
 ## Example
 

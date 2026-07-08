@@ -18,9 +18,9 @@ context Demo {
     jobId : Id key
     plan  : ref Plan
     units : Int
-    machine {
-      region run { states { queued @initial, going @active, done @terminal } }
-      transition start { region run; from queued to going; when kicked }
+    lifecycle run {
+      states { queued @initial, going @active, done @terminal }
+      transition start { from queued to going; when kicked }
     }
     /// Units stay sane.
     invariant unitsSane { units >= 0 && (state run in {going} => units <= 100) }
@@ -76,7 +76,7 @@ describe('loadLatText', () => {
 
   it('drops explicit duplicates of implied invariants with a warning', () => {
     const dup = loadLatText(`context C { aggregate A { aId : Id key
-      machine { region r { states { s @initial, t @terminal } } transition x { region r; from s to t } }
+      lifecycle r { states { s @initial, t @terminal } transition x { from s to t } }
       invariant stays { terminal r.t } } }`);
     expect(dup.ok).toBe(true);
     if (dup.ok) {
@@ -103,7 +103,7 @@ describe('loadLatText', () => {
 
   it('ill-formed model (two @initial) is a diagnostic', () => {
     const bad = loadLatText(`context C { aggregate A { aId : Id key
-      machine { region r { states { s @initial, t @initial } } transition x { region r; from s to t } } } }`);
+      lifecycle r { states { s @initial, t @initial } transition x { from s to t } } } }`);
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'multiple-initial')).toBe(true);
   });
@@ -134,6 +134,26 @@ describe('loadLatText', () => {
       expect(r2.invariants.map(i => i.name)).toEqual(['totalAtMostFee']);
       expect(r2.warnings.some(w => w.code === 'redundant-invariant')).toBe(false);
     }
+  });
+
+  it('parses lifecycle blocks into Machine regions + region-tagged transitions', () => {
+    const r = loadLatText(`context C {
+  aggregate Invoice {
+    invoiceId : Id key
+    lifecycle settlement {
+      states { draft @initial, open @active, paid @terminal }
+      transition finalize { from draft to open }
+      transition close { from draft, open to paid }
+    }
+  }
+}`);
+    expect(r.ok).toBe(true);
+    const m = (r as any).model;
+    expect(m.aggregates[0].machine.regions[0]).toMatchObject({ name: 'settlement', initial: 'draft' });
+    expect(m.aggregates[0].machine.transitions).toEqual([
+      { name: 'finalize', region: 'settlement', from: ['draft'], to: 'open' },
+      { name: 'close', region: 'settlement', from: ['draft', 'open'], to: 'paid' },
+    ]);
   });
 });
 

@@ -31,7 +31,7 @@ describe('astToCode', () => {
     expect(code).toContain('context Billing {');
     expect(code).toContain('aggregate Subscription {');
     expect(code).toContain('customer : ref Customer');
-    expect(code).toContain('region Access { states { Trialing @initial, Active @active, Ended @terminal } }');
+    expect(code).toContain('states { Trialing @initial, Active @active, Ended @terminal }');
     expect(code).toContain('invariant SingleActivePerFamily { unique while Access in {Active} by (customer, plan.family) }');
   });
   it('omits an adopted invariant whose candidate is structurally implied (spec §3.4)', () => {

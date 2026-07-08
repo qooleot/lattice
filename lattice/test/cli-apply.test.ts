@@ -67,8 +67,8 @@ describe('engine apply', () => {
 
   it('new transition applies with provenance-free structural note', async () => {
     const text = readFileSync(latFile, 'utf8')
-      .replace('transition recover { region lifecycle; from pastDue to active }',
-        'transition recover { region lifecycle; from pastDue to active }\n      transition graceToExpired { region lifecycle; from pastDue to expired }');
+      .replace('transition recover { from pastDue to active }',
+        'transition recover { from pastDue to active }\n      transition graceToExpired { from pastDue to expired }');
     writeFileSync(latFile, text);
     const r: any = await apply();
     expect(r.ok).toBe(true);
@@ -133,8 +133,8 @@ describe('engine apply', () => {
 
   it('--dry-run reports and writes nothing', async () => {
     const text = readFileSync(latFile, 'utf8')
-      .replace('transition recover { region lifecycle; from pastDue to active }',
-        'transition recover { region lifecycle; from pastDue to active }\n      transition graceToExpired { region lifecycle; from pastDue to expired }');
+      .replace('transition recover { from pastDue to active }',
+        'transition recover { from pastDue to active }\n      transition graceToExpired { from pastDue to expired }');
     writeFileSync(latFile, text);
     const modelBefore = readFileSync(join(sessionDir, 'model.json'), 'utf8');
     const r: any = await apply(['--dry-run']);

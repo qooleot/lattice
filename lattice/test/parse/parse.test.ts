@@ -13,9 +13,9 @@ context Demo {
   aggregate Job {
     jobId : Id key
     thing : ref Thing
-    machine {
-      region run { states { queued @initial, going @active, done @terminal } }
-      transition start { region run; from queued to going }
+    lifecycle run {
+      states { queued @initial, going @active, done @terminal }
+      transition start { from queued to going }
     }
     /// Jobs cost something.
     invariant positiveCost { thing.cost >= 0 && state run in {going} => 1 <= 1 }

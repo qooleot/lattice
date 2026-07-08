@@ -52,7 +52,7 @@ Predicates are built from comparisons, connectives, and state membership:
 | `p \|\| q` | disjunction |
 | `!p` | negation |
 | `p => q` | implication ("if p then q") |
-| `state <region> in {<state>, …}` | true when the quantified instance's `<region>` is currently one of the listed states |
+| `state <lifecycle> in {<state>, …}` | true when the quantified instance's `<lifecycle>` block is currently one of the listed states |
 | `now` | the current tick, usable as a term in a comparison |
 | `a + b` | linear arithmetic sum, usable as a term in a comparison |
 
@@ -92,9 +92,9 @@ context Billing {
     total     : Money
     paid      : Money
 
-    machine {
-      region settlement { states { open @initial, closed @terminal } }
-      transition close { region settlement; from open to closed }
+    lifecycle settlement {
+      states { open @initial, closed @terminal }
+      transition close { from open to closed }
     }
 
     invariant paidMatchesOnClose {

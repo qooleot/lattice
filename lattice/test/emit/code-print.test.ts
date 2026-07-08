@@ -60,9 +60,9 @@ context Demo {
     plan  : ref Plan
     units : Int
 
-    machine {
-      region run { states { queued @initial, going @active, done @terminal } }
-      transition start { region run; from queued to going; when kicked }
+    lifecycle run {
+      states { queued @initial, going @active, done @terminal }
+      transition start { from queued to going; when kicked }
     }
 
     /// Units stay sane.

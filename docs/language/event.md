@@ -2,7 +2,7 @@
 
 A past-tense fact — something that happened, not something the system holds state for. Events
 carry fields like an [entity](entity.md), but they are never mutated and never own a
-[machine](machine.md) or [invariants](invariant.md) of their own; instead they are referenced by
+[lifecycle](lifecycle.md) or [invariants](invariant.md) of their own; instead they are referenced by
 name from a [transition](transition.md)'s `when` clause, marking what triggers that transition.
 
 ## Syntax
@@ -22,9 +22,9 @@ context Billing {
   aggregate Account {
     accountId : Id key
 
-    machine {
-      region standing { states { good @initial, pastDue @active } }
-      transition markPastDue { region standing; from good to pastDue; when PaymentFailed }
+    lifecycle standing {
+      states { good @initial, pastDue @active }
+      transition markPastDue { from good to pastDue; when PaymentFailed }
     }
   }
 }
@@ -58,6 +58,6 @@ context Billing {
 ## See also
 
 - [Transition](transition.md)
-- [Machine](machine.md)
+- [Lifecycle](lifecycle.md)
 - [Field types](field-types.md)
 - [Entity](entity.md)
