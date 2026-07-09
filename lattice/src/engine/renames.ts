@@ -185,6 +185,12 @@ export function applyRenamesToInvariant(i: CandidateInvariant, renames: RenameSp
         break;
       case 'monotonic': renPath(c.field); break;
       case 'conservation': c.parts.forEach(renPath); renPath(c.total); break;
+      case 'sumOverCollection':
+        if (r.scope === 'field' && owner === c.aggregate && c.collection === r.from) c.collection = r.to;
+        if ((r.scope === 'entity' || r.scope === 'aggregate') && c.child === r.from) c.child = r.to;
+        if (r.scope === 'field' && owner === c.child && c.field === r.from) c.field = r.to;
+        renPath(c.total);
+        break;
       case 'leadsTo': walkPred(c.from); walkPred(c.to); break;
     }
     if ((r.scope === 'aggregate' || r.scope === 'entity') && c.aggregate === r.from) c.aggregate = r.to;
