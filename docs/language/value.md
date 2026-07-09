@@ -64,7 +64,8 @@ parsed. The two engines encode a value differently, matching how each represents
 
 A value's own `invariant` blocks (e.g. `wellOrdered { start < end }` on `Period`) are **type-carried
 laws**: the moment a field is typed with the value, that law is auto-adopted at that use site, on
-both the implied and template channels, with provenance `ValueLaw_<Owner>_<field>_<invariant>`. These are
+both the implied and template channels, with provenance `ValueLaw_<Owner>_<field>_<invariant>` —
+for the `term : Period` field on `Lease` above, `ValueLaw_Lease_term_wellOrdered`. These are
 real solver-checked invariants, not documentation — golden trace D exercises a value law adopted
 and checked end-to-end with real solvers.
 
