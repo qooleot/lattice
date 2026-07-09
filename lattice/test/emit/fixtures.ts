@@ -14,14 +14,14 @@ export const order: AggregateDef = { kind: 'aggregate', name: 'Order', doc: 'A c
   machine: { regions: [{ name: 'fulfillment', initial: 'open',
       states: [{ name: 'open' }, { name: 'shipped', tags: ['terminal'] }, { name: 'lost', tags: ['terminal'] }] }],
     transitions: [
-      { name: 'ship', region: 'fulfillment', from: 'open', to: 'shipped' },
-      { name: 'vanish', region: 'fulfillment', from: 'open', to: 'lost' }] } };
+      { name: 'ship', region: 'fulfillment', from: ['open'], to: 'shipped' },
+      { name: 'vanish', region: 'fulfillment', from: ['open'], to: 'lost' }] } };
 
 export const model: DomainModel = { context: 'Shop',
-  enums: [{ name: 'Color', values: ['red', 'blue'] }],
+  enums: [{ name: 'Color', values: ['red', 'blue'] }], values: [],
   entities: [{ kind: 'entity', name: 'Customer',
     fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
-  aggregates: [order], events: [] };
+  aggregates: [order], events: [], services: [] };
 
 export const map: ContextMapModel = { name: 'AcmeBilling',
   contexts: [{ name: 'Subscriptions', path: 'subscriptions' }, { name: 'Catalog', path: 'catalog' },

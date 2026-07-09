@@ -36,9 +36,9 @@ describe('naming-conventions.md reserved-word list stays in lockstep with RESERV
     const md = readFileSync(join(DOCS, 'naming-conventions.md'), 'utf8');
     // The page renders the list as one long comma-separated run of `word` tokens; every other
     // backtick run on the page is far shorter, so the longest run IS the list.
-    const runs = md.match(/`[A-Za-z]+`(?:,\s*`[A-Za-z]+`)+/g) ?? [];
+    const runs = md.match(/`[A-Za-z-]+`(?:,\s*`[A-Za-z-]+`)+/g) ?? [];
     const list = runs.sort((a, b) => b.length - a.length)[0] ?? '';
-    const words = [...list.matchAll(/`([A-Za-z]+)`/g)].map(m => m[1]!);
+    const words = [...list.matchAll(/`([A-Za-z-]+)`/g)].map(m => m[1]!);
     expect(new Set(words).size).toBe(words.length);
     expect([...words].sort()).toEqual([...RESERVED_WORDS].sort());
   });
