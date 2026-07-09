@@ -94,3 +94,29 @@ it('applyRenamesToInvariant rewrites paths, states and its own name', () => {
   expect(body.body.args[0].left.path).toEqual(['n']);
   expect(body.body.args[1].states).toEqual(['waiting']);
 });
+
+it('applyRenamesToInvariant rewrites all four sumOverCollection references', () => {
+  const inv = applyRenamesToInvariant({ id: 's', name: 'sum', prior: 1, source: 'template',
+    candidate: { kind: 'sumOverCollection', aggregate: 'Invoice',
+      collection: 'lines', child: 'InvoiceLine', field: 'amount', op: 'eq', total: ['totalDue'] } }, [
+    { scope: 'field', path: 'Invoice.lines', from: 'lines', to: 'items' },
+    { scope: 'entity', path: 'InvoiceLine', from: 'InvoiceLine', to: 'LineItem' },
+    { scope: 'field', path: 'LineItem.amount', from: 'amount', to: 'net' },
+    { scope: 'field', path: 'Invoice.totalDue', from: 'totalDue', to: 'grandTotal' }]);
+  const c = inv.candidate as Extract<typeof inv.candidate, { kind: 'sumOverCollection' }>;
+  expect(c.collection).toBe('items');
+  expect(c.child).toBe('LineItem');
+  expect(c.field).toBe('net');
+  expect(c.total).toEqual(['grandTotal']);
+});
+
+it('sumOverCollection ignores renames scoped to other owners', () => {
+  const inv = applyRenamesToInvariant({ id: 's', name: 'sum', prior: 1, source: 'template',
+    candidate: { kind: 'sumOverCollection', aggregate: 'Invoice',
+      collection: 'lines', child: 'InvoiceLine', field: 'amount', op: 'eq', total: ['totalDue'] } }, [
+    { scope: 'field', path: 'Order.lines', from: 'lines', to: 'items' },        // wrong aggregate
+    { scope: 'field', path: 'Invoice.amount', from: 'amount', to: 'net' }]);    // aggregate, not child
+  const c = inv.candidate as Extract<typeof inv.candidate, { kind: 'sumOverCollection' }>;
+  expect(c.collection).toBe('lines');
+  expect(c.field).toBe('amount');
+});
