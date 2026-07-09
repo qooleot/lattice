@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { evaluateCandidate, type CaseState } from '../../src/engine/evaluate.js';
+import { evaluateCandidate, resolveValue, type CaseState } from '../../src/engine/evaluate.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 
 const uniqueByCustomerFamily: Candidate = {
@@ -83,6 +83,33 @@ describe('evaluateCandidate', () => {
     const s: CaseState = { entities: [{ type: 'RevenueEntry', id: 'e1', fields: { obligation: 'ghost' } }] };
     expect(evaluateCandidate(c, s)).toBe('forbid');
   });
+  it('refsResolve WITH fields: ignores an unresolvable string on a non-listed (qualified-ref) field', () => {
+    // The w1 shape (task 16): Subscription.plan is a qualified cross-context ref (spec §4.2) —
+    // witnesses legitimately carry a bare string like "plan1" with no Plan entity in scope.
+    // A refsResolve candidate scoped to same-context fields only (via `fields`) must not convict.
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Subscription', fields: ['latestInvoice'] };
+    const s: CaseState = { entities: [
+      { type: 'Subscription', id: 's1', fields: { plan: 'plan1', latestInvoice: 'inv1' } },
+      { type: 'Invoice', id: 'inv1', fields: {} }
+    ]};
+    expect(evaluateCandidate(c, s)).toBe('permit');
+  });
+  it('refsResolve WITH fields: still forbids a dangling listed field', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Subscription', fields: ['latestInvoice'] };
+    const s: CaseState = { entities: [
+      { type: 'Subscription', id: 's1', fields: { plan: 'plan1', latestInvoice: 'ghost' } }
+    ]};
+    expect(evaluateCandidate(c, s)).toBe('forbid');
+  });
+  it('refsResolve WITHOUT fields: keeps the legacy heuristic over all string fields (absence ⇒ old behavior)', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Subscription' };
+    const s: CaseState = { entities: [
+      { type: 'Subscription', id: 's1', fields: { plan: 'plan1', latestInvoice: 'inv1' } },
+      { type: 'Invoice', id: 'inv1', fields: {} }
+    ]};
+    // plan:"plan1" has no matching entity id → legacy heuristic still convicts (pre-existing behavior)
+    expect(evaluateCandidate(c, s)).toBe('forbid');
+  });
   it('monotonic: forbids a decrease across the trace', () => {
     const c: Candidate = { kind: 'monotonic', aggregate: 'Obligation', field: ['recognized'] };
     const s: CaseState = {
@@ -99,5 +126,54 @@ describe('evaluateCandidate', () => {
       trace: [[{ type: 'AccountingPeriod', id: 'p1', fields: { 'Lifecycle.state': 'Closed' } }]]
     };
     expect(evaluateCandidate(c, s)).toBe('forbid');
+  });
+
+  const sum = (over: Partial<any> = {}): any => ({ kind: 'sumOverCollection', aggregate: 'Invoice',
+    collection: 'lines', child: 'InvoiceLine', field: 'amount', op: 'eq', total: ['totalDue'], ...over });
+  const st = (amounts: number[], total: number): CaseState => ({ entities: [
+    { type: 'Invoice', id: 'i1', fields: { totalDue: total, 'lines.count': amounts.length } },
+    ...amounts.map((a, i) => ({ type: 'InvoiceLine', id: `i1#lines${i}`, fields: { amount: a, owner: 'i1' } })),
+  ]});
+  it('sumOverCollection: forbids mismatched totals, permits exact and unknown', () => {
+    expect(evaluateCandidate(sum(), st([3, 4], 7))).toBe('permit');
+    expect(evaluateCandidate(sum(), st([3, 4], 8))).toBe('forbid');
+    expect(evaluateCandidate(sum({ op: 'le' }), st([3, 4], 9))).toBe('forbid');   // total <= sum fails: 9 > 7
+    expect(evaluateCandidate(sum(), { entities: [{ type: 'Invoice', id: 'i1', fields: {} }] })).toBe('permit'); // unknown
+  });
+
+  // Task 11: value semantics — witnesses (post-remap, see witness.ts's remapValueKeys) store a
+  // value field's sub-fields under a dotted key (e.g. 'period.start'), matching the dotted Path
+  // resolveFieldPath now resolves. resolveValue's per-segment ref-hop walk would otherwise try to
+  // treat 'period' as a ref field and look up an entity by that id — a dotted-key fast path avoids
+  // that entirely for value paths.
+  describe('resolveValue — dotted-key fast path for value fields', () => {
+    it('resolves a value path directly off the dotted witness key', () => {
+      expect(resolveValue({ entities: [] }, { type: 'S', id: 's', fields: { 'period.start': 5 } }, ['period', 'start'])).toBe(5);
+    });
+    it('still falls back to the per-segment walk for ref-hop paths', () => {
+      const s: CaseState = { entities: [{ type: 'Plan', id: 'p1', fields: { family: 'storage' } }] };
+      const e = { type: 'Subscription', id: 's1', fields: { plan: 'p1' } };
+      expect(resolveValue(s, e, ['plan', 'family'])).toBe('storage');
+    });
+    it('statePredicate judges a value-field comparison from a dotted-key witness', () => {
+      const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+        body: { kind: 'cmp', op: 'lt',
+          left: { kind: 'field', owner: 'self', path: ['period', 'start'] },
+          right: { kind: 'field', owner: 'self', path: ['period', 'end'] } } };
+      const ok: CaseState = { entities: [{ type: 'Subscription', id: 's1', fields: { 'period.start': 3, 'period.end': 9 } }] };
+      const bad: CaseState = { entities: [{ type: 'Subscription', id: 's1', fields: { 'period.start': 9, 'period.end': 3 } }] };
+      expect(evaluateCandidate(c, ok)).toBe('permit');
+      expect(evaluateCandidate(c, bad)).toBe('forbid');
+    });
+  });
+
+  // Defense-in-depth below validateCandidate (which REJECTS any param-bearing candidate as
+  // ill-typed — see test/ast/validate-services.test.ts): a param term must never reach the
+  // evaluator at runtime either. evalTerm's 'param' case throws rather than silently misjudging.
+  it('evalTerm throws on a param term — candidates never carry params (validateCandidate rejects them upstream; this is the runtime backstop)', () => {
+    const paramLeak: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['grace'] }, right: { kind: 'param', name: 'delta' } } };
+    const s: CaseState = { entities: [{ type: 'Subscription', id: 's1', fields: { grace: 72 } }] };
+    expect(() => evaluateCandidate(paramLeak, s)).toThrow(/param terms/);
   });
 });

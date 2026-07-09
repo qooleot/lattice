@@ -1,6 +1,6 @@
 import type { Candidate, Diagnostic, Engine, Path, Predicate, Term } from './invariant.js';
 import type { DomainModel, AggregateDef, EntityDef, Field } from './domain.js';
-import { isQualifiedRef } from './domain.js';
+import { isQualifiedRef, ownedCollectionChild } from './domain.js';
 
 type Owner = AggregateDef | EntityDef;
 
@@ -40,6 +40,13 @@ export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path, 
         return null;
       }
       def = ownerDef(m, target);
+    } else if (f.type.kind === 'value') {
+      // One flat value hop (design §3.5, v1): the next segment must name a field on the ValueDef,
+      // and it must be the path's last segment — values carry prim/enum fields only, so there is
+      // never a further hop past the sub-field.
+      const vdef = m.values.find(x => x.name === (f.type as { kind: 'value'; value: string }).value);
+      const sub = vdef?.fields.find(x => x.name === path[i + 1]);
+      return i + 2 === path.length ? (sub ?? null) : null;
     } else def = undefined;
   }
   return null;
@@ -47,7 +54,7 @@ export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path, 
 
 const KNOWN_KINDS = new Set([
   'statePredicate', 'unique', 'refsResolve', 'cardinality',
-  'terminal', 'monotonic', 'conservation', 'leadsTo'
+  'terminal', 'monotonic', 'conservation', 'leadsTo', 'sumOverCollection'
 ]);
 
 function truncate(v: unknown): string {
@@ -89,7 +96,8 @@ function shapeErrors(c: any): Diagnostic[] {
         ?? check(isPathArray(c.by), 'by', 'Path[] (array of string[])', c.by);
       break;
     case 'refsResolve':
-      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate);
+      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
+        ?? (c.fields !== undefined ? check(isPath(c.fields), 'fields', 'string[] (optional)', c.fields) : null);
       break;
     case 'cardinality':
       err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
@@ -115,6 +123,14 @@ function shapeErrors(c: any): Diagnostic[] {
         ?? check(isPredicate(c.from), 'from', 'Predicate object', c.from)
         ?? check(isPredicate(c.to), 'to', 'Predicate object', c.to)
         ?? check(isString(c.fairness), 'fairness', 'string', c.fairness);
+      break;
+    case 'sumOverCollection':
+      err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
+        ?? check(isString(c.collection), 'collection', 'string', c.collection)
+        ?? check(isString(c.child), 'child', 'string', c.child)
+        ?? check(isString(c.field), 'field', 'string', c.field)
+        ?? check(['eq', 'le', 'ge'].includes(c.op), 'op', "'eq'|'le'|'ge'", c.op)
+        ?? check(isPath(c.total), 'total', 'Path (array of string)', c.total);
       break;
   }
   return err ? [err] : [];
@@ -178,6 +194,10 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
       }
       case 'plus': checkTerm(t.left, at); checkTerm(t.right, at); break;
       case 'int': case 'now': break;
+      // Candidates never carry param terms (design §3.6) — 'param' is legal ONLY inside a
+      // MethodDef.requires, which never becomes a Candidate. Loud rejection here is the routing
+      // restriction: an LLM-emitted or hand-built candidate carrying one is out-of-grammar.
+      case 'param': out.push({ code: 'ill-typed', message: 'param terms are method-guard-only', at }); break;
     }
   };
   const checkPred = (p: Predicate, at: string) => {
@@ -199,6 +219,20 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
     case 'monotonic': checkPath(c.field, 'field'); break;
     case 'conservation': c.parts.forEach((p, i) => checkPath(p, `parts[${i}]`)); checkPath(c.total, 'total'); break;
     case 'leadsTo': checkPred(c.from, 'from'); checkPred(c.to, 'to'); break;
+    case 'sumOverCollection': {
+      const a = m.aggregates.find(x => x.name === c.aggregate);
+      const f = a?.fields.find(x => x.name === c.collection);
+      const child = a && f ? ownedCollectionChild(a, f) : null;
+      if (!child || child.name !== c.child) {
+        out.push({ code: 'sum-not-owned-collection', message: `${c.collection} is not an owned collection of ${c.aggregate} with child ${c.child}`, at: 'collection' });
+        break;
+      }
+      const cf = child.fields.find(x => x.name === c.field);
+      if (!cf || cf.key || cf.type.kind !== 'prim' || !SOLVER_INT_PRIMS.includes(cf.type.prim))
+        out.push({ code: 'ill-typed', message: `sum field ${c.child}.${c.field} must be a numeric (Int/Money/Date/Duration) non-key field`, at: 'field' });
+      checkPath(c.total, 'total');   // numeric own path; reuses key-path/unrepresentable-path guards
+      break;
+    }
   }
   return out;
 }
@@ -220,7 +254,7 @@ function termNeedsArith(t: Term): boolean {
 export function routeCandidate(c: Candidate): Engine {
   switch (c.kind) {
     case 'unique': case 'refsResolve': case 'cardinality': return 'alloy';
-    case 'terminal': case 'monotonic': case 'conservation': case 'leadsTo': return 'quint';
+    case 'terminal': case 'monotonic': case 'conservation': case 'leadsTo': case 'sumOverCollection': return 'quint';
     case 'statePredicate': {
       const arith = (c.where ? predNeedsArith(c.where) : false) || predNeedsArith(c.body);
       return arith ? 'quint' : 'alloy';

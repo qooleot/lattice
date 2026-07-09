@@ -136,6 +136,12 @@ We generated ~25 loose concepts. They collapse to **7 components + candidate sou
 
 ### 5.1 Constructs
 
+> Implementation note (2026-07-08): the `machine`/`region`/`transition` vocabulary below is the
+> long-run vision; the shipped slice-4 surface implements it as named `lifecycle` blocks (no
+> `machine`/`region` keywords) — see
+> [`2026-07-07-lattice-slice-4-grammar-machine-growth-design.md`](superpowers/specs/2026-07-07-lattice-slice-4-grammar-machine-growth-design.md)
+> §3.1.
+
 - `profile` — one company-wide import bundle (prelude + shared kernel + house conventions). Universal primitives (`Money`, `Date`, `Duration`, `Percent`, `Currency`, `Id`) are **always in scope**; no per-context declarations. A context may *refine* an imported type (e.g. house rounding on `Money`) but never re-declare it. **The import graph is the context map's tactical layer** — a cross-context reference is only legal over published/imported types; an Anti-Corruption Layer is a named, checkable translation.
 - `context` — a bounded context (module + invariant scope).
 - `aggregate` — the **consistency + transaction boundary**. Owns a `machine`, `ref` relations, nested `invariant`s, and its own `repository`. Invariants on an aggregate must hold at every commit (this is the natural home for a held-transaction boundary).
@@ -193,24 +199,26 @@ context Billing {
     collection: CollectionMethod
 
     // Two ORTHOGONAL concerns (Harel parallel regions) — not one flat enum (§5.6).
-    machine {
-      region Access  { states { Trialing, Active @active, Suspended, Ended @terminal } }
-      region Billing { states { AwaitingFirstPayment, Current, Retrying, GaveUp } }
+    lifecycle Access {
+      states { Trialing @initial, Active @active, Suspended, Ended @terminal }
+    }
+    lifecycle Billing {
+      states { AwaitingFirstPayment @initial, Current, Retrying, GaveUp @terminal }
 
       transition firstPayment {
-        region Billing; from AwaitingFirstPayment to Current
+        from AwaitingFirstPayment to Current
         when PaymentSucceeded
-        atomic do { mrr = plan.price }
+        // vision: atomic do { mrr = plan.price } — effects language deferred (slice-4 design §3.4)
         emits SubscriptionActivated
       }
-      transition paymentFailed { region Billing; from Current to Retrying; when PaymentFailed }
-      transition recovered     { region Billing; from Retrying to Current; when PaymentSucceeded }
-      transition giveUp        { region Billing; from Retrying to GaveUp;  when dunning_exhausted }
-
-      // cross-region rules replace the conflated flat states (PastDue = Active × Retrying, etc.)
-      when Billing enters GaveUp:                        Access -> Ended
-      when Billing enters Retrying and elapsed(grace):   Access -> Suspended
+      transition paymentFailed { from Current to Retrying; when PaymentFailed }
+      transition recovered     { from Retrying to Current; when PaymentSucceeded }
+      transition giveUp        { from Retrying to GaveUp;  when DunningExhausted }
     }
+    // cross-region rules replace the conflated flat states (PastDue = Active × Retrying, etc.) —
+    // long-run vision only; the shipped v1 surface has no cross-lifecycle rule construct yet (§5.1).
+    // when Billing enters GaveUp:                        Access -> Ended
+    // when Billing enters Retrying and elapsed(grace):   Access -> Suspended
 
     unique while active by (customer, plan.family)       // structural invariant, inline & readable
     /// Revenue only accrues to a subscription the customer can actually use.
@@ -231,7 +239,7 @@ context Billing {
     period: BillingPeriod
     lines: List<LineItem>
     dueDate: Date
-    machine { states { Draft, Open, Paid, Void @terminal, Uncollectible } }
+    lifecycle status { states { Draft @initial, Open, Paid @terminal, Void @terminal, Uncollectible } }
   }
 
   event SubscriptionActivated { subscription: ref Subscription; at: Date }

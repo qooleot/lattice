@@ -7,6 +7,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { findJava } from './doctor.js';
 import type { QuintEmission } from '../emit/quint.js';
 import type { CaseEntity, CaseState } from '../engine/evaluate.js';
+import { childVarKey } from '../engine/owned.js';
 
 const exec = promisify(execFile);
 type ExecLike = (file: string, args: string[], opts: object) => Promise<{ stdout: string }>;
@@ -70,11 +71,40 @@ function stateToEntities(st: Record<string, any>, varTypes: Record<string, strin
     for (const [id, rec] of pairs) {
       if (rec.exists === false) continue;
       const fields: Record<string, string | number | boolean> = {};
+      const children: CaseEntity[] = [];
       for (const [fk, fv] of Object.entries(rec)) {
         if (fk === 'exists') continue;
+        // Owned collection (design §6.1): ITF encodes the bounded map as `{'#map': [[k, v], …]}`.
+        // Only entries below the companion `<f>Count` are live; the rest are unreachable filler.
+        if (fv !== null && typeof fv === 'object' && '#map' in (fv as any)) {
+          const childType = varTypes[childVarKey(k, fk)];
+          if (!childType) continue;                       // not an owned collection — ignore
+          const count = Number(deBig((rec as any)[`${fk}Count`] ?? 0));
+          for (const [ck, cv] of (fv as any)['#map']) {
+            if (Number(deBig(ck)) >= count) continue;     // beyond <f>Count: not live
+            const cf: Record<string, string | number | boolean> = { owner: String(id) };
+            for (const [k2, v2] of Object.entries(cv as Record<string, unknown>)) cf[k2] = deBig(v2);
+            children.push({ type: childType, id: `${String(id)}#${fk}${Number(deBig(ck))}`, fields: cf });
+          }
+          continue;
+        }
+        if (fk.endsWith('Count') && varTypes[childVarKey(k, fk.slice(0, -'Count'.length))]) {
+          fields[`${fk.slice(0, -'Count'.length)}.count`] = deBig(fv); continue;
+        }
+        // Value fields (design §3.5): quint encodes them as an inline nested record (astToQuint's
+        // fieldQType value case — `period: { start: int, end: int }`), so the ITF represents a
+        // value instance as a plain object (no '#map' key, unlike owned collections/refs above).
+        // Flatten it to underscore-joined keys here so BOTH adapters produce the same
+        // underscore-flattened shape (Alloy does this natively via its sig relation names) —
+        // remapValueKeys (witness.ts) is the single downstream point that converts those to the
+        // dotted-path convention the rest of the engine expects.
+        if (fv !== null && typeof fv === 'object' && !('#map' in (fv as any)) && !('#bigint' in (fv as any))) {
+          for (const [sk, sv] of Object.entries(fv as Record<string, unknown>)) fields[`${fk}_${sk}`] = deBig(sv);
+          continue;
+        }
         fields[fk.replace(/_state$/, '.state')] = deBig(fv);
       }
-      entities.push({ type, id: String(id), fields });
+      entities.push({ type, id: String(id), fields }, ...children);
     }
   }
   return { now, entities };

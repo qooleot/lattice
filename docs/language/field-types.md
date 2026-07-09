@@ -31,10 +31,15 @@ A field is `<camelId> : <type> [key] [@<tag>]*`. `<type>` is one of:
 
 - **Primitives:** `Int`, `Text`, `Date`, `Duration`, `Money`, `Id`.
 - **An enum name** — any [enum](enum.md) declared in the same context.
+- **A [value](value.md) name** — any `value` declared in the same context. Structural, keyless,
+  and flat (prim/enum fields only) — see `value.md` for its own rules.
 - **`ref <Target>`** — a same-context reference: `<Target>` must be an entity or aggregate
   declared in this file.
 - **`ref Context.Type`** — a qualified, cross-context reference (see below).
 - **`List<T>`** — a homogeneous list of any of the above, including nested lists.
+
+A bare identifier resolves in this order: primitive → declared value → declared entity/aggregate
+(`ref`) → enum (the fallback, `unresolved-enum` if it matches nothing declared).
 
 `key` (unquoted, after the type) marks the field as the owner's identity field — see
 [entity](entity.md)/[aggregate](aggregate.md) for the `missing-key` rule. `@`-tags follow; see
@@ -62,10 +67,11 @@ context. It is accepted by the grammar and by per-file validation, but it is str
   (`unresolved-ref`); a qualified `ref Context.Type` is checked shape-only per file (each segment
   must be a valid identifier) and resolved against the workspace's `exposes` declarations only at
   `docs`-compile time.
+- A value-typed field must name a declared value (`unresolved-value`) — see [value](value.md).
 - An enum-typed field must name a declared enum (`unresolved-enum`).
 - `List<T>` recurses: the element type `T` is validated by the same rules.
 - A field named `state` is always rejected (`reserved-field-name`), regardless of type — `state`
-  is reserved for machine-state path accessors.
+  is reserved for lifecycle-state path accessors.
 
 ## Example
 
@@ -89,6 +95,7 @@ context Billing {
 ## See also
 
 - [Enum](enum.md)
+- [Value](value.md)
 - [Entity](entity.md)
 - [Tags](tags.md)
 - [Context map](context-map.md)

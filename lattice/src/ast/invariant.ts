@@ -8,7 +8,9 @@ export type Term =
   | { kind: 'int'; value: number }
   | { kind: 'enumval'; enum: string; value: string }
   | { kind: 'now' }                                // current tick (Date/Duration are ticks)
-  | { kind: 'plus'; left: Term; right: Term };     // linear arithmetic only
+  | { kind: 'plus'; left: Term; right: Term }      // linear arithmetic only
+  | { kind: 'param'; name: string };               // method param ref — legal ONLY in a MethodDef.requires
+                                                    // (design §3.6); THROWS in evalTerm/termToQuint/termToAlloy
 
 export type Predicate =
   | { kind: 'cmp'; op: Cmp; left: Term; right: Term }
@@ -21,12 +23,22 @@ export type Predicate =
 export type Candidate =
   | { kind: 'statePredicate'; aggregate: string; where?: Predicate; body: Predicate }
   | { kind: 'unique'; aggregate: string; whileStates: { region: string; states: string[] }; by: Path[] }
-  | { kind: 'refsResolve'; aggregate: string }
+  // fields: the SAME-CONTEXT (unqualified) ref field names this candidate checks (spec §4.2
+  // excludes qualified/cross-context refs from invariant semantics — see isQualifiedRef).
+  // Absent ⇒ legacy heuristic over all string fields (stored candidates predate this field).
+  | { kind: 'refsResolve'; aggregate: string; fields?: string[] }
   | { kind: 'cardinality'; aggregate: string; where: Predicate | null; atMost: number }
   | { kind: 'terminal'; aggregate: string; region: string; state: string }
   | { kind: 'monotonic'; aggregate: string; field: Path }
   | { kind: 'conservation'; aggregate: string; parts: Path[]; total: Path }
-  | { kind: 'leadsTo'; aggregate: string; from: Predicate; to: Predicate; fairness: string }; // template-instantiated ONLY
+  | { kind: 'leadsTo'; aggregate: string; from: Predicate; to: Predicate; fairness: string } // template-instantiated ONLY
+  // elicitable; quint-routed; alloy encodes as adopted constraint only
+  | { kind: 'sumOverCollection'; aggregate: string;
+      collection: string;                 // owned List field name on the aggregate
+      child: string;                      // the nested entity's name (== ownedCollectionChild(...).name)
+      field: string;                      // numeric field on the child
+      op: 'eq' | 'le' | 'ge';
+      total: Path };                      // single-segment numeric path on the aggregate
 
 export interface CandidateInvariant {
   id: string;

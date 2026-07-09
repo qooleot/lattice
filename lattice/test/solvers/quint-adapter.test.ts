@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { runQuint } from '../../src/solvers/quint-adapter.js';
+import { runQuint, parseITF } from '../../src/solvers/quint-adapter.js';
 import type { QuintEmission } from '../../src/emit/quint.js';
 
 const em: QuintEmission = { source: 'module m {}', invariantName: 'q_inv', varTypes: {} };
@@ -61,5 +61,98 @@ describe('quint adapter retry-once on transient gRPC startup contention', () => 
       expect(port).toBeLessThan(60000);
     }
     expect(endpoints[0]).not.toBe(endpoints[1]);
+  });
+});
+
+// Task 6: owned collections (design §6.1) — ITF parsing is solver-free, so this exercises
+// parseITF directly against a hand-built trace state shaped like real quint ITF output (map
+// values as `{'#map': [[k, v], …]}`, bigints as `{'#bigint': "…"}`).
+describe('quint adapter materializes owned-collection children from ITF', () => {
+  const varTypes = { invoices: 'Invoice', 'invoices#lines': 'InvoiceLine' };
+
+  it('emits exactly the live children (index < count), each with an owner and numeric fields', () => {
+    const itf = {
+      states: [{
+        now: { '#bigint': '0' },
+        invoices: {
+          '#map': [[
+            'invoice1',
+            {
+              exists: true,
+              totalDue: { '#bigint': '100' },
+              linesCount: { '#bigint': '2' },
+              lines: {
+                '#map': [
+                  [{ '#bigint': '0' }, { amount: { '#bigint': '10' } }],
+                  [{ '#bigint': '1' }, { amount: { '#bigint': '20' } }],
+                  [{ '#bigint': '2' }, { amount: { '#bigint': '30' } }],   // beyond linesCount — not live
+                ],
+              },
+            },
+          ]],
+        },
+      }],
+    };
+    const state = parseITF(itf, varTypes);
+    const invoice = state.entities.find(e => e.type === 'Invoice')!;
+    expect(invoice.fields['lines.count']).toBe(2);
+    const lines = state.entities.filter(e => e.type === 'InvoiceLine');
+    expect(lines).toHaveLength(2);
+    for (const line of lines) expect(line.fields.owner).toBe('invoice1');
+    expect(lines.map(l => l.fields.amount).sort()).toEqual([10, 20]);
+    expect(lines.map(l => l.id).sort()).toEqual(['invoice1#lines0', 'invoice1#lines1']);
+  });
+
+  it('accepts plain-number map keys (not just {#bigint})', () => {
+    const itf = {
+      states: [{
+        invoices: {
+          '#map': [[
+            'invoice1',
+            { exists: true, totalDue: 5, linesCount: 1, lines: { '#map': [[0, { amount: 42 }]] } },
+          ]],
+        },
+      }],
+    };
+    const state = parseITF(itf, varTypes);
+    const lines = state.entities.filter(e => e.type === 'InvoiceLine');
+    expect(lines).toEqual([{ type: 'InvoiceLine', id: 'invoice1#lines0', fields: { owner: 'invoice1', amount: 42 } }]);
+  });
+});
+
+// Task 11: value semantics (design §3.5) — quint encodes a value-typed field as an inline nested
+// record (astToQuint's fieldQType value case), so ITF represents an instance as a plain object
+// with NO '#map' key (unlike owned collections/refs, which are always '#map'-wrapped). The
+// adapter must flatten that plain object to underscore-joined keys so it matches Alloy's native
+// underscore-flattened sig-relation shape — remapValueKeys (witness.ts) is the shared downstream
+// step that converts both adapters' underscore keys to the engine's dotted-path convention.
+describe('quint adapter flattens nested value-record fields to underscore keys', () => {
+  it('flattens a plain-object (non-#map) record field to <field>_<subfield> keys', () => {
+    const varTypes = { subscriptions: 'Subscription' };
+    const itf = {
+      states: [{
+        subscriptions: {
+          '#map': [[
+            'sub1',
+            { exists: true, period: { start: { '#bigint': '3' }, end: { '#bigint': '9' } } },
+          ]],
+        },
+      }],
+    };
+    const state = parseITF(itf, varTypes);
+    const sub = state.entities.find(e => e.type === 'Subscription')!;
+    expect(sub.fields).toEqual({ period_start: 3, period_end: 9 });
+  });
+
+  it('flattens plain-number (non-bigint) sub-field values too', () => {
+    const varTypes = { subscriptions: 'Subscription' };
+    const itf = {
+      states: [{
+        subscriptions: { '#map': [['sub1', { exists: true, period: { start: 3, end: 9 } }]] },
+      }],
+    };
+    const state = parseITF(itf, varTypes);
+    const sub = state.entities.find(e => e.type === 'Subscription')!;
+    expect(sub.fields).toEqual({ period_start: 3, period_end: 9 });
   });
 });

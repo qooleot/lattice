@@ -23,8 +23,8 @@ describe('definition of done (brief): rename + new transition + contradicting in
     // (totalDue distinguishes w5's two draft invoices; key fields like invoiceId are witness-invisible → always-forbid)
     const edited = original
       .replaceAll('accruedUnits', 'usedUnits')
-      .replace('transition recover { region lifecycle; from pastDue to active }',
-        'transition recover { region lifecycle; from pastDue to active }\n      transition graceToExpired { region lifecycle; from pastDue to expired }')
+      .replace('transition recover { from pastDue to active }',
+        'transition recover { from pastDue to active }\n      transition graceToExpired { from pastDue to expired }')
       .replace('unique while settlement in {draft} by (subscription)',
         'unique while settlement in {draft} by (totalDue)');   // totalDue is witness-visible; key fields are not (Task 9 finding)
     writeFileSync(lat, edited);

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { extractSalient, renderWitnessTable, salientKey } from '../../src/engine/salient.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 import type { CaseState } from '../../src/engine/evaluate.js';
+import { sumCandidate } from '../fixtures.js';
 
 const uniq: Candidate = { kind: 'unique', aggregate: 'Subscription',
   whileStates: { region: 'Access', states: ['Active'] }, by: [['customer'], ['plan', 'family']] };
@@ -52,6 +53,56 @@ describe('extractSalient', () => {
     const kindDims = facts3.filter(f => f.dim.includes('kind'));
     expect(kindDims).toHaveLength(1);
     expect(kindDims[0]!.dim).toBe('kind = Correction');
+  });
+});
+
+// Task 9: sum-over-collection salient dims (design §6.2/§6.4) — reuses evaluate.test.ts's `sum`/`st`
+// fixture convention: an Invoice with `totalDue` + `lines.count` fields, owning InvoiceLine children
+// via `owner: '<parent id>'`.
+const st = (amounts: number[], total: number): CaseState => ({ entities: [
+  { type: 'Invoice', id: 'i1', fields: { totalDue: total, 'lines.count': amounts.length } },
+  ...amounts.map((a, i) => ({ type: 'InvoiceLine', id: `i1#lines${i}`, fields: { amount: a, owner: 'i1' } })),
+]});
+
+describe('extractSalient — sumOverCollection dims (masking regressions)', () => {
+  it('captures count/sum/total dims for a single-subject witness', () => {
+    const facts = extractSalient([sumCandidate], st([3, 4], 7));
+    const byDim = Object.fromEntries(facts.map(f => [f.dim, f.value]));
+    expect(byDim['lines.count']).toBe(2);
+    expect(byDim['sum(lines.amount)']).toBe(7);
+    expect(byDim['totalDue value']).toBe(7);
+  });
+  it('sum dims: same count+sum+total ⇒ same salient key regardless of row split (shape may exclude both)', () => {
+    const a = extractSalient([sumCandidate], st([3, 4], 7));
+    const b = extractSalient([sumCandidate], st([5, 2], 7));
+    expect(salientKey(a)).toBe(salientKey(b));
+  });
+  it('sum dims: different sums ⇒ different keys (a judged shape must not cancel a distinct pair)', () => {
+    const a = extractSalient([sumCandidate], st([3, 4], 7));
+    const b = extractSalient([sumCandidate], st([3, 5], 7));
+    expect(salientKey(a)).not.toBe(salientKey(b));
+  });
+  it('sum dims: two subjects disagreeing on sums drop the dim (all-subjects-agree)', () => {
+    const twoInvoices: CaseState = { entities: [...st([3], 3).entities,
+      { type: 'Invoice', id: 'i2', fields: { totalDue: 9, 'lines.count': 1 } },
+      { type: 'InvoiceLine', id: 'i2#lines0', fields: { amount: 9, owner: 'i2' } }] };
+    expect(extractSalient([sumCandidate], twoInvoices).map(f => f.dim)).not.toContain('sum(lines.amount)');
+  });
+});
+
+// Task 11: value semantics (design §3.5) — renderTerm already joins a field path with '.', so a
+// value-hop path (['period', 'start']) renders as the dotted dim key `period.start` with no code
+// changes needed; resolveFieldPath (grammar.ts) now resolves that same dotted key back through
+// its value hop. This is the salient-side verification the task-11 brief asks for.
+describe('extractSalient — value-field (dotted) comparison dims', () => {
+  it('renders a comparison dim over value sub-field paths as dotted, matching resolveFieldPath', () => {
+    const periodCmp: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt',
+        left: { kind: 'field', owner: 'self', path: ['period', 'start'] },
+        right: { kind: 'field', owner: 'self', path: ['period', 'end'] } } };
+    const s: CaseState = { entities: [{ type: 'Subscription', id: 's1', fields: { 'period.start': 3, 'period.end': 9 } }] };
+    const facts = extractSalient([periodCmp], s);
+    expect(facts.find(f => f.dim === 'period.start lt period.end')!.value).toBe(true);
   });
 });
 

@@ -1,7 +1,8 @@
 import fc from 'fast-check';
 import type { DomainModel, AggregateDef, EntityDef, Field, EventDef, Machine, StateDef,
-  TransitionDef, TypeRef } from '../../src/ast/domain.js';
+  TransitionDef, TypeRef, ValueDef, ServiceDef, MethodDef, ParamDef } from '../../src/ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Cmp } from '../../src/ast/invariant.js';
+import { ownedCollectionChild } from '../../src/ast/domain.js';
 import { RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
 import type { ContextMapModel, Relationship, RelationshipKind, Role } from '../../src/ast/contextmap.js';
 import { defaultPath } from '../../src/ast/contextmap.js';
@@ -19,13 +20,19 @@ const uniqNames = (arb: fc.Arbitrary<string>, min: number, max: number) =>
 const docText = fc.string({ unit: fc.constantFrom(...'abc XYZ,.'.split('')), minLength: 1, maxLength: 30 })
   .map(s => s.trim()).filter(s => s.length > 0);
 
-// AGGREGATE fields: prim/enum only — never 'ref'. candidateArb's refsResolve arm depends on
-// this (see its comment); roundtrip.test.ts asserts the invariant executably.
-export function fieldArb(name: string, enumNames: string[]): fc.Arbitrary<Field> {
+// AGGREGATE fields: prim/enum/value only — never 'ref'/'list'. candidateArb's refsResolve arm
+// depends on there being no ref fields (see its comment); roundtrip.test.ts asserts the invariant
+// executably. `valueNames` (optional, Task 10) lets a field draw a declared value type — kept a
+// low-weight option since value fields are excluded from every invariant path (see `representable`
+// above): no solver encoding yet, so they must never end up load-bearing in a generated candidate.
+export function fieldArb(name: string, enumNames: string[], valueNames: string[] = []): fc.Arbitrary<Field> {
   const prim = fc.constantFrom('Int', 'Money', 'Date', 'Duration', 'Text', 'Id').map(p => ({ kind: 'prim' as const, prim: p as any }));
-  const type = enumNames.length
-    ? fc.oneof({ weight: 3, arbitrary: prim }, { weight: 1, arbitrary: fc.constantFrom(...enumNames).map(e => ({ kind: 'enum' as const, enum: e })) })
-    : prim;
+  const options: fc.WeightedArbitrary<TypeRef>[] = [{ weight: 4, arbitrary: prim }];
+  if (enumNames.length) options.push({ weight: 1,
+    arbitrary: fc.constantFrom(...enumNames).map(e => ({ kind: 'enum' as const, enum: e })) });
+  if (valueNames.length) options.push({ weight: 1,
+    arbitrary: fc.constantFrom(...valueNames).map(v => ({ kind: 'value' as const, value: v })) });
+  const type = fc.oneof(...options);
   return fc.record({
     type,
     tags: fc.option(fc.constantFrom(['total'], ['balance'], ['signed']), { nil: undefined }),
@@ -102,8 +109,11 @@ function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[],
 // `unrepresentable-path` — keys and Text/Id prims are absent from the solver-facing model), and
 // loadLatText treats those diagnostics as parse failures. Generated invariants must only draw
 // paths from representable fields or the round-trip property generates unparseable specs.
+// Value-typed fields are excluded outright: Task 10 adds surface/AST/printer support only, no
+// solver encoding yet (fieldQType/emitOwnerSig drop them, like lists), so a path into one would
+// generate an invariant the emitters can't faithfully represent.
 const representable = (f: Field) =>
-  !f.key && !(f.type.kind === 'prim' && ['Text', 'Id'].includes((f.type as any).prim));
+  !f.key && f.type.kind !== 'value' && !(f.type.kind === 'prim' && ['Text', 'Id'].includes((f.type as any).prim));
 
 function candidateArb(agg: AggregateDef, enums: { name: string; values: string[] }[]): fc.Arbitrary<Candidate> {
   const paths = agg.fields.filter(representable).map(f => [f.name]);
@@ -126,6 +136,14 @@ function candidateArb(agg: AggregateDef, enums: { name: string; values: string[]
     fc.constantFrom(...paths).map(field => ({ kind: 'monotonic' as const, aggregate: agg.name, field })));
   if (paths.length >= 3) arbs.push(fc.constant({ kind: 'conservation' as const, aggregate: agg.name,
     parts: [paths[0]!, paths[1]!], total: paths[2]! }));
+  const owned = agg.fields.map(f => ({ f, child: ownedCollectionChild(agg, f) })).filter(x => x.child);
+  const numPaths = agg.fields.filter(isNumericPrim).map(f => [f.name]);
+  if (owned.length && numPaths.length) {
+    const numChildFields = owned[0]!.child!.fields.filter(isNumericPrim).map(f => f.name);
+    if (numChildFields.length) arbs.push(fc.constantFrom<'eq' | 'le' | 'ge'>('eq', 'le', 'ge').map(op =>
+      ({ kind: 'sumOverCollection' as const, aggregate: agg.name, collection: owned[0]!.f.name,
+         child: owned[0]!.child!.name, field: numChildFields[0]!, op, total: numPaths[0]! })));
+  }
   if (agg.machine) {
     const r = agg.machine.regions[0]!;
     if (paths.length) arbs.push(fc.uniqueArray(fc.constantFrom(...r.states.map(s => s.name)), { minLength: 1, maxLength: 2 })
@@ -144,37 +162,101 @@ function candidateArb(agg: AggregateDef, enums: { name: string; values: string[]
   return fc.oneof(...arbs);
 }
 
+// AGGREGATE fields eligible as guard operands: prim numeric types only, matching validate's
+// own-scalar-only rule (checkGuard) and predArb's numFields filter above.
+const isNumericPrim = (f: Field): boolean =>
+  f.type.kind === 'prim' && ['Int', 'Money', 'Date', 'Duration'].includes((f.type as any).prim);
+
 // 1–2 regions; per region: 2–4 states (the LAST tagged @terminal — candidateArb's terminal arm
-// depends on exactly that), one transition, optionally triggered by a declared event.
-const machineArb = (fieldNames: string[], eventNames: string[]): fc.Arbitrary<Machine> =>
+// depends on exactly that), one transition, optionally triggered by a declared event, optionally
+// emitting a declared event, and/or guarded by a simple `numField >= <int>` predicate over the
+// owning aggregate's own numeric fields (guards are own-scalar-only in v1 — design §3.3/§5.2.1,
+// matches checkGuard).
+const machineArb = (fieldNames: string[], eventNames: string[], numFieldNames: string[]): fc.Arbitrary<Machine> =>
   uniqNames(camel.filter(n => !fieldNames.includes(n)), 1, 2).chain(regionNames =>
     fc.tuple(
       fc.tuple(...regionNames.map(() => uniqNames(camel, 2, 4))),
       uniqNames(camel, regionNames.length, regionNames.length),
       fc.tuple(...regionNames.map(() => eventNames.length
         ? fc.option(fc.constantFrom(...eventNames), { nil: undefined }) : fc.constant(undefined))),
-    ).map(([statesPer, transNames, whens]) => ({
+      fc.tuple(...regionNames.map(() => fc.option(fc.integer({ min: 0, max: 99 }), { nil: undefined }))),
+      fc.tuple(...regionNames.map(() => eventNames.length
+        ? fc.option(fc.constantFrom(...eventNames), { nil: undefined }) : fc.constant(undefined))),
+    ).map(([statesPer, transNames, whens, guards, emitses]) => ({
       regions: regionNames.map((name, i) => ({ name, initial: statesPer[i]![0]!,
         states: statesPer[i]!.map((s, j): StateDef =>
           j === statesPer[i]!.length - 1 ? { name: s, tags: ['terminal'] } : { name: s }) })),
       transitions: regionNames.map((region, i) => {
-        const t: TransitionDef = { name: transNames[i]!, region, from: statesPer[i]![0]!, to: statesPer[i]![1]! };
+        const t: TransitionDef = { name: transNames[i]!, region, from: [statesPer[i]![0]!], to: statesPer[i]![1]! };
         if (whens[i]) t.when = whens[i];
+        if (guards[i] !== undefined && numFieldNames.length)
+          t.requires = { kind: 'cmp', op: 'ge',
+            left: { kind: 'field', owner: 'self', path: [numFieldNames[0]!] },
+            right: { kind: 'int', value: guards[i]! } };
+        if (emitses[i]) t.emits = emitses[i];
         return t;
       }),
     })));
 
-const aggArb = (name: string, enums: { name: string; values: string[] }[], eventNames: string[]): fc.Arbitrary<AggregateDef> =>
+// Nested entity + owned collection: when `childName` is supplied (caller decides, with
+// probability ~1/3, from a name pool disjoint across ALL aggregates — see arbSpec), attach one
+// flat child entity to the aggregate and a parent field ranging over it (`List<Child>` → owned
+// collection per ownedCollectionChild). Child fields reuse fieldArb (prim/enum only — nested
+// children carry no ref/list per nested-entity-flat) with a forced keyed first field, mirroring
+// aggArb's own shape.
+const nestedArb = (childName: string | undefined, enums: { name: string; values: string[] }[], fieldNames: string[]): fc.Arbitrary<{ child: EntityDef; collectionField: Field } | null> => {
+  if (!childName) return fc.constant(null);
+  return fc.tuple(
+    camel.filter(n => n !== 'state' && !fieldNames.includes(n)),
+    uniqNames(camel.filter(n => n !== 'state'), 1, 3))
+    .chain(([collectionFieldName, childFieldNames]) =>
+      fc.tuple(...childFieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name))))
+        .map(rest => {
+          const child: EntityDef = { kind: 'entity', name: childName,
+            fields: [{ name: childFieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest] };
+          const collectionField: Field = { name: collectionFieldName,
+            type: { kind: 'list', of: { kind: 'ref', target: childName } } };
+          return { child, collectionField };
+        }));
+};
+
+// Value type (design §3.5): flat prim fields only (no enum in v1's own generation — kept simple),
+// plus an optional own-field invariant when there are >= 2 numeric fields, in the
+// `firstNumeric < secondNumeric`-style shape the brief calls out (mirrors Period.wellOrdered).
+const valueArb = (name: string): fc.Arbitrary<ValueDef> =>
+  fc.tuple(uniqNames(camel, 2, 3), fc.option(docText, { nil: undefined }))
+    .chain(([fieldNames, valDoc]) =>
+      fc.tuple(...fieldNames.map(fn => fc.constantFrom('Int', 'Money', 'Date', 'Duration', 'Text', 'Id')
+        .map(p => ({ name: fn, type: { kind: 'prim' as const, prim: p as any } } as Field))))
+        .chain(fields => {
+          const numeric = fields.filter(isNumericPrim).map(f => f.name);
+          const wantsInvariant = numeric.length >= 2;
+          return fc.tuple(wantsInvariant ? fc.boolean() : fc.constant(false), camel)
+            .map(([addInv, invName]) => {
+              const def: ValueDef = { kind: 'value', name, fields };
+              if (valDoc) def.doc = valDoc;
+              if (addInv) def.invariants = [{ name: invName,
+                body: { kind: 'cmp', op: 'lt',
+                  left: { kind: 'field', owner: 'self', path: [numeric[0]!] },
+                  right: { kind: 'field', owner: 'self', path: [numeric[1]!] } } }];
+              return def;
+            });
+        }));
+
+const aggArb = (name: string, enums: { name: string; values: string[] }[], eventNames: string[], childName?: string, valueName?: string): fc.Arbitrary<AggregateDef> =>
   fc.tuple(uniqNames(camel.filter(n => n !== 'state'), 2, 4), fc.boolean(), fc.option(docText, { nil: undefined }))
     .chain(([fieldNames, hasMachine, aggDoc]) =>
-      fc.tuple(...fieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name))))
-        .chain(rest => {
-          const fields: Field[] = [{ name: fieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest];
-          const base: AggregateDef = { kind: 'aggregate', name, fields };
-          if (aggDoc) base.doc = aggDoc;
-          if (!hasMachine) return fc.constant(base);
-          return machineArb(fieldNames, eventNames).map(machine => ({ ...base, machine }));
-        }));
+      fc.tuple(...fieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name), valueName ? [valueName] : [])))
+        .chain(rest =>
+          nestedArb(childName, enums, fieldNames).chain(nested => {
+            const fields: Field[] = [{ name: fieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest];
+            const base: AggregateDef = { kind: 'aggregate', name, fields };
+            if (nested) { base.fields = [...fields, nested.collectionField]; base.entities = [nested.child]; }
+            if (aggDoc) base.doc = aggDoc;
+            if (!hasMachine) return fc.constant(base);
+            return machineArb(fieldNames, eventNames, rest.filter(isNumericPrim).map(f => f.name))
+              .map(machine => ({ ...base, machine }));
+          })));
 
 // event field: simple prim-typed field, no ref/enum wiring.
 const eventFieldArb = (name: string): fc.Arbitrary<Field> =>
@@ -190,6 +272,94 @@ const eventArb = (name: string): fc.Arbitrary<EventDef> =>
           if (evDoc) ev.doc = evDoc;
           return ev;
         }));
+
+// Service (design §3.6, Task 12): carried structure only — every `performs` method targets a
+// transition drawn from the generated aggregates (so it always round-trips), plus one `read-only`
+// method with no target. A param-guard is drawn only when the target aggregate has a numeric field
+// (matching validate's own-scalar-only rule): `field >= param`, mirroring machineArb's own
+// `numField >= <int>` guard shape one level up.
+const paramArb: fc.Arbitrary<ParamDef> = fc.tuple(camel, fc.constantFrom('Int', 'Money', 'Date', 'Duration', 'Id'))
+  .map(([n, prim]) => ({ name: n, type: { kind: 'prim' as const, prim: prim as any } }));
+
+// read-only method: params only, no target aggregate — no field guard is possible (validate
+// treats any field reference in a read-only guard as scope-leaving), so its optional guard (when
+// present) draws a param+param or param+int comparison only.
+const readOnlyMethodArb = (name: string): fc.Arbitrary<MethodDef> =>
+  fc.tuple(uniqNames(camel, 0, 2)).chain(([paramNames]) =>
+    fc.tuple(...paramNames.map(() => paramArb)).chain(params => {
+      const numericParams = params.filter(p => p.type.kind === 'prim' && ['Int', 'Money', 'Date', 'Duration'].includes(p.type.prim));
+      const guardArb: fc.Arbitrary<Predicate | null> = numericParams.length
+        ? fc.option(fc.constantFrom(...numericParams).map(p => ({ kind: 'cmp' as const, op: 'ge' as const,
+            left: { kind: 'param' as const, name: p.name }, right: { kind: 'int' as const, value: 0 } })), { nil: null })
+        : fc.constant(null);
+      return guardArb.map(requires => {
+        const def: MethodDef = { name, params, kind: { readOnly: true } };
+        if (requires) def.requires = requires;
+        return def;
+      });
+    }));
+
+function methodArb(name: string, aggs: AggregateDef[]): fc.Arbitrary<MethodDef> {
+  const targets = aggs.filter(a => a.machine && a.machine.transitions.length > 0);
+  if (!targets.length) return readOnlyMethodArb(name);   // no aggregate has a machine to perform against
+  return fc.constantFrom(...targets).chain(agg => {
+    const t = agg.machine!.transitions[0]!;
+    const numFields = agg.fields.filter(isNumericPrim);
+    // param name must be disjoint from the target aggregate's own field names — a same-named
+    // param and field are both legal individually, but `field >= param` prints as `o >= o` (both
+    // sides identically spelled) and re-parses as param-shadows-field on BOTH occurrences,
+    // an irrecoverable surface-syntax collision (params shadow fields — service.md).
+    const fieldNames = new Set(agg.fields.map(f => f.name));
+    const distinctParamArb = paramArb.filter(p => !fieldNames.has(p.name));
+    const guardArb: fc.Arbitrary<{ param: ParamDef; requires: Predicate } | null> = numFields.length
+      ? fc.option(fc.tuple(distinctParamArb, fc.constantFrom(...numFields)).map(([param, f]) => ({ param,
+          requires: { kind: 'cmp' as const, op: 'ge' as const,
+            left: { kind: 'field' as const, owner: 'self', path: [f.name] },
+            right: { kind: 'param' as const, name: param.name } } })), { nil: null })
+      : fc.constant(null);
+    return guardArb.map(guard => {
+      const params = guard ? [guard.param] : [];
+      const def: MethodDef = { name, params, kind: { performs: { aggregate: agg.name, transition: t.name } } };
+      if (guard) def.requires = guard.requires;
+      return def;
+    });
+  });
+}
+
+const serviceArb = (name: string, aggs: AggregateDef[]): fc.Arbitrary<ServiceDef> =>
+  fc.tuple(uniqNames(camel.filter(n => n !== 'peek'), 1, 2), fc.option(docText, { nil: undefined }))
+    .chain(([methodNames, svcDoc]) =>
+      fc.tuple(...methodNames.map(mn => methodArb(mn, aggs)), readOnlyMethodArb('peek'))
+        .map(methods => {
+          const def: ServiceDef = { name, methods };
+          if (svcDoc) def.doc = svcDoc;
+          return def;
+        }));
+
+// Final stage of arbSpec's chain (Task 10 pulled it out to a named function to keep the deep
+// fc.tuple/.chain nesting above it manageable): given every drawn name-scoped piece, generates the
+// per-aggregate candidate invariants and assembles { model, invariants }.
+function finalSpecArb(context: string, doc: string | undefined, ticksPerDay: number | undefined,
+    enums: { name: string; values: string[] }[], aggs: AggregateDef[], entities: EntityDef[],
+    events: EventDef[], values: ValueDef[], services: ServiceDef[]): fc.Arbitrary<{ model: DomainModel; invariants: CandidateInvariant[] }> {
+  const model: DomainModel = { context, enums, values, entities: [...entities], aggregates: [...aggs], events: [...events], services };
+  if (doc) model.doc = doc;
+  if (ticksPerDay !== undefined) model.ticksPerDay = ticksPerDay;
+  return fc.tuple(...aggs.map(a =>
+    fc.array(fc.tuple(camel, fc.option(docText, { nil: undefined }), candidateArb(a, enums)), { maxLength: 2 })))
+    .map(perAgg => {
+      const used = new Set<string>();
+      const invariants: CandidateInvariant[] = [];
+      for (const list of perAgg) for (const [nm, d, candidate] of list) {
+        if (used.has(nm)) continue;
+        used.add(nm);
+        const inv: CandidateInvariant = { id: `hand-${nm}`, name: nm, prior: 1, source: 'template', candidate };
+        if (d) inv.doc = d;
+        invariants.push(inv);
+      }
+      return { model, invariants };
+    });
+}
 
 export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateInvariant[] }> =
   fc.tuple(pascal, uniqNames(pascal, 0, 2), fc.option(docText, { nil: undefined }))
@@ -208,30 +378,45 @@ export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateIn
         .chain(([entityNames, ticksPerDay]) =>
           uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n) && !entityNames.includes(n)), 0, 2)
           .chain(eventNames =>
-            fc.tuple(
-              fc.tuple(...aggNames.map(name => aggArb(name, enums, eventNames))),
-              fc.tuple(...entityNames.map(name =>
-                entityArb(name, enums.map(e => e.name), [...aggNames, ...entityNames]))),
-              fc.tuple(...eventNames.map(name => eventArb(name))))
-            .chain(([aggs, entities, events]) => {
-              const model: DomainModel = { context, enums, entities: [...entities], aggregates: [...aggs], events: [...events] };
-              if (doc) model.doc = doc;
-              if (ticksPerDay !== undefined) model.ticksPerDay = ticksPerDay;
-              return fc.tuple(...aggs.map(a =>
-                fc.array(fc.tuple(camel, fc.option(docText, { nil: undefined }), candidateArb(a, enums)), { maxLength: 2 })))
-                .map(perAgg => {
-                  const used = new Set<string>();
-                  const invariants: CandidateInvariant[] = [];
-                  for (const list of perAgg) for (const [nm, d, candidate] of list) {
-                    if (used.has(nm)) continue;
-                    used.add(nm);
-                    const inv: CandidateInvariant = { id: `hand-${nm}`, name: nm, prior: 1, source: 'template', candidate };
-                    if (d) inv.doc = d;
-                    invariants.push(inv);
-                  }
-                  return { model, invariants };
+            // nested-entity child names: disjoint from every top-level name AND from each other
+            // (validate's duplicate-name pool is flat across enum/entity/aggregate/nested-entity
+            // names), one optional slot per aggregate, each drawn ~1/3 of the time.
+            uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
+              && !entityNames.includes(n) && !eventNames.includes(n)), 0, aggNames.length)
+            .chain(childNamePool =>
+            // optional single value type (Task 10, design §3.5), name disjoint from every other
+            // top-level name; drawn ~1/2 the time and, when present, made eligible as a field type
+            // on every aggregate (fieldArb decides per-field, at low weight, whether to use it).
+            fc.option(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
+              && !entityNames.includes(n) && !eventNames.includes(n) && !childNamePool.includes(n)),
+              { nil: undefined })
+            .chain(valueName =>
+            // optional single service (design §3.6, Task 12), name disjoint from every other
+            // top-level name (incl. the value name); drawn ~1/2 the time. Its methods are
+            // generated AFTER the aggregates (see the .chain below) so `performs` always targets
+            // a transition that actually exists.
+            fc.option(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
+              && !entityNames.includes(n) && !eventNames.includes(n) && !childNamePool.includes(n) && n !== valueName),
+              { nil: undefined })
+            .chain(serviceName => {
+              const valuesArb: fc.Arbitrary<ValueDef[]> = valueName ? valueArb(valueName).map(v => [v]) : fc.constant([]);
+              return fc.tuple(...aggNames.map(() => fc.boolean()))
+                .chain(wantsChild => {
+                  let pi = 0;
+                  const childNames = wantsChild.map(w => w && pi < childNamePool.length ? childNamePool[pi++] : undefined);
+                  return fc.tuple(
+                    fc.tuple(...aggNames.map((name, i) => aggArb(name, enums, eventNames, childNames[i], valueName))),
+                    fc.tuple(...entityNames.map(name =>
+                      entityArb(name, enums.map(e => e.name), [...aggNames, ...entityNames]))),
+                    fc.tuple(...eventNames.map(name => eventArb(name))),
+                    valuesArb);
+                })
+                .chain(([aggs, entities, events, values]) => {
+                  const servicesArb: fc.Arbitrary<ServiceDef[]> = serviceName ? serviceArb(serviceName, aggs).map(s => [s]) : fc.constant([]);
+                  return servicesArb.chain(services =>
+                    finalSpecArb(context, doc, ticksPerDay, enums, aggs, entities, events, values, services));
                 });
-            })))));
+            })))))));
 
 export const arbContextMap: fc.Arbitrary<ContextMapModel> = (() => {
   const name = (i: number) => `Ctx${i}`;

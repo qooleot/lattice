@@ -1,6 +1,8 @@
 import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
+import { ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, Cmp, Path, Predicate, Term } from '../ast/invariant.js';
 import type { SalientFact } from '../engine/session.js';
+import { OWNED_BOUND, childVarKey } from '../engine/owned.js';
 
 export interface QuintQuery {
   kind: 'distinguish' | 'probe-forbid' | 'probe-permit';
@@ -28,6 +30,17 @@ function fieldQType(m: DomainModel, f: Field): string | null {
   if (f.type.kind === 'ref') return 'str';
   if (f.type.kind === 'enum') return 'str';
   if (f.type.kind === 'prim') return isIntPrim(f.type.prim) ? 'int' : null;   // Text/Id dropped
+  // Value fields (design §3.5): a keyless, flat structural type embeds inline as a nested record —
+  // e.g. `period: { start: int, end: int }` — never a map hop (values have no identity to look up
+  // by). Sub-fields with no quint encoding (Text/Id) are dropped from the record, same as any
+  // other owner's fields; a value with zero encodable sub-fields degenerates to `{}`.
+  if (f.type.kind === 'value') {
+    const valueName = f.type.value;
+    const vdef = m.values.find(v => v.name === valueName);
+    if (!vdef) return null;
+    const subs = vdef.fields.map(sf => { const t = fieldQType(m, sf); return t ? `${sf.name}: ${t}` : null; }).filter(Boolean);
+    return `{ ${subs.join(', ')} }`;
+  }
   return null;   // lists unsupported in slice-1 quint emission
 }
 function initValue(m: DomainModel, f: Field, nondets: string[], tag: string): string | null {
@@ -39,6 +52,20 @@ function initValue(m: DomainModel, f: Field, nondets: string[], tag: string): st
     nondets.push(`nondet ${nd} = oneOf(Set(${vals}))`);
   } else if (f.type.kind === 'ref') {
     nondets.push(`nondet ${nd} = oneOf(${(f.type as any).target.toUpperCase()}_IDS)`);
+  } else if (f.type.kind === 'value') {
+    // Per-subfield nondet draws (design §3.5): each sub-field gets its own `nondet` at the SAME
+    // tag scope as a plain field (init/create/owned-slot — wherever initValue is itself called),
+    // then the record literal composes them — mirrors the owned-collection per-index draws above.
+    const valueName = f.type.value;
+    const vdef = m.values.find(v => v.name === valueName)!;
+    const subs: string[] = [];
+    for (const sf of vdef.fields) {
+      const sndKind = fieldQType(m, sf);
+      if (!sndKind) continue;
+      const sndName = initValue(m, sf, nondets, `${tag}_${f.name}`);
+      if (sndName) subs.push(`${sf.name}: ${sndName}`);
+    }
+    return `{ ${subs.join(', ')} }`;
   } else nondets.push(`nondet ${nd} = oneOf(${INT_POOL})`);
   return nd;
 }
@@ -50,6 +77,7 @@ function termToQuint(m: DomainModel, t: Term, self: string, ownerName: string): 
     case 'now': return 'now';
     case 'plus': return `${termToQuint(m, t.left, self, ownerName)} + ${termToQuint(m, t.right, self, ownerName)}`;
     case 'field': return pathToQuint(m, t.path, self, ownerName);
+    case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
 }
 function pathToQuint(m: DomainModel, path: Path, self: string, ownerName: string): string {
@@ -107,6 +135,7 @@ function refHopsInTerm(m: DomainModel, t: Term, self: string, ownerName: string)
     case 'field': return refHopsIn(m, t.path, self, ownerName);
     case 'plus': return [...refHopsInTerm(m, t.left, self, ownerName), ...refHopsInTerm(m, t.right, self, ownerName)];
     case 'int': case 'enumval': case 'now': return [];
+    case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
 }
 function predToQuint(m: DomainModel, p: Predicate, self: string, ownerName: string): string {
@@ -160,6 +189,15 @@ function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
     const collides = [`${rec('k1')}.exists`, `${rec('k2')}.exists`, inS('k1'), inS('k2'), ...hops.map(h => `${h}.exists`), ...eqs].join(' and ');
     return `val ${name} = ${v}.keys().forall(k1 => ${v}.keys().forall(k2 => k1 == k2 or not(${collides})))`;
   }
+  if (c.kind === 'sumOverCollection') {
+    // Design §6.2: bounded fold over the owned-collection map (design §6.1's `f: int -> {…}` +
+    // `fCount: int` encoding) — walks every slot up to OWNED_BOUND, only counting slots below the
+    // live count. Mirrors evaluate.ts's sumOverCollection judge (sum of live children's field,
+    // compared with `total` on the left — see QuintQuery.adopted / the op-flip note there).
+    const fold = `range(0, ${OWNED_BOUND}).foldl(0, (acc, i) => if (i < x.${c.collection}Count) acc + x.${c.collection}.get(i).${c.field} else acc)`;
+    const ops = { eq: '==', le: '<=', ge: '>=' } as const;
+    return `val ${name} = ${v}.keys().forall(k => { val x = ${v}.get(k) not(x.exists) or (${pathToQuint(m, c.total, 'x', c.aggregate)} ${ops[c.op]} ${fold}) })`;
+  }
   throw new Error(`${c.kind} is never solver-queried on quint in slice-1 (template auto-adopt only)`);
 }
 
@@ -187,6 +225,15 @@ function shapeToQuint(m: DomainModel, facts: SalientFact[], cands: Candidate[], 
   const v = varName(agg);
   const conj: string[] = [];
   for (const f of facts) {
+    // Sum-over-collection dims (design §6.2/§6.4 — see salient.ts's extractSalient sumOverCollection
+    // branch) must be matched BEFORE the generic `<path> = <value>`/comparison branches below: e.g.
+    // `sum(lines.amount)` would otherwise mis-parse as a bare dotted path.
+    const mCount = f.dim.match(/^(\w+)\.count$/);
+    if (mCount) { conj.push(`x.${mCount[1]}Count == ${f.value}`); continue; }
+    const mSum = f.dim.match(/^sum\((\w+)\.(\w+)\)$/);
+    if (mSum) { conj.push(`range(0, ${OWNED_BOUND}).foldl(0, (acc, i) => if (i < x.${mSum[1]}Count) acc + x.${mSum[1]}.get(i).${mSum[2]} else acc) == ${f.value}`); continue; }
+    const mTot = f.dim.match(/^([\w.]+) value$/);
+    if (mTot) { conj.push(`${pathToQuint(m, splitPathStr(mTot[1]!), 'x', agg)} == ${f.value}`); continue; }
     const mVal = f.dim.match(/^([\w.]+) = (\w+)$/);
     if (mVal) { conj.push(`${pathToQuint(m, splitPathStr(mVal[1]!), 'x', agg)} == "${mVal[2]}"`); continue; }
     const mCmp = f.dim.match(/^(.+) (eq|ne|lt|le|gt|ge) (.+)$/);
@@ -215,6 +262,15 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
     const fields = o.fields.map(f => { const t = fieldQType(m, f); return t ? `${f.name}: ${t}` : null; }).filter(Boolean) as string[];
     const machine = (o as AggregateDef).machine;
     for (const r of machine?.regions ?? []) fields.push(`${r.name}_state: str`);
+    // Owned collections (design §6.1): a bounded map `f: int -> {childFields}` plus a companion
+    // `fCount: int` inside the owner record. Only aggregates can own nested entities.
+    const ownedFields = (o.kind === 'aggregate' ? o.fields.filter(f => ownedCollectionChild(o, f)) : []);
+    for (const f of ownedFields) {
+      const child = ownedCollectionChild(o as AggregateDef, f)!;
+      const childFields = child.fields.map(cf => { const t = fieldQType(m, cf); return t ? `${cf.name}: ${t}` : null; }).filter(Boolean) as string[];
+      fields.push(`${f.name}: int -> { ${childFields.join(', ')} }`, `${f.name}Count: int`);
+      varTypes[childVarKey(v, f.name)] = child.name;
+    }
     decls.push(`var ${v}: str -> { exists: bool, ${fields.join(', ')} }`);
     pools.push(`val ${o.name.toUpperCase()}_IDS = Set("${o.name.toLowerCase()}1", "${o.name.toLowerCase()}2")`);
 
@@ -224,19 +280,57 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
       if (nd) inits.push(`${f.name}: ${nd}`);
     }
     for (const r of machine?.regions ?? []) inits.push(`${r.name}_state: "${r.initial}"`);
+    // Per-index nondet draws at init: action-scope `nondet` can't be drawn per-element inside a
+    // fold, so each of the OWNED_BOUND slots gets its own flat draw (every bounded map is still
+    // reachable — see design deviation note in the commit body).
+    for (const f of ownedFields) {
+      const child = ownedCollectionChild(o as AggregateDef, f)!;
+      const entries: string[] = [];
+      for (let i = 0; i < OWNED_BOUND; i++) {
+        const kv: string[] = [];
+        for (const cf of child.fields) {
+          const nd = initValue(m, cf, initNondets, `${o.name.toLowerCase()}_${f.name}_${i}`);
+          if (nd) kv.push(`${cf.name}: ${nd}`);
+        }
+        entries.push(`${i} -> { ${kv.join(', ')} }`);
+      }
+      initNondets.push(`nondet nd_${o.name.toLowerCase()}_${f.name}Count = oneOf(0.to(${OWNED_BOUND}))`);
+      inits.push(`${f.name}: Map(${entries.join(', ')})`, `${f.name}Count: nd_${o.name.toLowerCase()}_${f.name}Count`);
+    }
     initSets.push(`${v}' = ${o.name.toUpperCase()}_IDS.mapBy(id => { ${inits.join(', ')} })`);
 
     // actions: declared transitions; generic region mutator when a region has none; create for non-machine entities; enum mutators
     for (const r of machine?.regions ?? []) {
       const declared = (machine!.transitions ?? []).filter(t => t.region === r.name);
-      for (const t of declared) actions.push(
-        `action trans_${o.name}_${t.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) all { ${v}.get(id).${r.name}_state == "${t.from}", ${v}' = ${v}.set(id, ${v}.get(id).with("${r.name}_state", "${t.to}")), ${frame([v]).join(', ')} } }`);
+      for (const t of declared) {
+        const fromChk = `(${t.from.map(f => `${v}.get(id).${r.name}_state == "${f}"`).join(' or ')})`;
+        const guard = t.requires ? `, ${predToQuint(m, t.requires, `${v}.get(id)`, o.name)}` : '';
+        actions.push(
+          `action trans_${o.name}_${t.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) all { ${fromChk}${guard}, ${v}' = ${v}.set(id, ${v}.get(id).with("${r.name}_state", "${t.to}")), ${frame([v]).join(', ')} } }`);
+      }
       if (declared.length === 0) actions.push(
         `action set_${o.name}_${r.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) nondet s = oneOf(Set(${r.states.map(x => `"${x.name}"`).join(', ')})) all { ${v}' = ${v}.set(id, ${v}.get(id).with("${r.name}_state", s)), ${frame([v]).join(', ')} } }`);
     }
     if (!machine) {
       const nds: string[] = []; const sets: string[] = ['exists: true'];
       for (const f of o.fields) { const nd = initValue(m, f, nds, `c_${o.name.toLowerCase()}`); if (nd) sets.push(`${f.name}: ${nd}`); }
+      // A fresh record literal must match the declared row type exactly (Quint's row-typing
+      // rejects a `.set(id, {...})` missing fields the var's type carries) — so a create action
+      // for an aggregate with owned collections needs the same bounded-map + count fields as init.
+      for (const f of ownedFields) {
+        const child = ownedCollectionChild(o as AggregateDef, f)!;
+        const entries: string[] = [];
+        for (let i = 0; i < OWNED_BOUND; i++) {
+          const kv: string[] = [];
+          for (const cf of child.fields) {
+            const nd = initValue(m, cf, nds, `c_${o.name.toLowerCase()}_${f.name}_${i}`);
+            if (nd) kv.push(`${cf.name}: ${nd}`);
+          }
+          entries.push(`${i} -> { ${kv.join(', ')} }`);
+        }
+        nds.push(`nondet nd_c_${o.name.toLowerCase()}_${f.name}Count = oneOf(0.to(${OWNED_BOUND}))`);
+        sets.push(`${f.name}: Map(${entries.join(', ')})`, `${f.name}Count: nd_c_${o.name.toLowerCase()}_${f.name}Count`);
+      }
       actions.push(`action create_${o.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) ${nds.join(' ')} all { ${v}' = ${v}.set(id, { ${sets.join(', ')} }), ${frame([v]).join(', ')} } }`);
     }
     for (const f of o.fields.filter(f => f.type.kind === 'enum')) {

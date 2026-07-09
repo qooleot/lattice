@@ -1,6 +1,7 @@
 import { parseLat, type ParseDiagnostic } from './parse.js';
 import type * as G from './generated/ast.js';
-import type { DomainModel, EnumDef, EntityDef, AggregateDef, EventDef, Field, TypeRef, Machine, Region, StateDef, TransitionDef } from '../ast/domain.js';
+import type { DomainModel, EnumDef, ValueDef, EntityDef, AggregateDef, EventDef, Field, TypeRef, Machine, Region, StateDef, TransitionDef, ServiceDef, MethodDef, ParamDef } from '../ast/domain.js';
+import { ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Path } from '../ast/invariant.js';
 import { validateModel } from '../ast/validate.js';
 import { validateCandidate } from '../ast/grammar.js';
@@ -28,25 +29,31 @@ const at = (node: any): { line: number; col: number } => {
 const diag = (code: string, message: string, node?: any): ParseDiagnostic =>
   ({ code, message, ...at(node) });
 
-function mapType(t: G.LatType, enums: Set<string>, diags: ParseDiagnostic[]): TypeRef {
-  if (t.$type === 'ListType') return { kind: 'list', of: mapType((t as G.ListType).of, enums, diags) };
+// Resolution order for a bare NamedType (design §3.5): prim → value → owner-ref → enum. A value
+// name and an owner (entity/aggregate) name are mutually exclusive by validateModel's shared
+// duplicate-name pool, so checking values before owners is safe — this order only matters for the
+// final unresolved-enum fallback, which must not shadow an in-scope value or owner name.
+function mapType(t: G.LatType, enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>, values: Set<string>): TypeRef {
+  if (t.$type === 'ListType') return { kind: 'list', of: mapType((t as G.ListType).of, enums, diags, owners, values) };
   if (t.$type === 'RefType') return { kind: 'ref', target: (t as G.RefType).target };
   const name = (t as G.NamedType).name;
   if (PRIMS.has(name)) return { kind: 'prim', prim: name as any };
+  if (values.has(name)) return { kind: 'value', value: name };
+  if (owners.has(name)) return { kind: 'ref', target: name };
   return { kind: 'enum', enum: name };   // unresolved enum → validateModel reports unresolved-enum
 }
 
-function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic[]): Field[] {
+function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>, values: Set<string>): Field[] {
   return fs.map(f => {
-    const field: Field = { name: f.name, type: mapType(f.type, enums, diags) };
+    const field: Field = { name: f.name, type: mapType(f.type, enums, diags, owners, values) };
     if (f.key) field.key = true;
     if (f.tags.length) field.tags = f.tags.map(t => t.name);
     return field;
   });
 }
 
-function mapMachine(m: G.MachineDecl, ownerName: string, diags: ParseDiagnostic[]): Machine {
-  const regions: Region[] = m.regions.map(r => {
+function mapLifecycles(lifs: G.LifecycleDecl[], ownerName: string, diags: ParseDiagnostic[], enums: Map<string, string[]>): Machine {
+  const regions: Region[] = lifs.map(r => {
     const states: StateDef[] = r.states.map(s => {
       const tags = s.tags.map(t => t.name).filter(t => t === 'active' || t === 'terminal') as ('active' | 'terminal')[];
       const st: StateDef = { name: s.name };
@@ -56,47 +63,72 @@ function mapMachine(m: G.MachineDecl, ownerName: string, diags: ParseDiagnostic[
     const initials = r.states.filter(s => s.tags.some(t => t.name === 'initial'));
     if (initials.length !== 1)
       diags.push(diag('multiple-initial',
-        `region ${ownerName}.${r.name} must have exactly one @initial state (found ${initials.length})`, r));
+        `lifecycle ${ownerName}.${r.name} must have exactly one @initial state (found ${initials.length})`, r));
     return { name: r.name, initial: initials[0]?.name ?? r.states[0]!.name, states };
   });
-  const transitions: TransitionDef[] = m.transitions.map(t => {
-    const tr: TransitionDef = { name: t.name, region: t.region, from: t.from, to: t.to };
+  const transitions: TransitionDef[] = lifs.flatMap(r => r.transitions.map(t => {
+    const tr: TransitionDef = { name: t.name, region: r.name, from: [...t.from], to: t.to };
     if (t.when) tr.when = t.when;
+    if (t.requires) tr.requires = mapPred(t.requires, enums);
+    if (t.emits) tr.emits = t.emits;
     return tr;
-  });
+  }));
   return { regions, transitions };
 }
 
-function mapTerm(e: G.Expr, enums: Map<string, string[]>): Term {
+// Service methods (design §3.6, Task 12): carried structure only. Each method's guard sees its
+// own params (shadowing fields — a `param` PathRef never reaches this far since mapType's
+// resolution happens per-method via the params set threaded into mapPred/mapTerm).
+function mapMethods(methods: G.MethodDecl[], enums: Set<string>, diags: ParseDiagnostic[],
+    owners: Set<string>, values: Set<string>, enumMap: Map<string, string[]>): MethodDef[] {
+  return methods.map(mm => {
+    const params: ParamDef[] = mm.params.map(p => ({ name: p.name, type: mapType(p.type, enums, diags, owners, values) }));
+    const paramNames = new Set(params.map(p => p.name));
+    const kind: MethodDef['kind'] = mm.readOnly ? { readOnly: true }
+      : mm.creates !== undefined ? { creates: mm.creates }
+      : { performs: { aggregate: mm.performsAgg!, transition: mm.performsTransition! } };
+    const def: MethodDef = { name: mm.name, params, kind };
+    if (mm.returns) def.returns = mapType(mm.returns, enums, diags, owners, values);
+    if (mm.requires) def.requires = mapPred(mm.requires, enumMap, paramNames);
+    const d = joinDocs([...mm.docs]); if (d) def.doc = d;
+    return def;
+  });
+}
+
+// `params` (design §3.6, Task 12): inside a METHOD requires, a single-segment PathRef matching a
+// declared param name maps to {kind:'param', name} — params shadow fields (see service.md).
+// Default empty set at every non-method call site (transitions, invariants, value laws).
+function mapTerm(e: G.Expr, enums: Map<string, string[]>, params: Set<string> = new Set()): Term {
   switch (e.$type) {
     case 'IntLit': return { kind: 'int', value: parseInt((e as G.IntLit).value, 10) };
     case 'NowLit': return { kind: 'now' };
     case 'PlusExpr': {
       const p = e as G.PlusExpr;
-      return { kind: 'plus', left: mapTerm(p.left, enums), right: mapTerm(p.right, enums) };
+      return { kind: 'plus', left: mapTerm(p.left, enums, params), right: mapTerm(p.right, enums, params) };
     }
     case 'PathRef': {
       const segs = (e as G.PathRef).segments;
       if (segs.length === 2 && enums.has(segs[0]!) && enums.get(segs[0]!)!.includes(segs[1]!))
         return { kind: 'enumval', enum: segs[0]!, value: segs[1]! };
+      if (segs.length === 1 && params.has(segs[0]!)) return { kind: 'param', name: segs[0]! };
       return { kind: 'field', owner: 'self', path: [...segs] };
     }
     default: throw new Error(`unmapped expr ${(e as any).$type}`);
   }
 }
 
-function mapPred(p: G.Predicate, enums: Map<string, string[]>): Predicate {
+function mapPred(p: G.Predicate, enums: Map<string, string[]>, params: Set<string> = new Set()): Predicate {
   switch (p.$type) {
     case 'BinPred': {
       const b = p as G.BinPred;
-      const l = mapPred(b.left, enums), r = mapPred(b.right, enums);
+      const l = mapPred(b.left, enums, params), r = mapPred(b.right, enums, params);
       if (b.op === '=>') return { kind: 'implies', left: l, right: r };
       const kind = b.op === '&&' ? 'and' as const : 'or' as const;
       // flatten left-assoc chains of the SAME connective into n-ary args
       const args = l.kind === kind ? [...(l as any).args, r] : [l, r];
       return { kind, args };
     }
-    case 'NotPred': return { kind: 'not', arg: mapPred((p as G.NotPred).arg, enums) };
+    case 'NotPred': return { kind: 'not', arg: mapPred((p as G.NotPred).arg, enums, params) };
     case 'StatePred': {
       const s = p as G.StatePred;
       return { kind: 'inState', owner: 'self', region: s.region, states: [...s.states] };
@@ -105,7 +137,7 @@ function mapPred(p: G.Predicate, enums: Map<string, string[]>): Predicate {
       const c = p as G.Comparison;
       const ops: Record<string, 'eq' | 'ne' | 'lt' | 'le' | 'gt' | 'ge'> =
         { '==': 'eq', '!=': 'ne', '<': 'lt', '<=': 'le', '>': 'gt', '>=': 'ge' };
-      return { kind: 'cmp', op: ops[c.op]!, left: mapTerm(c.left, enums), right: mapTerm(c.right, enums) };
+      return { kind: 'cmp', op: ops[c.op]!, left: mapTerm(c.left, enums, params), right: mapTerm(c.right, enums, params) };
     }
     default: throw new Error(`unmapped predicate ${(p as any).$type}`);
   }
@@ -113,7 +145,7 @@ function mapPred(p: G.Predicate, enums: Map<string, string[]>): Predicate {
 
 const mapPath = (p: G.PathExpr): Path => [...p.segments];
 
-function mapBody(inv: G.InvariantDecl, aggregate: string, enums: Map<string, string[]>): Candidate {
+function mapBody(inv: G.InvariantDecl, aggregate: string, aggDef: AggregateDef | undefined, enums: Map<string, string[]>): Candidate {
   const b = inv.body;
   const where = inv.where ? mapPred(inv.where, enums) : undefined;
   switch (b.$type) {
@@ -134,6 +166,14 @@ function mapBody(inv: G.InvariantDecl, aggregate: string, enums: Map<string, str
       // Langium's default value converter already strips STRING-terminal quotes (rule name STRING
       // triggers ValueConverter.convertString); slicing again here truncated the first/last real chars.
       fairness: (b as G.LeadsToBody).fairness };
+    case 'SumBody': {
+      const b2 = b as G.SumBody;
+      const f = aggDef?.fields.find(x => x.name === b2.collection);
+      const child = aggDef && f ? ownedCollectionChild(aggDef, f) : null;
+      const ops: Record<string, 'eq' | 'le' | 'ge'> = { '==': 'eq', '<=': 'le', '>=': 'ge' };
+      return { kind: 'sumOverCollection', aggregate, collection: b2.collection,
+        child: child?.name ?? '', field: b2.field, op: ops[b2.op]!, total: mapPath(b2.total) };
+    }
     default: {
       const c: Candidate = { kind: 'statePredicate', aggregate, body: mapPred((b as G.PredicateBody).pred, enums) };
       if (where) (c as any).where = where;
@@ -153,6 +193,10 @@ function namingWarnings(m: DomainModel, invNames: string[],
   };
   warn('context', m.context, PASCAL, 'PascalCase', 'context');
   for (const e of m.enums) { warn('enum', e.name, PASCAL, 'PascalCase', `enum:${e.name}`); e.values.forEach(v => warn('enum value', v, CAMEL, 'camelCase', `enum:${e.name}`)); }
+  for (const v of m.values) {
+    warn('value', v.name, PASCAL, 'PascalCase', `owner:${v.name}`);
+    v.fields.forEach(f => warn('field', f.name, CAMEL, 'camelCase', `field:${v.name}.${f.name}`));
+  }
   const owners = [...m.entities, ...m.aggregates];
   for (const o of owners) {
     warn(o.kind, o.name, PASCAL, 'PascalCase', `owner:${o.name}`);
@@ -162,6 +206,13 @@ function namingWarnings(m: DomainModel, invNames: string[],
     mach?.transitions.forEach(t => warn('transition', t.name, CAMEL, 'camelCase', `transition:${o.name}.${t.name}`));
   }
   for (const e of m.events) warn('event', e.name, PASCAL, 'PascalCase', `owner:${e.name}`);
+  for (const s of m.services) {
+    warn('service', s.name, PASCAL, 'PascalCase', `owner:${s.name}`);
+    for (const mm of s.methods) {
+      warn('method', mm.name, CAMEL, 'camelCase', `method:${s.name}.${mm.name}`);
+      mm.params.forEach(p => warn('param', p.name, CAMEL, 'camelCase', `method:${s.name}.${mm.name}`));
+    }
+  }
   invNames.forEach(n => warn('invariant', n, CAMEL, 'camelCase', `invariant:${n}`));
   return out;
 }
@@ -186,10 +237,27 @@ export function loadLatText(text: string): LoadResult {
   const enumSet = new Set(enumDecls.map(e => e.name));
   const enumMap = new Map(enumDecls.map(e => [e.name, [...e.values]]));
 
+  // owners in scope for bare-name ref resolution (mapType): top-level entities, aggregates, and
+  // every nested entity name declared inside an aggregate — collected in a pre-pass so forward
+  // references (a field naming an owner declared later in the file) still resolve.
+  const ownerNames = new Set<string>();
+  for (const item of cst.items) {
+    if (item.$type === 'EntityDecl') ownerNames.add((item as G.EntityDecl).name);
+    if (item.$type === 'AggregateDecl') {
+      const a = item as G.AggregateDecl;
+      ownerNames.add(a.name);
+      for (const e of a.entities) ownerNames.add(e.name);
+    }
+  }
+  // value type names in scope for bare-name resolution (mapType: prim → value → owner-ref →
+  // enum), same forward-reference rationale as ownerNames above.
+  const valueDecls = cst.items.filter((i): i is G.ValueDecl => i.$type === 'ValueDecl');
+  const valueNames = new Set(valueDecls.map(v => v.name));
+
   const model: DomainModel = {
     context: cst.name,
     enums: enumDecls.map(e => ({ name: e.name, values: [...e.values] }) as EnumDef),
-    entities: [], aggregates: [], events: [],
+    values: [], entities: [], aggregates: [], events: [], services: [],
   };
   const topDoc = joinDocs([...file.docs]);
   if (topDoc) model.doc = topDoc;
@@ -197,32 +265,65 @@ export function loadLatText(text: string): LoadResult {
   for (const item of cst.items) {
     switch (item.$type) {
       case 'TicksDecl': model.ticksPerDay = parseInt((item as G.TicksDecl).value, 10); break;
+      case 'ValueDecl': {
+        const v = item as G.ValueDecl;
+        const def: ValueDef = { kind: 'value', name: v.name, fields: mapFields([...v.fields], enumSet, diags, ownerNames, valueNames) };
+        if (v.invariants.length) def.invariants = v.invariants.map(inv => {
+          // value invariants are unconditional own-field laws (design §3.5): `on`/`where` on the
+          // header, or any body shape besides a plain predicate, is out of scope in v1.
+          if (inv.target || inv.where || inv.body.$type !== 'PredicateBody')
+            diags.push(diag('value-invariant-plain', `value invariant ${v.name}.${inv.name}: value invariants take a plain predicate body only — no 'on', 'where', or non-predicate body form`, inv));
+          const body = inv.body.$type === 'PredicateBody' ? mapPred((inv.body as G.PredicateBody).pred, enumMap)
+            : { kind: 'cmp', op: 'eq', left: { kind: 'int', value: 0 }, right: { kind: 'int', value: 0 } } as Predicate;
+          const vi: { name: string; body: Predicate; doc?: string } = { name: inv.name, body };
+          const d = joinDocs([...inv.docs]); if (d) vi.doc = d;
+          locs.set(`invariant:${inv.name}`, at(inv));
+          return vi;
+        });
+        const d = joinDocs([...v.docs]); if (d) def.doc = d;
+        locs.set(`owner:${v.name}`, at(v)); noteFields(v.name, [...v.fields]);
+        model.values.push(def); break;
+      }
       case 'EntityDecl': {
         const e = item as G.EntityDecl;
-        const def: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags) };
+        const def: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames) };
         const d = joinDocs([...e.docs]); if (d) def.doc = d;
         locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
         model.entities.push(def); break;
       }
       case 'EventDecl': {
         const e = item as G.EventDecl;
-        const def: EventDef = { name: e.name, fields: mapFields([...e.fields], enumSet, diags) };
+        const def: EventDef = { name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames) };
         const d = joinDocs([...e.docs]); if (d) def.doc = d;
         locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
         model.events.push(def); break;
       }
       case 'AggregateDecl': {
         const a = item as G.AggregateDecl;
-        const def: AggregateDef = { kind: 'aggregate', name: a.name, fields: mapFields([...a.fields], enumSet, diags) };
-        if (a.machine) def.machine = mapMachine(a.machine, a.name, diags);
+        const def: AggregateDef = { kind: 'aggregate', name: a.name, fields: mapFields([...a.fields], enumSet, diags, ownerNames, valueNames) };
+        if (a.entities.length) def.entities = [...a.entities].map(e => {
+          const child: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames) };
+          const d = joinDocs([...e.docs]); if (d) child.doc = d;
+          locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
+          return child;
+        });
+        if (a.lifecycles.length) def.machine = mapLifecycles([...a.lifecycles], a.name, diags, enumMap);
         const d = joinDocs([...a.docs]); if (d) def.doc = d;
         locs.set(`owner:${a.name}`, at(a)); noteFields(a.name, [...a.fields]);
-        for (const r of a.machine?.regions ?? []) {
+        for (const r of a.lifecycles) {
           locs.set(`region:${a.name}.${r.name}`, at(r));
           for (const st of r.states) locs.set(`state:${a.name}.${r.name}.${st.name}`, at(st));
+          for (const t of r.transitions) locs.set(`transition:${a.name}.${t.name}`, at(t));
         }
-        for (const t of a.machine?.transitions ?? []) locs.set(`transition:${a.name}.${t.name}`, at(t));
         model.aggregates.push(def); break;
+      }
+      case 'ServiceDecl': {
+        const s = item as G.ServiceDecl;
+        const def: ServiceDef = { name: s.name, methods: mapMethods([...s.methods], enumSet, diags, ownerNames, valueNames, enumMap) };
+        const d = joinDocs([...s.docs]); if (d) def.doc = d;
+        locs.set(`owner:${s.name}`, at(s));
+        for (const mm of s.methods) locs.set(`method:${s.name}.${mm.name}`, at(mm));
+        model.services.push(def); break;
       }
     }
   }
@@ -252,7 +353,7 @@ export function loadLatText(text: string): LoadResult {
   const invariants: CandidateInvariant[] = [];
   for (const { decl, owner } of rawInvs) {
     let candidate: Candidate;
-    try { candidate = mapBody(decl, owner, enumMap); }
+    try { candidate = mapBody(decl, owner, model.aggregates.find(x => x.name === owner), enumMap); }
     catch (err) { diags.push(diag('unmapped-construct', String(err), decl)); continue; }
     if (decl.where && candidate.kind !== 'statePredicate') {
       // grammar accepts a header `where` on any body; only statePredicate carries one in the AST

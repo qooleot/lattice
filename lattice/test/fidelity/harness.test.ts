@@ -5,7 +5,7 @@ const record: FidelityRecord = {
   ruleId: 'r01',
   status: 'formalized',
   model: {
-    context: 'RevRec', enums: [], entities: [], events: [],
+    context: 'RevRec', enums: [], values: [], entities: [], events: [], services: [],
     aggregates: [{ kind: 'aggregate', name: 'Obligation', fields: [
       { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
       { name: 'recognized', type: { kind: 'prim', prim: 'Money' } },

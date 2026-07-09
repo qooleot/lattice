@@ -5,12 +5,12 @@ import type { CandidateInvariant } from '../../src/ast/invariant.js';
 import type { LedgerEntry } from '../../src/engine/session.js';
 
 const model: DomainModel = {
-  context: 'C', enums: [], events: [], entities: [],
+  context: 'C', enums: [], values: [], events: [], entities: [], services: [],
   aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
     { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'units', type: { kind: 'prim', prim: 'Int' } }],
     machine: { regions: [{ name: 'r', initial: 's1', states: [{ name: 's1' }, { name: 's2', tags: ['terminal'] }] }],
-      transitions: [{ name: 'go', region: 'r', from: 's1', to: 's2' }] } }],
+      transitions: [{ name: 'go', region: 'r', from: ['s1'], to: 's2' }] } }],
 };
 const nonNeg: CandidateInvariant = { id: 'hand-unitsSane', name: 'unitsSane', prior: 1, source: 'template',
   candidate: { kind: 'statePredicate', aggregate: 'Job',

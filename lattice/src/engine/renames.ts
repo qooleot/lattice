@@ -99,7 +99,7 @@ export function applyRenamesToModel(m: DomainModel, renames: RenameSpec[]): Doma
           for (const s of reg.states) s.name = ren(s.name, r.from);
         }
         for (const t of def?.machine?.transitions.filter(t => t.region === regionName) ?? []) {
-          t.from = ren(t.from, r.from); t.to = ren(t.to, r.from);
+          t.from = t.from.map(f => ren(f, r.from)); t.to = ren(t.to, r.from);
         }
         break;
       }

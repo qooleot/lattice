@@ -6,22 +6,32 @@
 
 A customer's subscription to a Plan; usage accrues per billing period and resets at rollover
 
-**lifecycle lifecycle:** trialing → active (activate), trialing → expired (terminal) (expireTrial), active → pastDue (paymentFailed), pastDue → active (recover), trialing → canceled (terminal) (cancelFromTrial), active → canceled (terminal) (cancelFromActive), pastDue → canceled (terminal) (cancelFromPastDue), pastDue → canceled (terminal) (dunningExhausted)
+**status lifecycle:** trialing → active (activate — only if paidInvoiceCount ≥ 1, announces SubscriptionActivated), trialing → expired (terminal) (expireTrial), active → pastDue (paymentFailed), pastDue → active (recover), trialing/active/pastDue → canceled (terminal) (cancel, announces SubscriptionCanceled), pastDue → canceled (terminal) (dunningExhausted)
 
 ## Invoice
 
 Period invoice: license-fee portion plus usage portion; partial payments accrue
 
-**settlement lifecycle:** draft → open (finalize), open → paid (terminal) (settle), draft → void (terminal) (voidDraft), open → void (terminal) (voidOpen), open → uncollectible (terminal) (writeOff)
+**settlement lifecycle:** draft → open (finalize — only if totalDue is licenseFeeAmount + usageAmount, announces InvoiceFinalized), open → paid (terminal) (settle — only if amountPaid is totalDue, announces InvoicePaid), draft → void (terminal) (voidDraft), open → void (terminal) (voidOpen), open → uncollectible (terminal) (writeOff)
+
+## Services
+
+- **createSubscription**(plan, seats) — creates a Subscription
+- **getSubscription**(subId) — reads
+- **activate**(subId) — performs Subscription.activate
+- **cancel**(subId) — performs Subscription.cancel
 
 ## Always true
 
 - On every Subscription: periodStart < periodEnd and accruedUnits ≥ 0.  (elicited (w1, w2, w3, w4, w5): positivePeriodNonNegativeUsage)
+- On every Subscription: where it is active, latestInvoice.amountPaid is latestInvoice.totalDue.  (hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5: activePaidInFull)
+- On every Subscription: where it is pastDue, latestInvoice.retryCount ≤ maxRetries.  (hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5: retryCapWhilePastDue)
 - On every Invoice: totalDue ≤ licenseFeeAmount + usageAmount.  (elicited (w1, w2): totalDueAtMostParts)
 - On every Invoice: amountPaid ≤ totalDue and if it is paid, then amountPaid is totalDue.  (elicited (w1, w2, w3): neverOverpaidAndPaidExact)
 - Only one Invoice may be draft per (subscription).  (elicited (w1, w2, w3, w4, w5): oneDraftInvoicePerSubscription)
-- Once Subscription is canceled, it stays canceled.  (implied by structure: terminalSubscriptionLifecycleCanceled)
-- Once Subscription is expired, it stays expired.  (implied by structure: terminalSubscriptionLifecycleExpired)
+- Every reference on Subscription resolves to an existing record.  (implied by structure: refsResolveSubscription)
+- Once Subscription is canceled, it stays canceled.  (implied by structure: terminalSubscriptionStatusCanceled)
+- Once Subscription is expired, it stays expired.  (implied by structure: terminalSubscriptionStatusExpired)
 - On every Invoice: licenseFeeAmount ≥ 0.  (implied by structure: nonNegativeInvoiceLicenseFeeAmount)
 - On every Invoice: usageAmount ≥ 0.  (implied by structure: nonNegativeInvoiceUsageAmount)
 - On every Invoice: totalDue ≥ 0.  (implied by structure: nonNegativeInvoiceTotalDue)

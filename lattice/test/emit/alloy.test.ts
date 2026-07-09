@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { astToAlloy } from '../../src/emit/alloy.js';
 import type { Candidate } from '../../src/ast/invariant.js';
-import { traceAModel } from '../fixtures.js';
+import { traceAModel, invoiceLinesModel, someStatePredicateOnInvoice, someCardinalityOnInvoice, sumCandidate, periodModel } from '../fixtures.js';
 
 const h1: Candidate = { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] };
 const h2: Candidate = { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer'], ['plan']] };
@@ -96,5 +96,86 @@ describe('astToAlloy', () => {
       { dim: 'customer equal', value: true }
     ]], scope: 4 });
     expect(als).toContain('run q { ((Hi and not Hj) or (not Hi and Hj)) and (not shape0) } for 4 but 5 Int');
+  });
+
+  // Task 7: owned collections (design §6.1/§6.3) — the child entity behind a `list` field becomes
+  // its own sig with a by-construction `owner: one <Parent>` relation (containment, not a bare
+  // ref); the parent sig itself carries NO relation for the list field (children point up, not
+  // down — see emitOwnerSig, which already only matches ref/enum/prim fields and so silently
+  // drops list fields with no branch change needed).
+  it('emits owned children as sigs with one owner, and no list relation on the parent', () => {
+    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-permit', hi: someStatePredicateOnInvoice, exclusions: [], scope: 4 });
+    expect(src).toContain('sig InvoiceLine {');
+    expect(src).toContain('owner: one Invoice');
+    expect(src).toContain('amount: one Int');
+    expect(src).not.toContain('lines:');
+  });
+
+  // Task 9: sum-over-collection (design §6.2/§6.4) — adopted sums conjoin as an Alloy `sum`
+  // comprehension over the owned child sig, and raise the bitwidth (3 children × values summed
+  // can overflow the default 5-Int scope) to 7 Int.
+  it('conjoins adopted sums with alloy sum and raises bitwidth to 7 Int', () => {
+    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-forbid', hi: someCardinalityOnInvoice,
+      exclusions: [], adopted: [sumCandidate], scope: 4 });
+    expect(src).toContain('x.totalDue = (sum l: { l: InvoiceLine | l.owner = x } | l.amount)');
+    expect(src).toContain('but 7 Int');
+  });
+  it('keeps 5 Int without sums', () => {
+    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-forbid', hi: someCardinalityOnInvoice, exclusions: [], scope: 4 });
+    expect(src).toContain('but 5 Int');
+  });
+  // Bitwidth policy checks q.hi, q.hj, AND adopted — not just hi. A distinguish query where only
+  // hj (not hi) is the sumOverCollection candidate must still raise to 7 Int.
+  it('raises bitwidth to 7 Int when only hj (not hi) is a sumOverCollection candidate', () => {
+    const src = astToAlloy(invoiceLinesModel, {
+      kind: 'distinguish', hi: someStatePredicateOnInvoice, hj: sumCandidate, exclusions: [], scope: 4,
+    });
+    expect(src).toContain('but 7 Int');
+  });
+
+  // Task 9: shapeToPred rebuilds a sum witness's salient dims (count/sum/total) as Alloy conjuncts
+  // when the excluded shape's OWN subject is a sumOverCollection candidate — the child sig name
+  // (`subject.child`) is only available then; a non-sum Alloy subject never carries sum dims.
+  it('rebuilds sum salient dims (count/sum/total) into alloy exclusion conjuncts', () => {
+    const src = astToAlloy(invoiceLinesModel, { kind: 'probe-forbid', hi: sumCandidate, exclusions: [[
+      { dim: 'lines.count', value: 2 }, { dim: 'sum(lines.amount)', value: 7 }, { dim: 'totalDue value', value: 7 },
+    ]], scope: 4 });
+    expect(src).toContain('#{ l: InvoiceLine | l.owner = a } = 2');
+    expect(src).toContain('(sum l: { l: InvoiceLine | l.owner = a } | l.amount) = 7');
+    expect(src).toContain('a.totalDue = 7');
+  });
+
+  // Task 11: value objects (design §3.5) get real alloy encoding — a value-typed field flattens
+  // to `<field>_<subfield>: one Int` sig relations (no nested sig: values are keyless/flat).
+  describe('value fields — flattened field encoding', () => {
+    const periodCand: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt',
+        left: { kind: 'field', owner: 'self', path: ['period', 'start'] },
+        right: { kind: 'field', owner: 'self', path: ['period', 'end'] } } };
+
+    it('emits the value field as underscore-flattened sig relations', () => {
+      const src = astToAlloy(periodModel, { kind: 'probe-permit', hi: periodCand, exclusions: [], scope: 4 });
+      expect(src).toContain('period_start: one Int');
+      expect(src).toContain('period_end: one Int');
+      expect(src).not.toContain('period:');
+    });
+    it('renders a value-hop path as the underscore-joined field, not a dotted path', () => {
+      const src = astToAlloy(periodModel, { kind: 'probe-permit', hi: periodCand, exclusions: [], scope: 4 });
+      expect(src).toContain('x.period_start');
+      expect(src).toContain('x.period_end');
+      expect(src).not.toContain('x.period.start');
+    });
+  });
+
+  // Defense-in-depth below validateCandidate (which REJECTS any param-bearing candidate as
+  // ill-typed — see test/ast/validate-services.test.ts): a param term must never reach alloy
+  // emission either. termToAlloy's 'param' case throws rather than silently emitting nonsense
+  // alloy source referencing a method parameter that doesn't exist as a sig relation. This test
+  // calls astToAlloy directly, bypassing routeCandidate (a `ge` cmp actually routes to quint via
+  // predNeedsArith), to pin the emitter's own defense-in-depth throw regardless of routing.
+  it('astToAlloy throws on a param-bearing candidate — param terms never reach the emitter (validateCandidate rejects them upstream; this is the routing backstop)', () => {
+    const paramLeak: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['customer'] }, right: { kind: 'param', name: 'delta' } } };
+    expect(() => astToAlloy(traceAModel, { kind: 'probe-forbid', hi: paramLeak, exclusions: [], scope: 4 })).toThrow(/param terms/);
   });
 });

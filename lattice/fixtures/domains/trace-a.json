@@ -2,6 +2,7 @@
   "context": "Billing",
   "ticksPerDay": 24,
   "enums": [],
+  "values": [],
   "entities": [
     {
       "kind": "entity",
@@ -109,5 +110,6 @@
       }
     }
   ],
-  "events": []
+  "events": [],
+  "services": []
 }

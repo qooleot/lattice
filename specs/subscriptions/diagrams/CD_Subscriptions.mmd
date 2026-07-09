@@ -7,6 +7,8 @@ classDiagram
       +periodStart : Date
       +periodEnd : Date
       +accruedUnits : Int
+      +paidInvoiceCount : Int
+      +maxRetries : Int
     }
     class Invoice {
       +invoiceId : Id «key»
@@ -14,10 +16,20 @@ classDiagram
       +usageAmount : Money
       +totalDue : Money
       +amountPaid : Money
+      +retryCount : Int
+    }
+    class SubscriptionService {
+      <<service>>
+      +createSubscription(plan, seats)
+      +getSubscription(subId)
+      +activate(subId)
+      +cancel(subId)
     }
   }
   class Catalog_Plan["Catalog.Plan"] {
     <<external>>
   }
+  Subscription --> Invoice : latestInvoice
   Invoice --> Subscription : subscription
+  SubscriptionService ..> Subscription : createSubscription
   Subscription ..> Catalog_Plan : plan

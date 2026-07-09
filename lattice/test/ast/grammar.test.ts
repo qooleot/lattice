@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { validateCandidate, routeCandidate } from '../../src/ast/grammar.js';
+import { validateCandidate, routeCandidate, resolveFieldPath } from '../../src/ast/grammar.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 import type { DomainModel } from '../../src/ast/domain.js';
+import { periodModel } from '../fixtures.js';
 
 // Minimal model stub — real DomainModel arrives in Task 2; grammar.ts only reads these arrays.
 const model: any = {
   context: 'Billing',
-  enums: [{ name: 'Status', values: ['Paid', 'Unpaid'] }],
+  enums: [{ name: 'Status', values: ['Paid', 'Unpaid'] }], values: [],
   entities: [{ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
   aggregates: [{
     kind: 'aggregate', name: 'Subscription',
@@ -20,7 +21,7 @@ const model: any = {
     ],
     machine: { regions: [{ name: 'Access', initial: 'Trialing', states: [{ name: 'Trialing' }, { name: 'Active', tags: ['active'] }, { name: 'Ended', tags: ['terminal'] }] }], transitions: [] }
   }],
-  events: []
+  events: [], services: []
 };
 
 const uniqueCand: Candidate = {
@@ -142,6 +143,22 @@ describe('validateCandidate — structural shape validation', () => {
       body: { kind: 'inState', owner: 'Subscription', region: 'Access', states: ['Active'] } };
     expect(validateCandidate(bad, model).map(d => d.code)).toContain('unsupported-owner');
   });
+
+  it('accepts refsResolve without fields (stored candidates predate the field — must not break)', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Subscription' };
+    expect(validateCandidate(c, model)).toEqual([]);
+  });
+
+  it('accepts refsResolve with a fields string array', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Subscription', fields: ['customer'] };
+    expect(validateCandidate(c, model)).toEqual([]);
+  });
+
+  it('rejects refsResolve with a non-string-array fields as ill-typed', () => {
+    const bad: any = { kind: 'refsResolve', aggregate: 'Subscription', fields: [1, 2] };
+    const result = validateCandidate(bad, model);
+    expect(result.map((d: any) => d.code)).toContain('ill-typed');
+  });
 });
 
 describe('routeCandidate', () => {
@@ -178,7 +195,7 @@ describe('resolveFieldPath — ref-hop machine-state paths', () => {
 // cross-context ref field `plan: ref Catalog.Plan` (spec §4.2).
 const base = (target: string): DomainModel => ({
   context: 'Billing', ticksPerDay: 24,
-  enums: [],
+  enums: [], values: [],
   entities: [],
   aggregates: [{
     kind: 'aggregate', name: 'Order',
@@ -187,7 +204,35 @@ const base = (target: string): DomainModel => ({
       { name: 'plan', type: { kind: 'ref', target } }
     ]
   }],
-  events: []
+  events: [], services: []
+});
+
+// Task 11: value semantics — a value-typed field is one flat, inline hop (design §3.5): the path
+// resolves through the ValueDef's own fields, never nested further (values carry prim/enum fields
+// only in v1 — see validate.ts's `value-flat` diagnostic).
+describe('resolveFieldPath — value hop', () => {
+  it('resolves a path into a value-typed field\'s own field', () => {
+    expect(resolveFieldPath(periodModel, 'Subscription', ['period', 'start'])?.type).toEqual({ kind: 'prim', prim: 'Date' });
+    expect(resolveFieldPath(periodModel, 'Subscription', ['period', 'end'])?.type).toEqual({ kind: 'prim', prim: 'Date' });
+  });
+  it('resolves the bare value field itself as the terminal segment', () => {
+    const f = resolveFieldPath(periodModel, 'Subscription', ['period']);
+    expect(f?.name).toBe('period');
+    expect(f?.type).toEqual({ kind: 'value', value: 'Period' });
+  });
+  it('rejects an unknown sub-field of a value type', () => {
+    expect(resolveFieldPath(periodModel, 'Subscription', ['period', 'bogus'])).toBeNull();
+  });
+  it('rejects a path with more than one hop past a value field (v1: flat values only)', () => {
+    expect(resolveFieldPath(periodModel, 'Subscription', ['period', 'start', 'extra'])).toBeNull();
+  });
+  it('validateCandidate accepts a statePredicate comparing period.start vs period.end', () => {
+    const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt',
+        left: { kind: 'field', owner: 'self', path: ['period', 'start'] },
+        right: { kind: 'field', owner: 'self', path: ['period', 'end'] } } };
+    expect(validateCandidate(c, periodModel)).toEqual([]);
+  });
 });
 
 describe('validateCandidate — cross-context ref exclusion (spec §4.2)', () => {

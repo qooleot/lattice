@@ -6,6 +6,7 @@ import { defaultPath } from '../ast/contextmap.js';
 
 const typeStr = (f: Field): string =>
   f.type.kind === 'prim' ? f.type.prim : f.type.kind === 'enum' ? f.type.enum
+  : f.type.kind === 'value' ? f.type.value
   : f.type.kind === 'ref' ? `ref ${f.type.target}` : `List<${typeStr({ ...f, type: f.type.of })}>`;
 
 const OPS = { eq: '==', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' } as const;
@@ -22,6 +23,7 @@ function termToText(t: Term): string {
     case 'enumval': return `${t.enum}.${t.value}`;
     case 'now': return 'now';
     case 'plus': return `${termToText(t.left)} + ${termToText(t.right)}`;
+    case 'param': return t.name;
   }
 }
 
@@ -49,6 +51,10 @@ export function candidateBodyText(c: Candidate): string {
       if (c.parts.length < 2) throw new Error(`cannot print conservation on ${c.aggregate}: needs >= 2 parts, got ${c.parts.length}`);
       return `conserve ${c.parts.map(p => p.join('.')).join(' + ')} == ${c.total.join('.')}`;
     case 'leadsTo': return `from ${predToText(c.from)} leads to ${predToText(c.to)} under fairness "${c.fairness}"`;
+    case 'sumOverCollection': {
+      const ops = { eq: '==', le: '<=', ge: '>=' } as const;
+      return `${c.total.join('.')} ${ops[c.op]} sum(${c.collection}, ${c.field})`;
+    }
   }
 }
 
@@ -62,17 +68,17 @@ function fieldLines(fields: Field[], indent: string, out: string[]): void {
 }
 
 function machineLines(mach: Machine, out: string[]): void {
-  out.push('    machine {');
   for (const r of mach.regions) {
+    out.push(`    lifecycle ${r.name} {`);
     const states = r.states.map(s => {
       const tags = [...(s.name === r.initial ? ['initial'] : []), ...(s.tags ?? [])];
       return s.name + (tags.length ? ' @' + tags.join(' @') : '');
     }).join(', ');
-    out.push(`      region ${r.name} { states { ${states} } }`);
+    out.push(`      states { ${states} }`);
+    for (const t of mach.transitions.filter(t => t.region === r.name))
+      out.push(`      transition ${t.name} { from ${t.from.join(', ')} to ${t.to}${t.when ? `; when ${t.when}` : ''}${t.requires ? `; requires ${predToText(t.requires)}` : ''}${t.emits ? `; emits ${t.emits}` : ''} }`);
+    out.push('    }');
   }
-  for (const t of mach.transitions)
-    out.push(`      transition ${t.name} { region ${t.region}; from ${t.from} to ${t.to}${t.when ? `; when ${t.when}` : ''} }`);
-  out.push('    }');
 }
 
 function invariantLines(inv: CandidateInvariant, indent: string, on: string | undefined, out: string[]): void {
@@ -94,6 +100,16 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
     out.push(`  enum ${e.name} { ${e.values.join(', ')} }`);
   }
   if (m.enums.length) out.push('');
+  for (const v of m.values) {
+    doc(v.doc, '  ', out);
+    out.push(`  value ${v.name} {`);
+    fieldLines(v.fields, '    ', out);
+    for (const inv of v.invariants ?? []) {
+      doc(inv.doc, '    ', out);
+      out.push(`    invariant ${inv.name} { ${predToText(inv.body)} }`);
+    }
+    out.push('  }', '');
+  }
   for (const ent of m.entities) {
     doc(ent.doc, '  ', out);
     out.push(`  entity ${ent.name} {`);
@@ -110,10 +126,31 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
     doc(a.doc, '  ', out);
     out.push(`  aggregate ${a.name} {`);
     fieldLines(a.fields, '    ', out);
+    for (const child of a.entities ?? []) {
+      out.push('');
+      doc(child.doc, '    ', out);
+      out.push(`    entity ${child.name} {`);
+      fieldLines(child.fields, '      ', out);
+      out.push('    }');
+    }
     if (a.machine) { out.push(''); machineLines(a.machine, out); }
     for (const inv of explicit.filter(i => i.candidate.aggregate === a.name)) {
       out.push('');
       invariantLines(inv, '    ', undefined, out);
+    }
+    out.push('  }', '');
+  }
+  for (const s of m.services) {
+    doc(s.doc, '  ', out);
+    out.push(`  service ${s.name} {`);
+    for (const mm of s.methods) {
+      doc(mm.doc, '    ', out);
+      const params = mm.params.map(p => `${p.name}: ${typeStr({ name: p.name, type: p.type })}`).join(', ');
+      const ret = mm.returns ? `: ${typeStr({ name: '', type: mm.returns })}` : '';
+      const kind = 'readOnly' in mm.kind ? 'read-only'
+        : 'creates' in mm.kind ? `creates ${mm.kind.creates}`
+        : `performs ${mm.kind.performs.aggregate}.${mm.kind.performs.transition}`;
+      out.push(`    ${mm.name}(${params})${ret} ${kind}${mm.requires ? ` requires ${predToText(mm.requires)}` : ''}`);
     }
     out.push('  }', '');
   }

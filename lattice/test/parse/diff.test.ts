@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { diffModels, ledgerReferences } from '../../src/parse/diff.js';
-import type { DomainModel } from '../../src/ast/domain.js';
+import type { DomainModel, MethodDef } from '../../src/ast/domain.js';
 import type { CandidateInvariant } from '../../src/ast/invariant.js';
 import type { LedgerEntry } from '../../src/engine/session.js';
 
 const mk = (name: string, field: string): DomainModel => ({
-  context: 'C', enums: [], events: [], entities: [],
+  context: 'C', enums: [], values: [], events: [], entities: [], services: [],
   aggregates: [{ kind: 'aggregate', name, fields: [
     { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: field, type: { kind: 'prim', prim: 'Int' } }],
@@ -38,7 +38,7 @@ describe('ledgerReferences', () => {
 
   it('finds enum values referenced only inside adopted candidate BODIES (design §5 step 4)', () => {
     const model: DomainModel = {
-      context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], events: [], entities: [],
+      context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], values: [], events: [], entities: [], services: [],
       aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
         { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
         { name: 'speed', type: { kind: 'enum', enum: 'Mode' } }] }],
@@ -67,7 +67,7 @@ describe('ledgerReferences', () => {
 
   it('enumValue references require an enum-typed field of that enum', () => {
     const model: DomainModel = {
-      context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], events: [], entities: [],
+      context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], values: [], events: [], entities: [], services: [],
       aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
         { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
         { name: 'speed', type: { kind: 'enum', enum: 'Mode' } },
@@ -116,7 +116,7 @@ describe('diffModels', () => {
 
   it('pairs enum renames (single-segment path) backed by an adopted-body reference', () => {
     const withEnum = (enumName: string): DomainModel => ({
-      context: 'C', enums: [{ name: enumName, values: ['fast', 'slow'] }], events: [], entities: [],
+      context: 'C', enums: [{ name: enumName, values: ['fast', 'slow'] }], values: [], events: [], entities: [], services: [],
       aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
         { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
         { name: 'speed', type: { kind: 'enum', enum: enumName } }] }],
@@ -161,5 +161,35 @@ describe('diffModels', () => {
     expect(d.changedInvariants).toEqual([]);   // same semantics, different key order — not a change
     expect(d.addedInvariants).toEqual([]);
     expect(d.removedInvariants).toEqual([]);
+  });
+
+  // Task 12: services (design §3.6) — structural notes only, no rename proposals (services don't
+  // join namedThings; no ledger references exist for methods/params in v1).
+  describe('services — structural notes, no rename proposals', () => {
+    const svcMethod: MethodDef = { name: 'settle', params: [], kind: { performs: { aggregate: 'Job', transition: 'go' } } };
+    const withSvc = (methods: MethodDef[]): DomainModel => ({ ...before.model,
+      aggregates: [{ ...before.model.aggregates[0]!, machine: { regions: [{ name: 'r', initial: 's1', states: [{ name: 's1' }, { name: 's2', tags: ['terminal' as const] }] }], transitions: [{ name: 'go', region: 'r', from: ['s1'], to: 's2' }] } }],
+      services: [{ name: 'JobOps', methods: [...methods] }] });
+
+    it('reports an added service', () => {
+      const d = diffModels({ model: before.model, canonical: [] }, { model: withSvc([svcMethod]), canonical: [] }, [], before.model);
+      expect(d.structuralNotes).toContain('added service JobOps');
+      expect(d.renameProposals).toEqual([]);
+    });
+
+    it('reports a removed service', () => {
+      const d = diffModels({ model: withSvc([svcMethod]), canonical: [] }, { model: before.model, canonical: [] }, [], before.model);
+      expect(d.structuralNotes).toContain('removed service JobOps');
+    });
+
+    it('reports added/removed/changed methods on a surviving service', () => {
+      const another: MethodDef = { name: 'peek', params: [], kind: { readOnly: true } };
+      const changed: MethodDef = { ...svcMethod, kind: { performs: { aggregate: 'Job', transition: 'go' } }, doc: 'now documented' };
+      const d = diffModels({ model: withSvc([svcMethod, another]), canonical: [] },
+        { model: withSvc([changed]), canonical: [] }, [], before.model);
+      expect(d.structuralNotes).toContain('removed method JobOps.peek');
+      expect(d.structuralNotes).toContain('changed method JobOps.settle');
+      expect(d.renameProposals).toEqual([]);
+    });
   });
 });

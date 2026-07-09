@@ -27,6 +27,22 @@ describe('machineToMermaid', () => {
   lost --> [*]
 `);
   });
+
+  // predToText renders `not X` as `! X` (space already present before the arg); guardLabel must
+  // not double that space when it maps `!` -> `not `. Pin the exact single-space output.
+  it('renders a not-guarded transition with a single space after "not"', () => {
+    const notGuarded: AggregateDef = { ...order,
+      machine: { regions: order.machine!.regions,
+        transitions: [{ name: 'ship', region: 'fulfillment', from: ['open'], to: 'shipped',
+          requires: { kind: 'not', arg: { kind: 'inState', owner: 'self', region: 'fulfillment', states: ['lost'] } } }] } };
+    expect(machineToMermaid(notGuarded, notGuarded.machine!.regions[0]!)).toBe(
+`stateDiagram-v2
+  [*] --> open
+  open --> shipped: ship [not state fulfillment in (lost)]
+  shipped --> [*]
+  lost --> [*]
+`);
+  });
 });
 
 describe('domainToMermaid', () => {
@@ -55,6 +71,47 @@ describe('domainToMermaid', () => {
   Order "1" --> "*" Customer : tags
   Order ..> Catalog_Plan : plan
 `);
+  });
+
+  // Task 10: value objects add TypeRef kind 'value' — domainDiagram's typeStr must not crash on
+  // it (mirrors code.ts's typeStr); a value-typed field prints as an ordinary member, same as enum.
+  it('renders a value-typed field as an ordinary class member', () => {
+    const withValue: DomainModel = { context: 'Billing',
+      enums: [], values: [{ kind: 'value', name: 'Period',
+        fields: [{ name: 'start', type: { kind: 'prim', prim: 'Date' } }, { name: 'end', type: { kind: 'prim', prim: 'Date' } }] }],
+      entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Lease', fields: [
+        { name: 'leaseId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'term', type: { kind: 'value', value: 'Period' } }] }],
+      events: [], services: [] };
+    expect(domainToMermaid(withValue)).toContain('+term : Period');
+  });
+
+  // Task 12: services (design §3.6) — a <<service>> class box (no fields, one +method(params)
+  // member per method) plus one dashed dependency edge per distinct performed/created aggregate.
+  it('renders a service class box and dashed dependency edges', () => {
+    const withService: DomainModel = { context: 'Billing',
+      enums: [], values: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Subscription', fields: [
+        { name: 'subId', type: { kind: 'prim', prim: 'Id' }, key: true }],
+        machine: { regions: [{ name: 'Access', initial: 'trialing',
+            states: [{ name: 'trialing' }, { name: 'active', tags: ['terminal'] }] }],
+          transitions: [{ name: 'activate', region: 'Access', from: ['trialing'], to: 'active' }] } }],
+      events: [],
+      services: [{ name: 'SubscriptionOps', methods: [
+        { name: 'createSubscription', params: [{ name: 'seats', type: { kind: 'prim', prim: 'Int' } }], kind: { creates: 'Subscription' } },
+        { name: 'activate', params: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }], kind: { performs: { aggregate: 'Subscription', transition: 'activate' } } },
+        { name: 'getSubscription', params: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }], kind: { readOnly: true } },
+      ] }] };
+    const src = domainToMermaid(withService);
+    expect(src).toContain('class SubscriptionOps {');
+    expect(src).toContain('<<service>>');
+    expect(src).toContain('+createSubscription(seats)');
+    expect(src).toContain('+activate(subId)');
+    expect(src).toContain('+getSubscription(subId)');
+    expect(src).toContain('SubscriptionOps ..> Subscription : createSubscription');
+    // dedupe: only ONE edge to Subscription even though two methods target it
+    expect(src.split('SubscriptionOps ..> Subscription').length - 1).toBe(1);
   });
 });
 

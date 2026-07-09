@@ -33,10 +33,26 @@ DownstreamRoleName returns string:
     'anticorruption' | 'conformist';
 
 ContextItem:
-    EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl;
+    EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl | ValueDecl | ServiceDecl;
 
 EnumDecl:
     'enum' name=ID '{' values+=ID (',' values+=ID)* '}';
+
+ValueDecl:
+    docs+=DOC* 'value' name=ID '{' fields+=FieldDecl* invariants+=InvariantDecl* '}';
+
+ServiceDecl:
+    docs+=DOC* 'service' name=ID '{' methods+=MethodDecl* '}';
+
+MethodDecl:
+    docs+=DOC* name=ID '(' (params+=ParamDecl (',' params+=ParamDecl)*)? ')' (':' returns=LatType)?
+        ( readOnly?='read-only'
+        | 'performs' performsAgg=ID '.' performsTransition=ID
+        | 'creates' creates=ID )
+        ('requires' requires=Predicate)?;
+
+ParamDecl:
+    name=ID ':' type=LatType;
 
 TicksDecl:
     'ticksPerDay' '=' value=INT;
@@ -48,7 +64,7 @@ EventDecl:
     docs+=DOC* 'event' name=ID '{' fields+=FieldDecl* '}';
 
 AggregateDecl:
-    docs+=DOC* 'aggregate' name=ID '{' fields+=FieldDecl* machine=MachineDecl? invariants+=InvariantDecl* '}';
+    docs+=DOC* 'aggregate' name=ID '{' (fields+=FieldDecl | entities+=EntityDecl)* lifecycles+=LifecycleDecl* invariants+=InvariantDecl* '}';
 
 FieldDecl:
     name=ID ':' type=LatType (key?='key')? tags+=Tag*;
@@ -67,23 +83,27 @@ Tag:
 TagName returns string:
     ID | 'terminal' | 'monotonic' | 'state' | 'key';
 
-MachineDecl:
-    'machine' '{' regions+=RegionDecl+ transitions+=TransitionDecl* '}';
-
-RegionDecl:
-    'region' name=ID '{' 'states' '{' states+=StateDecl (',' states+=StateDecl)* '}' '}';
+LifecycleDecl:
+    'lifecycle' name=ID '{'
+        'states' '{' states+=StateDecl (',' states+=StateDecl)* '}'
+        transitions+=TransitionDecl*
+    '}';
 
 StateDecl:
     name=ID tags+=Tag*;
 
 TransitionDecl:
-    'transition' name=ID '{' 'region' region=ID ';' 'from' from=ID 'to' to=ID (';' 'when' when=ID)? '}';
+    'transition' name=ID '{' 'from' from+=ID (',' from+=ID)* 'to' to=ID
+        (';' 'when' when=ID)?
+        (';' 'requires' requires=Predicate)?
+        (';' 'emits' emits=ID)?
+    '}';
 
 InvariantDecl:
     docs+=DOC* 'invariant' name=ID ('on' target=ID)? ('where' where=Predicate)? '{' body=InvariantBody '}';
 
 InvariantBody:
-    UniqueBody | RefsResolveBody | CardinalityBody | TerminalBody | MonotonicBody | ConserveBody | LeadsToBody | PredicateBody;
+    UniqueBody | RefsResolveBody | CardinalityBody | TerminalBody | MonotonicBody | ConserveBody | LeadsToBody | SumBody | PredicateBody;
 
 UniqueBody:
     'unique' 'while' region=ID 'in' '{' states+=ID (',' states+=ID)* '}' 'by' '(' by+=PathExpr (',' by+=PathExpr)* ')';
@@ -105,6 +125,9 @@ ConserveBody:
 
 LeadsToBody:
     'from' from=Predicate 'leads' 'to' to=Predicate 'under' 'fairness' fairness=STRING;
+
+SumBody:
+    total=PathExpr op=('=='|'<='|'>=') 'sum' '(' collection=ID ',' field=ID ')';
 
 PredicateBody:
     pred=Predicate;

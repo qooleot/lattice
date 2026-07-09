@@ -10,6 +10,7 @@
       ]
     }
   ],
+  "values": [],
   "entities": [],
   "aggregates": [
     {
@@ -98,5 +99,6 @@
       }
     }
   ],
-  "events": []
+  "events": [],
+  "services": []
 }

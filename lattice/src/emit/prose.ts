@@ -9,9 +9,10 @@ function termEn(t: Term): string {
     case 'enumval': return t.value;
     case 'now': return 'now';
     case 'plus': return `${termEn(t.left)} + ${termEn(t.right)}`;
+    case 'param': return t.name;
   }
 }
-function predEn(p: Predicate): string {
+export function predEn(p: Predicate): string {
   switch (p.kind) {
     case 'cmp': { const ops = { eq: 'is', ne: 'is not', lt: '<', le: '≤', gt: '>', ge: '≥' }; return `${termEn(p.left)} ${ops[p.op]} ${termEn(p.right)}`; }
     case 'inState': return `it is ${p.states.join(' or ')}`;
@@ -31,6 +32,10 @@ export function renderCandidateEnglish(c: Candidate): string {
     case 'monotonic': return `${c.aggregate}.${c.field.join('.')} never decreases.`;
     case 'conservation': return `On every ${c.aggregate}, ${c.parts.map(p => p.join('.')).join(' + ')} always equals ${c.total.join('.')}.`;
     case 'leadsTo': return `${c.aggregate}: ${predEn(c.from)} eventually leads to ${predEn(c.to)} (under fairness: ${c.fairness}).`;
+    case 'sumOverCollection': {
+      const rel = c.op === 'eq' ? 'always equals' : c.op === 'le' ? 'never exceeds' : 'is never below';
+      return `On every ${c.aggregate}, ${c.total.join('.')} ${rel} the sum of ${c.field} over its ${c.collection}.`;
+    }
   }
 }
 
@@ -49,10 +54,24 @@ export function astToProse(m: DomainModel, adopted: CandidateInvariant[], ledger
       // plain comma-separated list of states with no arrows, so no transition is implied.
       const declared = (a.machine?.transitions ?? []).filter(t => t.region === r.name);
       if (declared.length > 0) {
-        lines.push(`**${r.name} lifecycle:** ${declared.map(t => `${label(t.from)} → ${label(t.to)} (${t.name})`).join(', ')}`, '');
+        lines.push(`**${r.name} lifecycle:** ${declared.map(t =>
+          `${t.from.map(label).join('/')} → ${label(t.to)} (${t.name}${t.requires ? ` — only if ${predEn(t.requires)}` : ''}${t.emits ? `, announces ${t.emits}` : ''})`).join(', ')}`, '');
       } else {
         lines.push(`**${r.name} states:** ${r.states.map(s => label(s.name)).join(', ')}`, '');
       }
+    }
+  }
+  if (m.services.length) {
+    lines.push('## Services', '');
+    for (const s of m.services) {
+      if (s.doc) lines.push(`*${s.doc}*`, '');
+      for (const mm of s.methods) {
+        const what = 'readOnly' in mm.kind ? 'reads'
+          : 'creates' in mm.kind ? `creates a ${mm.kind.creates}`
+          : `performs ${mm.kind.performs.aggregate}.${mm.kind.performs.transition}`;
+        lines.push(`- **${mm.name}**(${mm.params.map(p => p.name).join(', ')}) — ${what}${mm.requires ? `, requires ${predEn(mm.requires)}` : ''}`);
+      }
+      lines.push('');
     }
   }
   lines.push('## Always true', '');

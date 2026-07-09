@@ -30,7 +30,7 @@ re-emitted by the printer, and rendered into the generated `spec.prose.md` proje
 each construct's English description.
 
 `///` doc comments are **not** supported on `enum` — see [enum](enum.md) for the dedicated
-`enum-doc-unsupported` diagnostic — nor on fields, machine regions, states, or transitions; the
+`enum-doc-unsupported` diagnostic — nor on fields, lifecycle blocks, states, or transitions; the
 grammar has no `doc` slot for those constructs.
 
 ## `//` is banned

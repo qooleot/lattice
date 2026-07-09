@@ -1,8 +1,9 @@
 # Lattice language reference
 
 Lattice is a DDD-flavored specification language. A `.lat` file holds one bounded `context` —
-its enums, entities, aggregates, events, state machines, and invariants — and a workspace-level
-`context-map.lat` indexes the contexts and the CML-style strategic relationships between them.
+its enums, entities, aggregates, events, state machines, services, and invariants — and a
+workspace-level `context-map.lat` indexes the contexts and the CML-style strategic relationships
+between them.
 
 ## Index
 
@@ -10,8 +11,8 @@ its enums, entities, aggregates, events, state machines, and invariants — and 
 |---|---|
 | Overview | `README.md` (this page: index + tour), [`projections.md`](projections.md) (generated files: `spec.prose.md`, `spec.diagrams.md`, `diagrams/*.mmd`, `context-map.generated.md`) |
 | Strategic | [`context-map.md`](context-map.md) (`contextMap`, `contains`/`from`), [`upstream-downstream.md`](upstream-downstream.md) (incl. `exposes`), [`open-host.md`](open-host.md), [`published-language.md`](published-language.md), [`anticorruption.md`](anticorruption.md), [`conformist.md`](conformist.md), [`partnership.md`](partnership.md), [`shared-kernel.md`](shared-kernel.md) |
-| Structure | [`context.md`](context.md), [`enum.md`](enum.md), [`entity.md`](entity.md), [`aggregate.md`](aggregate.md), [`field-types.md`](field-types.md), [`event.md`](event.md) |
-| Behavior | [`machine.md`](machine.md), [`transition.md`](transition.md) |
+| Structure | [`context.md`](context.md), [`enum.md`](enum.md), [`entity.md`](entity.md), [`value.md`](value.md), [`aggregate.md`](aggregate.md), [`field-types.md`](field-types.md), [`event.md`](event.md) |
+| Behavior | [`lifecycle.md`](lifecycle.md), [`transition.md`](transition.md), [`service.md`](service.md) (`performs`/`creates`/`read-only` methods — carried, never solver-encoded) |
 | Invariants | [`invariant.md`](invariant.md), [`invariant-forms.md`](invariant-forms.md), [`derived-invariants.md`](derived-invariants.md) |
 | Meta | [`doc-comments.md`](doc-comments.md), [`naming-conventions.md`](naming-conventions.md), [`tags.md`](tags.md), [`editing.md`](editing.md) |
 
@@ -19,7 +20,7 @@ its enums, entities, aggregates, events, state machines, and invariants — and 
 
 A [context](context.md) declares its vocabulary — [enums](enum.md) and [entities](entity.md) — and
 its consistency boundaries as [aggregates](aggregate.md) with an optional
-[state machine](machine.md) and [invariants](invariant.md):
+[lifecycle](lifecycle.md) and [invariants](invariant.md):
 
 ```lat
 /// A tiny billing context.

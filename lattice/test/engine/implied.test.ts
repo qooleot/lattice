@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { impliedInvariants, isImplied, canonicalCandidate } from '../../src/engine/implied.js';
+import { impliedInvariants, isImplied, canonicalCandidate, valueLawInstances } from '../../src/engine/implied.js';
 import type { DomainModel } from '../../src/ast/domain.js';
+import { periodModel } from '../fixtures.js';
+import { astToCode } from '../../src/emit/code.js';
 
 const m: DomainModel = {
-  context: 'C', enums: [], events: [],
+  context: 'C', enums: [], values: [], events: [], services: [],
   entities: [{ kind: 'entity', name: 'Plan', fields: [
     { name: 'planId', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'licenseFee', type: { kind: 'prim', prim: 'Money' } },
@@ -51,8 +53,21 @@ describe('impliedInvariants', () => {
         { name: 'orderId', type: { kind: 'prim', prim: 'Id' }, key: true },
         { name: 'plan', type: { kind: 'ref', target: 'Plan' } }] }] };
     const d = impliedInvariants(m2).find(x => x.name === 'refsResolveOrder')!;
-    expect(d.candidate).toEqual({ kind: 'refsResolve', aggregate: 'Order' });
+    expect(d.candidate).toEqual({ kind: 'refsResolve', aggregate: 'Order', fields: ['plan'] });
     expect(isImplied({ kind: 'refsResolve', aggregate: 'Order' }, m2)).toBe(true);
+  });
+
+  it('isImplied dedup: a stored refsResolve WITHOUT fields still matches a newly-derived one WITH fields', () => {
+    // Regression for task 16: adopted candidates recorded before the `fields` addition have no
+    // `fields` key. Newly-derived candidates now carry `fields`. isImplied's shape comparison must
+    // normalize (strip `fields`) so a legacy stored candidate is still recognized as implied —
+    // otherwise it would double-print/reprint on regeneration.
+    const m2: DomainModel = { ...m, entities: [...m.entities,
+      { kind: 'entity', name: 'Order', fields: [
+        { name: 'orderId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'plan', type: { kind: 'ref', target: 'Plan' } }] }] };
+    const legacyStored = { kind: 'refsResolve' as const, aggregate: 'Order' }; // no `fields`
+    expect(isImplied(legacyStored, m2)).toBe(true);
   });
 
   it('derives a terminal rule per tagged state across multiple regions', () => {
@@ -89,7 +104,7 @@ describe('impliedInvariants', () => {
 // field is a qualified cross-context ref to `target` (e.g. 'Catalog.Plan', spec §4.2).
 const base = (target: string): DomainModel => ({
   context: 'Billing', ticksPerDay: 24,
-  enums: [],
+  enums: [], values: [],
   entities: [],
   aggregates: [{
     kind: 'aggregate', name: 'Order',
@@ -98,7 +113,44 @@ const base = (target: string): DomainModel => ({
       { name: 'plan', type: { kind: 'ref', target } }
     ]
   }],
-  events: []
+  events: [], services: []
+});
+
+// Task 11: type-carried laws (design §3.5/§6) — a value type's own invariant is instantiated as a
+// statePredicate candidate on every OWNER field of that value type, with every path prefixed
+// [fieldName, ...]. periodModel: Subscription.period: Period, Period.wellOrdered { start < end }.
+describe('impliedInvariants — type-carried value laws', () => {
+  it('instantiates a value invariant as a prefixed statePredicate candidate per use site', () => {
+    const laws = impliedInvariants(periodModel).filter(i => i.id.includes('val'));
+    expect(laws.length).toBe(1);
+    expect(laws[0]!.candidate).toMatchObject({ kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt', left: { kind: 'field', path: ['period', 'start'] }, right: { kind: 'field', path: ['period', 'end'] } } });
+  });
+
+  it('valueLawInstances is the shared source of truth (implied + templates derive from it)', () => {
+    const instances = valueLawInstances(periodModel);
+    expect(instances).toHaveLength(1);
+    expect(instances[0]!.owner.name).toBe('Subscription');
+    expect(instances[0]!.field).toBe('period');
+    expect(instances[0]!.value.name).toBe('Period');
+    expect(instances[0]!.inv.name).toBe('wellOrdered');
+  });
+
+  it('isImplied matches the per-site instantiated law by shape', () => {
+    const c = impliedInvariants(periodModel).find(i => i.id.includes('val'))!.candidate;
+    expect(isImplied(c, periodModel)).toBe(true);
+  });
+
+  it('a value law never prints per-site (as a Subscription invariant), even when explicitly adopted — only the value block\'s own declaration prints', () => {
+    const law = impliedInvariants(periodModel).find(i => i.id.includes('val'))!;
+    const code = astToCode(periodModel, [law]);
+    // The value block's own `invariant wellOrdered { start < end }` declaration is expected —
+    // what must NOT appear is a second, per-site printed copy on the Subscription aggregate
+    // (which would read `period.start < period.end`, the prefixed candidate body).
+    expect(code).not.toContain('period.start < period.end');
+    const subscriptionBlock = code.slice(code.indexOf('aggregate Subscription'));
+    expect(subscriptionBlock).not.toContain('invariant');
+  });
 });
 
 describe('impliedInvariants — qualified-ref exclusion (spec §4.2)', () => {
@@ -112,5 +164,15 @@ describe('impliedInvariants — qualified-ref exclusion (spec §4.2)', () => {
     m.entities.push({ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] });
     m.aggregates[0]!.fields.push({ name: 'who', type: { kind: 'ref', target: 'Customer' } });
     expect(impliedInvariants(m).some(i => i.candidate.kind === 'refsResolve')).toBe(true);
+  });
+
+  it('the derived refsResolve candidate carries only the same-context (unqualified) ref field names', () => {
+    // Order has both a qualified ref (plan: Catalog.Plan, excluded per spec §4.2) and a local ref
+    // (who: Customer) — the derived candidate's `fields` must list only `who`.
+    const m = base('Catalog.Plan');
+    m.entities.push({ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] });
+    m.aggregates[0]!.fields.push({ name: 'who', type: { kind: 'ref', target: 'Customer' } });
+    const d = impliedInvariants(m).find(i => i.candidate.kind === 'refsResolve')!;
+    expect(d.candidate).toEqual({ kind: 'refsResolve', aggregate: 'Order', fields: ['who'] });
   });
 });

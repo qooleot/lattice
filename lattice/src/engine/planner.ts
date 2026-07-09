@@ -60,13 +60,15 @@ function byMinimalSize(witnesses: CaseState[]): CaseState[] {
 // invoices for one subscription — a faithful `forbid` would prune a correct live candidate,
 // `permit` would contradict the adoption). Filtered per engine to what its emitter can express
 // as a state constraint:
-//  - quint: statePredicate/conservation/cardinality/unique. Trace-history kinds (terminal,
-//    monotonic, leadsTo) are path properties a single-state constraint can't encode; refsResolve
-//    mis-evaluates on quint's pool-drawn refs (see UNELICITABLE_KINDS in cli.ts).
-//  - alloy: unique/cardinality, and statePredicates not mentioning `now` (termToAlloy's only hard
-//    inexpressible). Note this is EXPRESSIBILITY, not routeCandidate's solving preference: an
-//    arith `ge 0` statePredicate routes to quint as a query subject but is still a fine alloy
-//    constraint. conservation stays quint-only (candidateToPred has no rendering for it).
+//  - quint: statePredicate/conservation/cardinality/unique/sumOverCollection. Trace-history kinds
+//    (terminal, monotonic, leadsTo) are path properties a single-state constraint can't encode;
+//    refsResolve mis-evaluates on quint's pool-drawn refs (see UNELICITABLE_KINDS in cli.ts).
+//  - alloy: unique/cardinality/sumOverCollection, and statePredicates not mentioning `now`
+//    (termToAlloy's only hard inexpressible). Note this is EXPRESSIBILITY, not routeCandidate's
+//    solving preference: an arith `ge 0` statePredicate routes to quint as a query subject but is
+//    still a fine alloy constraint; sumOverCollection likewise always query-routes to quint (design
+//    §6.2) yet Alloy can express it fine as an adopted `sum` comprehension (candidateToPred's
+//    sumOverCollection case). conservation stays quint-only (candidateToPred has no rendering for it).
 export function expressibleAdopted(engine: 'alloy' | 'quint', adopted: Candidate[]): Candidate[] {
   const termHasNow = (t: Term): boolean => t.kind === 'now' || (t.kind === 'plus' && (termHasNow(t.left) || termHasNow(t.right)));
   const predHasNow = (p: Predicate): boolean => {
@@ -78,8 +80,8 @@ export function expressibleAdopted(engine: 'alloy' | 'quint', adopted: Candidate
       case 'implies': return predHasNow(p.left) || predHasNow(p.right);
     }
   };
-  if (engine === 'quint') return adopted.filter(c => ['statePredicate', 'conservation', 'cardinality', 'unique'].includes(c.kind));
-  return adopted.filter(c => c.kind === 'unique' || c.kind === 'cardinality' ||
+  if (engine === 'quint') return adopted.filter(c => ['statePredicate', 'conservation', 'cardinality', 'unique', 'sumOverCollection'].includes(c.kind));
+  return adopted.filter(c => c.kind === 'unique' || c.kind === 'cardinality' || c.kind === 'sumOverCollection' ||
     (c.kind === 'statePredicate' && !(c.where ? predHasNow(c.where) : false) && !predHasNow(c.body)));
 }
 export const adoptedConstraints = (s: SessionState): Candidate[] =>

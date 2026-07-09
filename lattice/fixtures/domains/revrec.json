@@ -17,6 +17,7 @@
       ]
     }
   ],
+  "values": [],
   "entities": [
     {
       "kind": "entity",
@@ -166,5 +167,6 @@
       }
     }
   ],
-  "events": []
+  "events": [],
+  "services": []
 }

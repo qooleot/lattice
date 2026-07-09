@@ -5,6 +5,15 @@ export interface CaseState { now?: number; entities: CaseEntity[]; trace?: CaseE
 export type Verdict = 'permit' | 'forbid';
 
 export function resolveValue(s: CaseState, e: CaseEntity, path: Path): string | number | boolean | undefined {
+  // Value-field fast path (design §3.5): remapValueKeys (witness.ts) normalizes both solvers'
+  // flattened output to a dotted witness key (e.g. 'period.start') for every value-typed field —
+  // try that directly before falling into the per-segment ref-hop walk below, which would
+  // otherwise misinterpret a multi-segment value path as a ref hop through an entity named by the
+  // first segment's value.
+  if (path.length > 1) {
+    const direct = e.fields[path.join('.')];
+    if (direct !== undefined) return direct;
+  }
   let cur: CaseEntity | undefined = e;
   for (let i = 0; i < path.length; i++) {
     if (!cur) return undefined;
@@ -25,6 +34,7 @@ function evalTerm(t: Term, self: CaseEntity, s: CaseState): number | string | bo
       const l = evalTerm(t.left, self, s), r = evalTerm(t.right, self, s);
       return typeof l === 'number' && typeof r === 'number' ? l + r : undefined;
     }
+    case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
 }
 
@@ -75,9 +85,23 @@ export function evaluateCandidate(c: Candidate, s: CaseState): Verdict {
     }
     case 'refsResolve': {
       const ids = new Set(s.entities.map(e => e.id));
-      for (const e of subjects())
-        for (const [k, v] of Object.entries(e.fields))
-          if (!k.includes('.') && typeof v === 'string' && !ids.has(v) && looksLikeRef(s, k, e)) return 'forbid';
+      const fields = c.fields;
+      for (const e of subjects()) {
+        if (fields) {
+          // Scoped (design task 16): check ONLY the listed same-context ref fields. Qualified
+          // (cross-context) ref fields are excluded from invariant semantics (spec §4.2) and may
+          // legitimately carry a bare string with no corresponding entity in this witness's scope.
+          for (const k of fields) {
+            const v = e.fields[k];
+            if (typeof v === 'string' && !ids.has(v)) return 'forbid';
+          }
+        } else {
+          // Legacy heuristic (absent `fields` — stored candidates predate the field): any
+          // string-valued field whose value is no entity's id counts as a dangling ref.
+          for (const [k, v] of Object.entries(e.fields))
+            if (!k.includes('.') && typeof v === 'string' && !ids.has(v) && looksLikeRef(s, k, e)) return 'forbid';
+        }
+      }
       return 'permit';
     }
     case 'terminal': {
@@ -113,6 +137,18 @@ export function evaluateCandidate(c: Candidate, s: CaseState): Verdict {
       return 'permit';
     }
     case 'leadsTo': return 'permit'; // liveness is not judgeable on a finite case; template-only (§6.1)
+    case 'sumOverCollection': {
+      for (const e of subjects()) {
+        const kids = s.entities.filter(x => x.type === c.child && x.fields['owner'] === e.id);
+        const vals = kids.map(k => k.fields[c.field]);
+        const total = resolveValue(s, e, c.total);
+        if (vals.some(v => typeof v !== 'number') || typeof total !== 'number') continue;  // unknown facts don't convict
+        const sum = (vals as number[]).reduce((a, b) => a + b, 0);
+        const ok = c.op === 'eq' ? total === sum : c.op === 'le' ? total <= sum : total >= sum;
+        if (!ok) return 'forbid';
+      }
+      return 'permit';
+    }
   }
 }
 

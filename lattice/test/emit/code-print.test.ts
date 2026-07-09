@@ -5,7 +5,7 @@ import type { CandidateInvariant } from '../../src/ast/invariant.js';
 
 const m: DomainModel = {
   context: 'Demo', doc: 'Top doc', ticksPerDay: 24,
-  enums: [{ name: 'Mode', values: ['fast', 'slow'] }],
+  enums: [{ name: 'Mode', values: ['fast', 'slow'] }], values: [],
   entities: [{ kind: 'entity', name: 'Plan', doc: 'Entity doc', fields: [
     { name: 'planId', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'fee', type: { kind: 'prim', prim: 'Money' } },
@@ -16,8 +16,15 @@ const m: DomainModel = {
     { name: 'units', type: { kind: 'prim', prim: 'Int' } }],
     machine: { regions: [{ name: 'run', initial: 'queued', states: [
       { name: 'queued' }, { name: 'going', tags: ['active'] }, { name: 'done', tags: ['terminal'] }] }],
-      transitions: [{ name: 'start', region: 'run', from: 'queued', to: 'going', when: 'kicked' }] } }],
+      transitions: [{ name: 'start', region: 'run', from: ['queued'], to: 'going', when: 'kicked' }] } }],
   events: [{ name: 'kicked', fields: [{ name: 'reason', type: { kind: 'prim', prim: 'Text' } }] }],
+  services: [{ name: 'JobOps', doc: 'Service doc', methods: [
+    { name: 'kickOff', params: [{ name: 'units', type: { kind: 'prim', prim: 'Int' } }],
+      kind: { performs: { aggregate: 'Job', transition: 'start' } },
+      requires: { kind: 'cmp', op: 'ge', left: { kind: 'param', name: 'units' }, right: { kind: 'int', value: 0 } } },
+    { name: 'getJob', params: [{ name: 'jobId', type: { kind: 'prim', prim: 'Id' } }], returns: { kind: 'ref', target: 'Job' },
+      kind: { readOnly: true } },
+  ] }],
 };
 
 const invs: CandidateInvariant[] = [
@@ -60,13 +67,19 @@ context Demo {
     plan  : ref Plan
     units : Int
 
-    machine {
-      region run { states { queued @initial, going @active, done @terminal } }
-      transition start { region run; from queued to going; when kicked }
+    lifecycle run {
+      states { queued @initial, going @active, done @terminal }
+      transition start { from queued to going; when kicked }
     }
 
     /// Units stay sane.
     invariant unitsSane { units >= 0 && (state run in {going} => units <= 100) }
+  }
+
+  /// Service doc
+  service JobOps {
+    kickOff(units: Int) performs Job.start requires units >= 0
+    getJob(jobId: Id): ref Job read-only
   }
 
   invariant planMode on Plan where fee >= 1 { mode == Mode.fast }
@@ -94,7 +107,7 @@ it('never emits // and always emits every candidate kind parseably', () => {
 });
 
 it('refuses degenerate inputs the grammar cannot parse back (throws, no garbage text)', () => {
-  const hollowEnum: DomainModel = { ...m, enums: [{ name: 'Hollow', values: [] }] };
+  const hollowEnum: DomainModel = { ...m, enums: [{ name: 'Hollow', values: [] }], values: [] };
   expect(() => astToCode(hollowEnum, [])).toThrow(/enum Hollow/);
   const onePart: CandidateInvariant = { id: 'hand-c1', name: 'c1', prior: 1, source: 'template',
     candidate: { kind: 'conservation', aggregate: 'Job', parts: [['units']], total: ['units'] } };

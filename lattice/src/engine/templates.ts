@@ -1,6 +1,7 @@
 import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
 import { isQualifiedRef } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant } from '../ast/invariant.js';
+import { valueLawInstances } from './implied.js';
 
 const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
 const mk = (id: string, name: string, candidate: Candidate, prior = 0.9): CandidateInvariant =>
@@ -9,6 +10,14 @@ const mk = (id: string, name: string, candidate: Candidate, prior = 0.9): Candid
 export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; seeds: CandidateInvariant[] } {
   const adopt: CandidateInvariant[] = [];
   const seeds: CandidateInvariant[] = [];
+
+  // Type-carried laws (design §3.5/§6): every value-typed field's own invariants, adopted at each
+  // use site — mirrors Money non-negativity (#2 below) exactly: implied.ts derives the same
+  // candidate shape for parse-dedup (never printed), this gives it template provenance so the
+  // elicitation/enforcement loop treats it as an adopted invariant like any other template match.
+  for (const { owner, field, value, inv, candidate } of valueLawInstances(m))
+    adopt.push(mk(`tpl-val-${value.name}-${owner.name}-${field}-${inv.name}`,
+      `ValueLaw_${owner.name}_${field}_${inv.name}`, candidate));
 
   for (const o of owners(m)) {
     const refs = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type));
@@ -32,9 +41,11 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
       adopt.push(mk(`tpl-8-${o.name}-${f.name}`, `Monotonic_${o.name}_${f.name}`,
         { kind: 'monotonic', aggregate: o.name, field: [f.name] }));
 
-    // #9 no-orphan for owners with refs
+    // #9 no-orphan for owners with refs — fields scopes evaluation to same-context (unqualified)
+    // ref fields only (spec §4.2 excludes qualified/cross-context refs from invariant semantics).
     if (refs.length > 0)
-      adopt.push(mk(`tpl-9-${o.name}`, `NoOrphan_${o.name}`, { kind: 'refsResolve', aggregate: o.name }));
+      adopt.push(mk(`tpl-9-${o.name}`, `NoOrphan_${o.name}`,
+        { kind: 'refsResolve', aggregate: o.name, fields: refs.map(f => f.name) }));
 
     for (const r of machine?.regions ?? []) {
       // #3 terminal

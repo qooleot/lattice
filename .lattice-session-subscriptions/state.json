@@ -2,6 +2,7 @@
   "model": {
     "context": "Subscriptions",
     "enums": [],
+    "values": [],
     "entities": [],
     "aggregates": [
       {
@@ -50,12 +51,33 @@
               "kind": "prim",
               "prim": "Int"
             }
+          },
+          {
+            "name": "paidInvoiceCount",
+            "type": {
+              "kind": "prim",
+              "prim": "Int"
+            }
+          },
+          {
+            "name": "maxRetries",
+            "type": {
+              "kind": "prim",
+              "prim": "Int"
+            }
+          },
+          {
+            "name": "latestInvoice",
+            "type": {
+              "kind": "ref",
+              "target": "Invoice"
+            }
           }
         ],
         "machine": {
           "regions": [
             {
-              "name": "lifecycle",
+              "name": "status",
               "initial": "trialing",
               "states": [
                 {
@@ -91,50 +113,69 @@
           "transitions": [
             {
               "name": "activate",
-              "region": "lifecycle",
-              "from": "trialing",
-              "to": "active"
+              "region": "status",
+              "from": [
+                "trialing"
+              ],
+              "to": "active",
+              "requires": {
+                "kind": "cmp",
+                "op": "ge",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "paidInvoiceCount"
+                  ]
+                },
+                "right": {
+                  "kind": "int",
+                  "value": 1
+                }
+              },
+              "emits": "SubscriptionActivated"
             },
             {
               "name": "expireTrial",
-              "region": "lifecycle",
-              "from": "trialing",
+              "region": "status",
+              "from": [
+                "trialing"
+              ],
               "to": "expired"
             },
             {
               "name": "paymentFailed",
-              "region": "lifecycle",
-              "from": "active",
+              "region": "status",
+              "from": [
+                "active"
+              ],
               "to": "pastDue"
             },
             {
               "name": "recover",
-              "region": "lifecycle",
-              "from": "pastDue",
+              "region": "status",
+              "from": [
+                "pastDue"
+              ],
               "to": "active"
             },
             {
-              "name": "cancelFromTrial",
-              "region": "lifecycle",
-              "from": "trialing",
-              "to": "canceled"
-            },
-            {
-              "name": "cancelFromActive",
-              "region": "lifecycle",
-              "from": "active",
-              "to": "canceled"
-            },
-            {
-              "name": "cancelFromPastDue",
-              "region": "lifecycle",
-              "from": "pastDue",
-              "to": "canceled"
+              "name": "cancel",
+              "region": "status",
+              "from": [
+                "trialing",
+                "active",
+                "pastDue"
+              ],
+              "to": "canceled",
+              "emits": "SubscriptionCanceled"
             },
             {
               "name": "dunningExhausted",
-              "region": "lifecycle",
-              "from": "pastDue",
+              "region": "status",
+              "from": [
+                "pastDue"
+              ],
               "to": "canceled"
             }
           ]
@@ -199,6 +240,13 @@
             "tags": [
               "balance"
             ]
+          },
+          {
+            "name": "retryCount",
+            "type": {
+              "kind": "prim",
+              "prim": "Int"
+            }
           }
         ],
         "machine": {
@@ -241,31 +289,89 @@
             {
               "name": "finalize",
               "region": "settlement",
-              "from": "draft",
-              "to": "open"
+              "from": [
+                "draft"
+              ],
+              "to": "open",
+              "requires": {
+                "kind": "cmp",
+                "op": "eq",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "totalDue"
+                  ]
+                },
+                "right": {
+                  "kind": "plus",
+                  "left": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "licenseFeeAmount"
+                    ]
+                  },
+                  "right": {
+                    "kind": "field",
+                    "owner": "self",
+                    "path": [
+                      "usageAmount"
+                    ]
+                  }
+                }
+              },
+              "emits": "InvoiceFinalized"
             },
             {
               "name": "settle",
               "region": "settlement",
-              "from": "open",
-              "to": "paid"
+              "from": [
+                "open"
+              ],
+              "to": "paid",
+              "requires": {
+                "kind": "cmp",
+                "op": "eq",
+                "left": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "amountPaid"
+                  ]
+                },
+                "right": {
+                  "kind": "field",
+                  "owner": "self",
+                  "path": [
+                    "totalDue"
+                  ]
+                }
+              },
+              "emits": "InvoicePaid"
             },
             {
               "name": "voidDraft",
               "region": "settlement",
-              "from": "draft",
+              "from": [
+                "draft"
+              ],
               "to": "void"
             },
             {
               "name": "voidOpen",
               "region": "settlement",
-              "from": "open",
+              "from": [
+                "open"
+              ],
               "to": "void"
             },
             {
               "name": "writeOff",
               "region": "settlement",
-              "from": "open",
+              "from": [
+                "open"
+              ],
               "to": "uncollectible"
             }
           ]
@@ -273,7 +379,144 @@
         "doc": "Period invoice: license-fee portion plus usage portion; partial payments accrue"
       }
     ],
-    "events": [],
+    "events": [
+      {
+        "name": "SubscriptionActivated",
+        "fields": [
+          {
+            "name": "subId",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            }
+          }
+        ]
+      },
+      {
+        "name": "SubscriptionCanceled",
+        "fields": [
+          {
+            "name": "subId",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            }
+          }
+        ]
+      },
+      {
+        "name": "InvoicePaid",
+        "fields": [
+          {
+            "name": "invoiceId",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            }
+          }
+        ]
+      },
+      {
+        "name": "InvoiceFinalized",
+        "fields": [
+          {
+            "name": "invoiceId",
+            "type": {
+              "kind": "prim",
+              "prim": "Id"
+            }
+          }
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "SubscriptionService",
+        "methods": [
+          {
+            "name": "createSubscription",
+            "params": [
+              {
+                "name": "plan",
+                "type": {
+                  "kind": "ref",
+                  "target": "Catalog.Plan"
+                }
+              },
+              {
+                "name": "seats",
+                "type": {
+                  "kind": "prim",
+                  "prim": "Int"
+                }
+              }
+            ],
+            "kind": {
+              "creates": "Subscription"
+            },
+            "returns": {
+              "kind": "ref",
+              "target": "Subscription"
+            }
+          },
+          {
+            "name": "getSubscription",
+            "params": [
+              {
+                "name": "subId",
+                "type": {
+                  "kind": "prim",
+                  "prim": "Id"
+                }
+              }
+            ],
+            "kind": {
+              "readOnly": true
+            },
+            "returns": {
+              "kind": "ref",
+              "target": "Subscription"
+            }
+          },
+          {
+            "name": "activate",
+            "params": [
+              {
+                "name": "subId",
+                "type": {
+                  "kind": "prim",
+                  "prim": "Id"
+                }
+              }
+            ],
+            "kind": {
+              "performs": {
+                "aggregate": "Subscription",
+                "transition": "activate"
+              }
+            }
+          },
+          {
+            "name": "cancel",
+            "params": [
+              {
+                "name": "subId",
+                "type": {
+                  "kind": "prim",
+                  "prim": "Id"
+                }
+              }
+            ],
+            "kind": {
+              "performs": {
+                "aggregate": "Subscription",
+                "transition": "cancel"
+              }
+            }
+          }
+        ]
+      }
+    ],
     "doc": "Subscriptions API: hybrid license-fee + usage-based billing"
   },
   "candidates": [
@@ -1328,6 +1571,89 @@
           }
         },
         "doc": "A billing period is well-ordered and accrued usage never goes negative."
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "hand-activePaidInFull",
+        "name": "activePaidInFull",
+        "prior": 1,
+        "source": "template",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Subscription",
+          "body": {
+            "kind": "cmp",
+            "op": "eq",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "latestInvoice",
+                "amountPaid"
+              ]
+            },
+            "right": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "latestInvoice",
+                "totalDue"
+              ]
+            }
+          },
+          "where": {
+            "kind": "inState",
+            "owner": "self",
+            "region": "status",
+            "states": [
+              "active"
+            ]
+          }
+        },
+        "doc": "An active subscription's current invoice is paid in full (companion to the activate guard)."
+      },
+      "status": "adopted"
+    },
+    {
+      "inv": {
+        "id": "hand-retryCapWhilePastDue",
+        "name": "retryCapWhilePastDue",
+        "prior": 1,
+        "source": "template",
+        "candidate": {
+          "kind": "statePredicate",
+          "aggregate": "Subscription",
+          "body": {
+            "kind": "cmp",
+            "op": "le",
+            "left": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "latestInvoice",
+                "retryCount"
+              ]
+            },
+            "right": {
+              "kind": "field",
+              "owner": "self",
+              "path": [
+                "maxRetries"
+              ]
+            }
+          },
+          "where": {
+            "kind": "inState",
+            "owner": "self",
+            "region": "status",
+            "states": [
+              "pastDue"
+            ]
+          }
+        },
+        "doc": "While past due, dunning retries on the current invoice never exceed the subscription's cap."
       },
       "status": "adopted"
     },

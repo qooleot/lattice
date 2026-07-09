@@ -4,7 +4,7 @@ import type { DomainModel } from '../../src/ast/domain.js';
 
 const good: DomainModel = {
   context: 'Billing', ticksPerDay: 24,
-  enums: [{ name: 'Status', values: ['Paid', 'Unpaid'] }],
+  enums: [{ name: 'Status', values: ['Paid', 'Unpaid'] }], values: [],
   entities: [{ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
   aggregates: [{
     kind: 'aggregate', name: 'Subscription',
@@ -15,10 +15,10 @@ const good: DomainModel = {
     ],
     machine: {
       regions: [{ name: 'Access', initial: 'Trialing', states: [{ name: 'Trialing' }, { name: 'Active', tags: ['active'] }, { name: 'Ended', tags: ['terminal'] }] }],
-      transitions: [{ name: 'activate', region: 'Access', from: 'Trialing', to: 'Active', when: 'PaymentSucceeded' }]
+      transitions: [{ name: 'activate', region: 'Access', from: ['Trialing'], to: 'Active', when: 'PaymentSucceeded' }]
     }
   }],
-  events: [{ name: 'PaymentSucceeded', fields: [] }]
+  events: [{ name: 'PaymentSucceeded', fields: [] }], services: []
 };
 
 describe('validateModel rejects grammar-keyword identifiers (spec §3.4 conformance)', () => {
