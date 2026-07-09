@@ -99,18 +99,20 @@ function workspaceHook(latPath: string): { written: string[] } | { diagnostics: 
   return w.ok ? { written: w.written } : { diagnostics: w.diagnostics };
 }
 
-function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
+export function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
   const segs = path.split('.');
   const from = segs[segs.length - 1]!;
+  const nestedEntities = m.aggregates.flatMap(a => a.entities ?? []);
   const scope = ((): RenameScope | null => {
     if (segs.length === 1) {
       if (m.aggregates.some(a => a.name === from)) return 'aggregate';
-      if (m.entities.some(e => e.name === from)) return 'entity';
+      if (m.entities.some(e => e.name === from) || nestedEntities.some(e => e.name === from)) return 'entity';
       if (m.enums.some(e => e.name === from)) return 'enum';
       if (m.events.some(e => e.name === from)) return 'event';
       return invariantNames.has(from) ? 'invariant' : null;
     }
-    const owner = m.aggregates.find(a => a.name === segs[0]) ?? m.entities.find(e => e.name === segs[0]);
+    const owner = m.aggregates.find(a => a.name === segs[0]) ?? m.entities.find(e => e.name === segs[0])
+      ?? nestedEntities.find(e => e.name === segs[0]);
     if (segs.length === 2) {
       if (m.enums.some(e => e.name === segs[0] && e.values.includes(from))) return 'enumValue';
       if (!owner) return null;

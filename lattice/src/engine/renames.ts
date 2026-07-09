@@ -74,13 +74,17 @@ export function applyRenamesToModel(m: DomainModel, renames: RenameSpec[]): Doma
     const ren = (n: string, match: string) => (n === match ? r.to : n);
     switch (r.scope) {
       case 'aggregate': case 'entity':
-        for (const o of [...cur.aggregates, ...cur.entities]) {
+        for (const o of [...cur.aggregates, ...cur.entities, ...cur.aggregates.flatMap(a => a.entities ?? [])]) {
           o.name = ren(o.name, r.from);
-          for (const f of o.fields) if (f.type.kind === 'ref') f.type.target = ren(f.type.target, r.from);
+          for (const f of o.fields) {
+            if (f.type.kind === 'ref') f.type.target = ren(f.type.target, r.from);
+            if (f.type.kind === 'list' && f.type.of.kind === 'ref') f.type.of.target = ren(f.type.of.target, r.from);
+          }
         }
         break;
       case 'field': {
-        const def = cur.aggregates.find(a => a.name === owner) ?? cur.entities.find(e => e.name === owner);
+        const def = cur.aggregates.find(a => a.name === owner) ?? cur.entities.find(e => e.name === owner)
+          ?? cur.aggregates.flatMap(a => a.entities ?? []).find(e => e.name === owner);
         for (const f of def?.fields ?? []) f.name = ren(f.name, r.from);
         break;
       }

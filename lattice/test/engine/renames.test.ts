@@ -4,6 +4,7 @@ import { resolveWitness, currentInvariantName, renameEntries, applyRenamesToMode
 import type { CaseState } from '../../src/engine/evaluate.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 import type { LedgerEntry } from '../../src/engine/session.js';
+import { invoiceLinesModel } from '../fixtures.js';
 
 const model: DomainModel = {
   context: 'C', enums: [{ name: 'Mode', values: ['fast', 'slow'] }], values: [], events: [], entities: [], services: [],
@@ -79,6 +80,29 @@ it('applyRenamesToModel rewrites defs and internal references', () => {
   expect(job.fields.map(f => f.name)).toContain('n');
   expect(m2.enums[0]!.values).toContain('quick');
   expect(model.aggregates[0]!.fields.map(f => f.name)).toContain('units');   // input untouched
+});
+
+it('applyRenamesToModel renames an aggregate-owned nested entity def', () => {
+  const m2 = applyRenamesToModel(invoiceLinesModel, [
+    { scope: 'entity', path: 'InvoiceLine', from: 'InvoiceLine', to: 'LineItem' }]);
+  const invoice = m2.aggregates[0]!;
+  expect(invoice.entities!.map(e => e.name)).toContain('LineItem');
+  expect(invoice.entities!.map(e => e.name)).not.toContain('InvoiceLine');
+});
+
+it('applyRenamesToModel renames a field owned by a nested entity', () => {
+  const m2 = applyRenamesToModel(invoiceLinesModel, [
+    { scope: 'field', path: 'InvoiceLine.amount', from: 'amount', to: 'net' }]);
+  const line = m2.aggregates[0]!.entities!.find(e => e.name === 'InvoiceLine')!;
+  expect(line.fields.map(f => f.name)).toContain('net');
+  expect(line.fields.map(f => f.name)).not.toContain('amount');
+});
+
+it('applyRenamesToModel rewrites a list-wrapped ref target when the nested entity is renamed', () => {
+  const m2 = applyRenamesToModel(invoiceLinesModel, [
+    { scope: 'entity', path: 'InvoiceLine', from: 'InvoiceLine', to: 'LineItem' }]);
+  const linesField = m2.aggregates[0]!.fields.find(f => f.name === 'lines')!;
+  expect(linesField.type).toEqual({ kind: 'list', of: { kind: 'ref', target: 'LineItem' } });
 });
 
 it('applyRenamesToInvariant rewrites paths, states and its own name', () => {

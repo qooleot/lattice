@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runCommand } from '../src/cli.js';
+import { runCommand, inferRenameSpec } from '../src/cli.js';
 import { traceAModel, invoiceLinesModel, sumCandidate } from './fixtures.js';
 
 const dpsf = { entities: [
@@ -326,5 +326,15 @@ describe('engine CLI', () => {
     const r: any = await runCommand(['bogus-command', '--session', dir], fakeDeps);
     expect(r.error).toBe('unknown-command');
     expect(r.cmd).toBe('bogus-command');
+  });
+
+  it('inferRenameSpec infers entity scope for an aggregate-owned nested entity', () => {
+    const spec = inferRenameSpec('InvoiceLine', 'LineItem', invoiceLinesModel, new Set());
+    expect(spec).toEqual({ scope: 'entity', path: 'InvoiceLine', from: 'InvoiceLine', to: 'LineItem' });
+  });
+
+  it('inferRenameSpec infers field scope for a field owned by a nested entity', () => {
+    const spec = inferRenameSpec('InvoiceLine.amount', 'net', invoiceLinesModel, new Set());
+    expect(spec).toEqual({ scope: 'field', path: 'InvoiceLine.amount', from: 'amount', to: 'net' });
   });
 });
