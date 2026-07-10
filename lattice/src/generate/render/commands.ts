@@ -81,11 +81,20 @@ function renderFlattenHelper(a: PlanAggregate, plan: GenPlan): string | undefine
 interface RowInvariantCheck { name: string; anchors: string[]; }
 
 // Row-kind (statePredicate) invariants are the ones a single handler re-checks against the row it
-// just wrote. Table-kind (unique) invariants span the whole table and are out of scope for a
-// per-row command handler (v1) — see design note in the Task 6 report.
+// just wrote.
 function rowInvariantChecks(a: PlanAggregate): RowInvariantCheck[] {
   return a.invariants
     .filter(inv => inv.candidate.kind === 'statePredicate')
+    .map(inv => ({ name: inv.name, anchors: inv.anchors.provenance }));
+}
+
+// Table-kind (unique) invariants span the whole table. Every adopted transition handler must
+// re-check them too (design: "adopted invariants checked after every command") — e.g. the real
+// Subscriptions spec adopts `oneDraftInvoicePerSubscription`, a `unique` invariant, and a
+// transition into the scoped state could violate it with nothing else catching it.
+function tableInvariantChecks(a: PlanAggregate): RowInvariantCheck[] {
+  return a.invariants
+    .filter(inv => inv.candidate.kind === 'unique')
     .map(inv => ({ name: inv.name, anchors: inv.anchors.provenance }));
 }
 
@@ -93,6 +102,7 @@ function transitionHandler(a: PlanAggregate, t: PlanTransition, hasFlatten: bool
   const fromStates = t.from.map(s => `'${s}'`).join(', ');
   const guardTs = t.requires ? predToTs(t.requires, 'row') : undefined;
   const checks = rowInvariantChecks(a);
+  const tableChecks = tableInvariantChecks(a);
 
   const lines: string[] = [];
   lines.push(`// spec: transition ${t.name}  [anchors: ${t.anchors.provenance.join(', ') || 'none'}]`);
@@ -120,6 +130,14 @@ function transitionHandler(a: PlanAggregate, t: PlanTransition, hasFlatten: bool
     const anchors = c.anchors.length ? c.anchors : ['seed:template'];
     lines.push(
       `    if (!(${checkFnName(c.name)}(${checkRowVar}))) ` +
+      `throw { rejected: 'invariant ${c.name}', anchors: ${JSON.stringify(anchors)} };`
+    );
+  }
+  for (const c of tableChecks) {
+    const anchors = c.anchors.length ? c.anchors : ['seed:template'];
+    lines.push(`    const rows_${c.name} = db.prepare('SELECT * FROM ${a.name}').all();`);
+    lines.push(
+      `    if (!(${checkFnName(c.name)}(rows_${c.name}))) ` +
       `throw { rejected: 'invariant ${c.name}', anchors: ${JSON.stringify(anchors)} };`
     );
   }
@@ -152,6 +170,7 @@ export function renderCommands(plan: GenPlan): string {
   const invariantNames = new Set<string>();
   for (const a of plan.aggregates) {
     for (const c of rowInvariantChecks(a)) invariantNames.add(checkFnName(c.name));
+    for (const c of tableInvariantChecks(a)) invariantNames.add(checkFnName(c.name));
   }
 
   const bodies = plan.aggregates.map(a => aggregateCommands(a, plan));
