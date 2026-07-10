@@ -7,7 +7,7 @@ function tsType(t: TypeRef): string {
     case 'enum': return 'string';
     case 'ref': return 'string';           // foreign id
     case 'list': return `${tsType(t.of)}[]`;
-    case 'value': return t.value;
+    case 'value': throw new Error(`unsupported field type kind: value (${t.value}) — the TS types renderer does not yet support value-type fields`);
   }
 }
 

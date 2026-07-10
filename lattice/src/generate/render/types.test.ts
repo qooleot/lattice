@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderTypes } from './types.js';
 import { buildPlan } from '../plan.js';
 import { tinyInput } from '../fixtures.js';
+import type { GenPlan } from '../plan.js';
 
 describe('renderTypes', () => {
   const src = renderTypes(buildPlan(tinyInput));
@@ -15,5 +16,21 @@ describe('renderTypes', () => {
   });
   it('carries a provenance comment naming the aggregate', () => {
     expect(src).toMatch(/\/\/.*aggregate Account/);
+  });
+  it('throws on an unsupported value-kind field instead of emitting uncompilable output', () => {
+    const plan: GenPlan = {
+      context: 'Bank',
+      aggregates: [{
+        name: 'Payment',
+        fields: [
+          { name: 'amount', type: { kind: 'value', value: 'Money' } },
+        ],
+        regions: [],
+        transitions: [],
+        invariants: [],
+      }],
+      events: [],
+    };
+    expect(() => renderTypes(plan)).toThrow(/unsupported field type kind: value/);
   });
 });
