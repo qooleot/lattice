@@ -44,6 +44,16 @@ describe('generateService', () => {
     expect(pkg.dependencies['better-sqlite3']).toBeDefined();
   });
 
+  it('writes a .gitignore covering npm/install and demo-db artifacts', () => {
+    const out = mkdtempSync(join(tmpdir(), 'gen-'));
+    generateService(tinyInput, out);
+    const gitignorePath = join(out, '.gitignore');
+    expect(existsSync(gitignorePath)).toBe(true);
+    const gitignore = readFileSync(gitignorePath, 'utf8');
+    expect(gitignore).toContain('package-lock.json');
+    expect(gitignore).toContain('node_modules/');
+  });
+
   it('renders invariants as exported, provenance-commented checks', () => {
     const src = renderInvariants(buildPlan(tinyInput));
     expect(src).toMatch(/\/\/ spec: invariant nonNegativeBalance/);
