@@ -58,6 +58,32 @@ central de-risk of the slice.
 committed Subscriptions spec, to confirm `--inductive-invariant` behaves over our *emitted shape*
 (frozen data, owned collections, refs). Everything below rests on that behaving.
 
+### 2.1 Generation reconciliation (added 2026-07-09, after generation merged to `main`)
+
+The generation slice merged to `main` and this branch was rebased onto it. Generation's footprint is
+almost entirely disjoint: it lives in new dirs (`lattice/src/generate/`, `generated/`) and touches
+`src/cli.ts` by only +10 lines (an additive `generate` case). **None** of this slice's core files —
+`session.ts`, `emit/quint.ts`, `hypothesis.ts`, `planner.ts`, `quint-adapter.ts` — were modified.
+So fork 7's shared-file collision worry largely evaporated. Three concrete reconciliations:
+
+- **The §3.7 coupling is confirmed, not hypothetical.** Generation compiles transition guards into
+  runtime preconditions: `render/commands.ts` reads `t.requires`, renders it via `predToTs`, and
+  emits `if (!(<guard>)) throw { rejected: '<t>: requires guard failed', anchors: t.anchors.provenance }`.
+  So a guard this slice adopts is real enforced code downstream, and a guard/invariant contradiction
+  Pillar A reveals *is* inherited by generated code. **Design refinement (§8):** guard adoption must
+  set the transition's `requires` **and** carry provenance anchors, because generation surfaces
+  `t.anchors.provenance` in both compiled comments and rejection payloads. The `classified` ledger
+  entry's `pinnedBy`/`provenance` (§7.1) feed this.
+- **Abstract-evolution never touches the evaluator.** §6's abstract steps are a Quint-*emission*
+  concern; `src/engine/evaluate.ts` (the model-free oracle over concrete witnesses) is unchanged.
+  Generation's `differential.test.ts` asserts generated invariant checks agree with that oracle —
+  so it stays green. **DoD invariant (§12):** abstract-evolution changes emission only; `evaluate.ts`
+  and the generation differential test are untouched.
+- **Reuse the loader seam & additive dispatch.** Generation added `loadGenInput` over
+  `loadState`/`readLedger` (`session.ts`); the classifier reads the same `s.model` + adopted
+  candidates and should reuse `loadState`. The `classified` ledger kind is append-only/additive —
+  generation's `GenInput.ledger` consumption reads only the kinds it needs and ignores the rest.
+
 ## 3. Decisions (locked with the human, 2026-07-09)
 
 ### 3.1 Scope = A + B + C (brief fork 1) — DECIDED
