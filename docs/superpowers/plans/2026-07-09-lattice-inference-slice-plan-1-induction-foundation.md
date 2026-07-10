@@ -32,6 +32,8 @@
 
 Plans 2–5 get full task breakdowns when reached, written against the code Plan 1–(N−1) actually leaves behind. Rationale: their emission/query details depend on Plan 1's spike outcome.
 
+**Carried into Plan 2 (from Plan 1's final review):** Plan 2's *first* task must add a real-quint integration test for the entailment probe's `--max-steps 0` shape — a machine where a `peers`-state violates `I`, asserting `runQuintVerify(em, { init: 'indInit', invariant: 'peersImpliesI', maxSteps: 0 })` returns `violated: true` (ITF written, not a thrown error). The final review verified this solver behavior by hand; this pins it in the suite before the classifier builds on it. Also fold in Plan 1's deferred Minors M1 (mid-file import in `quint-adapter.test.ts`) and M2 (`not-inductive`/`independent` verdict strings unexercised) while that test file is reopened.
+
 ---
 
 ## Task 1: Induction spike — pin CLI behavior and the classification protocol
