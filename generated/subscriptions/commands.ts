@@ -24,7 +24,7 @@ export function activate(db: Database.Database, id: string): { ok: true; event?:
     if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
-    appendOutbox(db, 'SubscriptionActivated', id, row);
+    appendOutbox(db, 'SubscriptionActivated', id, { subId: row.subId });
     return 'SubscriptionActivated';
   });
   try { const event = tx(); return { ok: true, event }; }
@@ -97,7 +97,7 @@ export function cancel(db: Database.Database, id: string): { ok: true; event?: s
     if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
-    appendOutbox(db, 'SubscriptionCanceled', id, row);
+    appendOutbox(db, 'SubscriptionCanceled', id, { subId: row.subId });
     return 'SubscriptionCanceled';
   });
   try { const event = tx(); return { ok: true, event }; }
@@ -135,7 +135,7 @@ export function finalize(db: Database.Database, id: string): { ok: true; event?:
     if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
     const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
     if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
-    appendOutbox(db, 'InvoiceFinalized', id, row);
+    appendOutbox(db, 'InvoiceFinalized', id, { invoiceId: row.invoiceId });
     return 'InvoiceFinalized';
   });
   try { const event = tx(); return { ok: true, event }; }
@@ -155,7 +155,7 @@ export function settle(db: Database.Database, id: string): { ok: true; event?: s
     if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
     const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
     if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
-    appendOutbox(db, 'InvoicePaid', id, row);
+    appendOutbox(db, 'InvoicePaid', id, { invoiceId: row.invoiceId });
     return 'InvoicePaid';
   });
   try { const event = tx(); return { ok: true, event }; }
