@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { runQuint, parseITF } from '../../src/solvers/quint-adapter.js';
+import { runQuint, parseITF, runQuintVerify } from '../../src/solvers/quint-adapter.js';
 import type { QuintEmission } from '../../src/emit/quint.js';
 
 const em: QuintEmission = { source: 'module m {}', invariantName: 'q_inv', varTypes: {} };
@@ -156,8 +156,6 @@ describe('quint adapter flattens nested value-record fields to underscore keys',
     expect(sub.fields).toEqual({ period_start: 3, period_end: 9 });
   });
 });
-
-import { runQuintVerify } from '../../src/solvers/quint-adapter.js';
 
 describe('runQuintVerify flag construction', () => {
   it('passes a custom --init and --invariant when given', async () => {
