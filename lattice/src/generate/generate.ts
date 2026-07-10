@@ -9,6 +9,7 @@ import { renderCommands } from './render/commands.js';
 import { renderInvariants } from './render/invariants.js';
 import { renderTests } from './render/tests.js';      // Task 9 provides this; stub returns '' until then
 import { renderPackageFiles } from './render/pkg.js';
+import { renderDemo } from './render/demo.js';
 
 export function generateService(input: GenInput, outDir: string): string[] {
   const plan = buildPlan(input);
@@ -21,6 +22,7 @@ export function generateService(input: GenInput, outDir: string): string[] {
     'invariants.ts': renderInvariants(plan),
     'commands.ts': renderCommands(plan),
     'service.test.ts': renderTests(plan),
+    'demo.ts': renderDemo(plan),
     ...renderPackageFiles(plan),
   };
   const written: string[] = [];
