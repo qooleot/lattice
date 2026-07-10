@@ -1,8 +1,15 @@
 import type { GenPlan, PlanAggregate } from '../plan.js';
 import type { Field, TypeRef } from '../../ast/domain.js';
 
-const sqlType = (t: TypeRef): 'TEXT' | 'INTEGER' =>
-  (t.kind === 'prim' && (t.prim === 'Text' || t.prim === 'Id')) || t.kind === 'ref' || t.kind === 'enum' ? 'TEXT' : 'INTEGER';
+function sqlType(t: TypeRef): 'TEXT' | 'INTEGER' {
+  switch (t.kind) {
+    case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? 'TEXT' : 'INTEGER'; // Int/Money/Date/Duration → INTEGER (ticks)
+    case 'enum': return 'TEXT';
+    case 'ref': return 'TEXT';           // foreign id
+    case 'list': throw new Error(`unsupported field type kind: list (${JSON.stringify(t.of)}) — the SQL DDL renderer does not yet support list-type fields`);
+    case 'value': throw new Error(`unsupported field type kind: value (${t.value}) — the SQL DDL renderer does not yet support value-type fields`);
+  }
+}
 
 export const OUTBOX_DDL =
   `CREATE TABLE outbox (\n` +
@@ -11,7 +18,19 @@ export const OUTBOX_DDL =
   `  aggregate_id TEXT NOT NULL,\n` +
   `  payload TEXT NOT NULL\n);\n`;
 
+// Every field and region name becomes a column; a collision (a field named the same as a region, or
+// two regions sharing a name) would silently produce a CREATE TABLE with a duplicate column — fail
+// loud at generation time instead of letting SQLite reject it (or worse, accept it ambiguously).
+function assertNoColumnNameCollision(a: PlanAggregate): void {
+  const seen = new Set<string>();
+  for (const name of [...a.fields.map((f: Field) => f.name), ...a.regions.map(r => r.name)]) {
+    if (seen.has(name)) throw new Error(`aggregate ${a.name}: column name collision on '${name}' — a field and a region (or two regions) share a name`);
+    seen.add(name);
+  }
+}
+
 function tableDdl(a: PlanAggregate): string {
+  assertNoColumnNameCollision(a);
   const cols = a.fields.map((f: Field) => `  ${f.name} ${sqlType(f.type)}${f.key ? ' PRIMARY KEY' : ''}`);
   for (const r of a.regions) cols.push(`  ${r.name} TEXT NOT NULL`);
   return `-- spec: aggregate ${a.name}\nCREATE TABLE ${a.name} (\n${cols.join(',\n')}\n);\n`;
