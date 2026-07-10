@@ -21,7 +21,7 @@ export function activate(db: Database.Database, id: string): { ok: true; event?:
     row.status = 'active';
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
-    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["seed:template"] };
+    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     appendOutbox(db, 'SubscriptionActivated', id, row);
@@ -40,7 +40,7 @@ export function expireTrial(db: Database.Database, id: string): { ok: true; even
     row.status = 'expired';
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
-    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["seed:template"] };
+    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     return undefined;
@@ -58,7 +58,7 @@ export function paymentFailed(db: Database.Database, id: string): { ok: true; ev
     row.status = 'pastDue';
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
-    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["seed:template"] };
+    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     return undefined;
@@ -76,7 +76,7 @@ export function recover(db: Database.Database, id: string): { ok: true; event?: 
     row.status = 'active';
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
-    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["seed:template"] };
+    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     return undefined;
@@ -94,7 +94,7 @@ export function cancel(db: Database.Database, id: string): { ok: true; event?: s
     row.status = 'canceled';
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
-    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["seed:template"] };
+    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     appendOutbox(db, 'SubscriptionCanceled', id, row);
@@ -113,7 +113,7 @@ export function dunningExhausted(db: Database.Database, id: string): { ok: true;
     row.status = 'canceled';
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
-    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["seed:template"] };
+    if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     return undefined;
@@ -131,10 +131,10 @@ export function finalize(db: Database.Database, id: string): { ok: true; event?:
     if (!(row.totalDue === (row.licenseFeeAmount + row.usageAmount))) throw { rejected: 'finalize: requires guard failed', anchors: ["spec:transition finalize"] };
     row.settlement = 'open';
     updateInvoice(db, row);
-    if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["seed:template"] };
-    if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["seed:template"] };
+    if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };
+    if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
     const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
-    if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["seed:template"] };
+    if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     appendOutbox(db, 'InvoiceFinalized', id, row);
     return 'InvoiceFinalized';
   });
@@ -151,10 +151,10 @@ export function settle(db: Database.Database, id: string): { ok: true; event?: s
     if (!(row.amountPaid === row.totalDue)) throw { rejected: 'settle: requires guard failed', anchors: ["spec:transition settle"] };
     row.settlement = 'paid';
     updateInvoice(db, row);
-    if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["seed:template"] };
-    if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["seed:template"] };
+    if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };
+    if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
     const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
-    if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["seed:template"] };
+    if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     appendOutbox(db, 'InvoicePaid', id, row);
     return 'InvoicePaid';
   });
@@ -170,10 +170,10 @@ export function voidDraft(db: Database.Database, id: string): { ok: true; event?
     if (!(['draft'].includes(row.settlement))) throw { rejected: 'voidDraft: illegal from-state', anchors: [] };
     row.settlement = 'void';
     updateInvoice(db, row);
-    if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["seed:template"] };
-    if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["seed:template"] };
+    if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };
+    if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
     const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
-    if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["seed:template"] };
+    if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     return undefined;
   });
   try { const event = tx(); return { ok: true, event }; }
@@ -188,10 +188,10 @@ export function voidOpen(db: Database.Database, id: string): { ok: true; event?:
     if (!(['open'].includes(row.settlement))) throw { rejected: 'voidOpen: illegal from-state', anchors: [] };
     row.settlement = 'void';
     updateInvoice(db, row);
-    if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["seed:template"] };
-    if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["seed:template"] };
+    if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };
+    if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
     const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
-    if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["seed:template"] };
+    if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     return undefined;
   });
   try { const event = tx(); return { ok: true, event }; }
@@ -206,10 +206,10 @@ export function writeOff(db: Database.Database, id: string): { ok: true; event?:
     if (!(['open'].includes(row.settlement))) throw { rejected: 'writeOff: illegal from-state', anchors: [] };
     row.settlement = 'uncollectible';
     updateInvoice(db, row);
-    if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["seed:template"] };
-    if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["seed:template"] };
+    if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };
+    if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
     const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
-    if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["seed:template"] };
+    if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     return undefined;
   });
   try { const event = tx(); return { ok: true, event }; }

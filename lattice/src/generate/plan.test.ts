@@ -30,4 +30,18 @@ describe('buildPlan', () => {
     // at least one adopted invariant carries a judged witness anchor
     expect(allInv.some(i => i.anchors.witnessIds.length > 0)).toBe(true);
   });
+
+  it('resolves provenance for an invariant renamed after ledger adoption, by stable id not name', () => {
+    // positivePeriodNonNegativeUsage was adopted under its pre-rename ledger name
+    // (Positive_Period_NonNegative_Usage) but carries a stable id (r4b-subscription-sanity).
+    // Matching the ledger 'adopted' entry by current name silently fails after a rename;
+    // matching by id must still find the real elicited provenance.
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+    const plan = buildPlan(loadGenInput(join(repoRoot, '.lattice-session-subscriptions')));
+    const allInv = plan.aggregates.flatMap(a => a.invariants);
+    const inv = allInv.find(i => i.name === 'positivePeriodNonNegativeUsage')!;
+    expect(inv).toBeDefined();
+    expect(inv.anchors.provenance.length).toBeGreaterThan(0);
+    expect(inv.anchors.provenance.join(' ')).toContain('elicited');
+  });
 });

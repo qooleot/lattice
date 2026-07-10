@@ -9,9 +9,12 @@ export interface PlanTransition { name: string; region: string; from: string[]; 
 export interface PlanAggregate { name: string; fields: Field[]; regions: Region[]; transitions: PlanTransition[]; invariants: PlanInvariant[]; doc?: string; }
 export interface GenPlan { context: string; aggregates: PlanAggregate[]; events: EventDef[]; }
 
-function invariantAnchors(name: string, ledger: LedgerEntry[]): Anchors {
+function invariantAnchors(name: string, id: string, ledger: LedgerEntry[]): Anchors {
+  // Match the ledger 'adopted' entry by the invariant's stable id, not its (possibly renamed)
+  // name — invariant names can change during elicitation while the id stays fixed, and matching
+  // by name would silently drop real provenance for any renamed invariant.
   const provenance = ledger.filter((e): e is Extract<LedgerEntry, { kind: 'adopted' }> =>
-    e.kind === 'adopted' && e.invariant.name === name).map(e => e.provenance);
+    e.kind === 'adopted' && e.invariant.id === id).map(e => e.provenance);
   // verdict entries do not name the candidate directly; a verdict anchors an invariant when the
   // invariant's aggregate appears in the witness. Conservative attach: witnesses whose entities
   // include this invariant's aggregate. (Refine only if the differential test needs tighter scoping.)
@@ -30,7 +33,7 @@ export function buildPlan(input: GenInput): GenPlan {
       anchors: { specElement: `transition ${t.name}`, provenance: [], witnessIds: [] },
     }));
     const invariants: PlanInvariant[] = byAgg(a.name).map(i => {
-      const anchors = invariantAnchors(i.name, ledger);
+      const anchors = invariantAnchors(i.name, i.id, ledger);
       // attach witnessIds whose witness touches this aggregate
       anchors.witnessIds = verdicts
         .filter(v => v.witness.entities.some(e => e.type === a.name))
