@@ -24,6 +24,8 @@ import type { RenameSpec, RenameScope } from './engine/renames.js';
 import { renameEntries, currentInvariantName } from './engine/renames.js';
 import { compileWorkspace } from './engine/workspace.js';
 import { remapValueKeys } from './engine/witness.js';
+import { loadGenInput } from './generate/load.js';
+import { generateService } from './generate/generate.js';
 
 // Both solver adapters hand back CaseStates with underscore-flattened value-field keys (design
 // §3.5) — remapValueKeys is the single choke point that normalizes them to the dotted-path
@@ -154,6 +156,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         break;
       case 'witness-show': if (!values.witness) return { error: 'missing-arg', arg: 'witness' }; break;
       case 'emit': if (!values.out) return { error: 'missing-arg', arg: 'out' }; break;
+      case 'generate': if (!values.out) return { error: 'missing-arg', arg: 'out' }; break;
       case 'explain': if (!values.name) return { error: 'missing-arg', arg: 'name' }; break;
       case 'structure':
         if (!values.question) return { error: 'missing-arg', arg: 'question' };
@@ -286,6 +289,13 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         mkdirSync(values.out!, { recursive: true });
         const latPath = join(values.out!, 'spec.lat');
         const written = writeProjections(latPath, model(), adopted, ledger);
+        return { written };
+      }
+      case 'generate': {
+        const sessionDir = (values.session as string) ?? dir;
+        const input = loadGenInput(sessionDir);
+        const outDir = values.out!;
+        const written = generateService(input, outDir);
         return { written };
       }
       case 'apply': {
