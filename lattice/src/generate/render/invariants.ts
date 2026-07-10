@@ -19,7 +19,12 @@ function provenanceComment(inv: PlanInvariant): string {
 
 function renderCheck(inv: PlanInvariant): string {
   const compiled = compileInvariantCheck(inv);
-  const param = compiled.kind === 'row' ? 'row' : 'rows';
+  // Params are typed `any`, not the aggregate's own row interface: row-kind checks may receive a
+  // ref-flattened row (see render/commands.ts renderFlattenHelper, which returns `any` — nested ref
+  // fields like `row.latestInvoice.amountPaid` aren't part of the aggregate's own shape), and
+  // table-kind checks iterate `rows` from a raw `db...all()` query result. `any` here matches the
+  // looseness already established at that boundary rather than fighting it.
+  const param = compiled.kind === 'row' ? 'row: any' : 'rows: any[]';
   return (
     `${provenanceComment(inv)}\n` +
     `export function ${checkFnName(inv.name)}(${param}): boolean {\n` +

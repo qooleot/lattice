@@ -7,7 +7,7 @@ describe('renderInvariants', () => {
   it('emits a row-kind check as an exported function over `row`', () => {
     const src = renderInvariants(buildPlan(tinyInput));
     expect(src).toMatch(/\/\/ spec: invariant nonNegativeBalance/);
-    expect(src).toMatch(/export function checkNonNegativeBalance\(row\): boolean \{/);
+    expect(src).toMatch(/export function checkNonNegativeBalance\(row: any\): boolean \{/);
     expect(src).toContain('row.balance >= 0');
   });
 
@@ -31,7 +31,7 @@ describe('renderInvariants', () => {
   it('emits a table-kind (unique) check as an exported function over `rows`', () => {
     const src = renderInvariants(buildPlan(tableInput));
     expect(src).toMatch(/\/\/ spec: invariant onePublishedPerOwner/);
-    expect(src).toMatch(/export function checkOnePublishedPerOwner\(rows\): boolean \{/);
+    expect(src).toMatch(/export function checkOnePublishedPerOwner\(rows: any\[\]\): boolean \{/);
     expect(src).toContain('for (const r of rows)');
   });
 });
