@@ -4,7 +4,7 @@
 
 **Goal:** Give the Quint adapter a real Apalache 1-step induction capability, empirically pin the entailed/independent/violated query protocol, and add the append-only `classified` ledger kind — the foundation every later inference pillar builds on.
 
-**Architecture:** Extend `src/solvers/quint-adapter.ts` with a `runQuintInductive` sibling to `runQuint` that passes `quint verify --inductive-invariant` (Quint 0.26.0, Apalache 0.47.2 auto-managed — confirmed by the design's §2 spike). A dedicated spike task pins the exact CLI behavior (does a consecution counterexample emit an ITF trace?) and the classification protocol before the adapter is finalized. The `classified` ledger entry is an additive union member — generation and the existing engine ignore kinds they don't handle.
+**Architecture:** The Task-1 spike pinned the mechanism: `quint verify --inductive-invariant` is unusable on the emitted machine, so induction is delivered via a havoc `--init` action + ordinary `verify --init <name> --invariant I --max-steps 1` (Quint 0.26.0, Apalache 0.47.2 auto-managed). Task 2 extends `src/solvers/quint-adapter.ts` with a `runQuintVerify` sibling to `runQuint` that passes a custom `--init`/`--invariant`; a consecution CTI writes an ITF, so violation detection reuses `runQuint`'s path. The `classified` ledger entry is an additive union member — generation and the existing engine ignore kinds they don't handle.
 
 **Tech Stack:** TypeScript (strict, ESM, `.js` import specifiers), Vitest, Quint/Apalache via `npx quint verify`.
 
@@ -108,59 +108,59 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ---
 
-## Task 2: Adapter induction mode (`runQuintInductive`)
+## Task 2: Adapter custom-`--init` verify (`runQuintVerify`)
+
+**Spike outcome that shaped this task** ([`2026-07-09-inference-spike-notes.md`](../specs/2026-07-09-inference-spike-notes.md)): `--inductive-invariant` is **unusable** on the emitted machine (its Phase 1 rejects our permissive `init`; its Phase 2 can't bind map/record state). The validated mechanism is a **havoc `--init` action** (emitted in Plan 2/3) plus `quint verify --init <name> --invariant I --max-steps 1`. A consecution CTI **writes an ITF and exits non-zero** — so violation detection reuses `runQuint`'s exact path, no new branch. This task adds only the adapter capability to pass a custom `--init`/`--invariant`; building the havoc `indInit` action is Plan 2/3 emitter work.
 
 **Files:**
-- Modify: `lattice/src/solvers/quint-adapter.ts` (extract shared spawn core; add `runQuintInductive`)
+- Modify: `lattice/src/solvers/quint-adapter.ts` (extract shared spawn core; add `runQuintVerify`)
 - Test: `lattice/test/solvers/quint-adapter.test.ts` (unit, mock `execImpl`)
 - Test: `lattice/test/solvers/quint-adapter.integration.test.ts` (real quint)
 
 **Interfaces:**
-- Consumes: `QuintEmission { source; invariantName; varTypes }` (unchanged), the Task 1 ITF-on-CTI decision.
+- Consumes: `QuintEmission { source; invariantName; varTypes }` (unchanged).
 - Produces:
   ```ts
-  export interface InductiveOpts {
-    inductiveInvariant: string;   // def name; checks init⇒Inv ∧ Inv∧step⇒Inv'
-    ordinaryInvariant?: string;   // optional companion --invariant (the entailed redundancy probe)
-    init?: string;                // optional custom --init (consecution from an arbitrary Inv-state)
-    maxSteps?: number;
+  export interface VerifyOpts {
+    maxSteps: number;
+    init?: string;        // custom --init action name (default: the module's 'init')
+    invariant?: string;   // --invariant def name (default: em.invariantName)
   }
-  export async function runQuintInductive(em: QuintEmission, opts: InductiveOpts, execImpl?: ExecLike): Promise<QuintResult>
+  export async function runQuintVerify(em: QuintEmission, opts: VerifyOpts, execImpl?: ExecLike): Promise<QuintResult>
   ```
-  `QuintResult { violated: boolean; witness?: CaseState; ms: number }` is reused unchanged; for a consecution failure `witness` is the CTI.
+  `QuintResult { violated: boolean; witness?: CaseState; ms: number }` is reused unchanged; for a consecution failure `witness` is the CTI (a two-state ITF trace: pre-state satisfies the hypothesis, post-state violates the invariant). `runQuint(em, maxSteps)` keeps its exact signature and becomes a thin wrapper (the reachability primitive).
 
 - [ ] **Step 1: Write the failing unit tests**
 
 Append to `lattice/test/solvers/quint-adapter.test.ts` (reuses the file's existing `em` and `failWith` helpers):
 
 ```ts
-import { runQuintInductive } from '../../src/solvers/quint-adapter.js';
+import { runQuintVerify } from '../../src/solvers/quint-adapter.js';
 
-describe('runQuintInductive flag construction', () => {
-  it('passes --inductive-invariant and omits --invariant unless asked', async () => {
+describe('runQuintVerify flag construction', () => {
+  it('passes a custom --init and --invariant when given', async () => {
     const exec = vi.fn().mockRejectedValue(failWith('error: parsing failed\nsyntax error'));
-    await expect(runQuintInductive(em, { inductiveInvariant: 'q_inv' }, exec))
+    await expect(runQuintVerify(em, { init: 'indInit', invariant: 'PaidConjunct', maxSteps: 1 }, exec))
       .rejects.toThrow(/quint verify failed without a counterexample/);
     const args = exec.mock.calls[0]![1] as string[];
-    expect(args[args.indexOf('--inductive-invariant') + 1]).toBe('q_inv');
-    expect(args).not.toContain('--invariant');
+    expect(args[args.indexOf('--init') + 1]).toBe('indInit');
+    expect(args[args.indexOf('--invariant') + 1]).toBe('PaidConjunct');
+    expect(args[args.indexOf('--max-steps') + 1]).toBe('1');
   });
 
-  it('adds --invariant and --init when provided', async () => {
+  it('defaults --invariant to em.invariantName and omits --init when not given', async () => {
     const exec = vi.fn().mockRejectedValue(failWith('error: parsing failed'));
-    await expect(runQuintInductive(
-      em, { inductiveInvariant: 'peersAnd', ordinaryInvariant: 'peersImpliesI', init: 'indInit' }, exec,
-    )).rejects.toThrow();
+    await expect(runQuintVerify(em, { maxSteps: 3 }, exec)).rejects.toThrow();
     const args = exec.mock.calls[0]![1] as string[];
-    expect(args[args.indexOf('--invariant') + 1]).toBe('peersImpliesI');
-    expect(args[args.indexOf('--init') + 1]).toBe('indInit');
+    expect(args[args.indexOf('--invariant') + 1]).toBe('q_inv'); // em.invariantName
+    expect(args).not.toContain('--init');
   });
 
   it('retries once on a transient gRPC error, like runQuint', async () => {
     const exec = vi.fn()
       .mockRejectedValueOnce(failWith('Error: 14 UNAVAILABLE: Connection dropped'))
       .mockResolvedValueOnce({ stdout: '[ok] No violation found', stderr: '' });
-    const r = await runQuintInductive(em, { inductiveInvariant: 'q_inv' }, exec);
+    const r = await runQuintVerify(em, { init: 'indInit', maxSteps: 1 }, exec);
     expect(r.violated).toBe(false);
     expect(exec).toHaveBeenCalledTimes(2);
   });
@@ -170,11 +170,11 @@ describe('runQuintInductive flag construction', () => {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `cd lattice && npx vitest run test/solvers/quint-adapter.test.ts`
-Expected: FAIL — `runQuintInductive` is not exported.
+Expected: FAIL — `runQuintVerify` is not exported.
 
-- [ ] **Step 3: Refactor the shared core and add `runQuintInductive`**
+- [ ] **Step 3: Refactor the shared core and add `runQuintVerify`**
 
-In `lattice/src/solvers/quint-adapter.ts`, replace the body of `runQuint` with a shared `verifyWithArgs` helper and add the new function. (Keeps `runQuint`'s external behavior identical — existing tests stay green.)
+In `lattice/src/solvers/quint-adapter.ts`, replace the body of `runQuint` with a shared `verifyWithArgs` helper and add the new function. (Keeps `runQuint`'s external behavior identical — existing tests stay green: `runQuint` still passes `--max-steps`, `--invariant`, `--server-endpoint`, `--out-itf`, and the existing tests locate flags by `indexOf`, so argument order does not matter to them.)
 
 ```ts
 async function verifyWithArgs(em: QuintEmission, extraArgs: string[], execImpl: ExecLike): Promise<QuintResult> {
@@ -208,23 +208,19 @@ export async function runQuint(em: QuintEmission, maxSteps: number, execImpl: Ex
   return verifyWithArgs(em, ['--max-steps', String(maxSteps), '--invariant', em.invariantName], execImpl);
 }
 
-export interface InductiveOpts {
-  inductiveInvariant: string;
-  ordinaryInvariant?: string;
-  init?: string;
-  maxSteps?: number;
+export interface VerifyOpts {
+  maxSteps: number;
+  init?: string;        // custom --init action name (default: the module's 'init')
+  invariant?: string;   // --invariant def name (default: em.invariantName)
 }
 
-export async function runQuintInductive(em: QuintEmission, opts: InductiveOpts, execImpl: ExecLike = exec): Promise<QuintResult> {
-  const args = ['--inductive-invariant', opts.inductiveInvariant];
-  if (opts.ordinaryInvariant) args.push('--invariant', opts.ordinaryInvariant);
+export async function runQuintVerify(em: QuintEmission, opts: VerifyOpts, execImpl: ExecLike = exec): Promise<QuintResult> {
+  const args: string[] = [];
   if (opts.init) args.push('--init', opts.init);
-  if (opts.maxSteps != null) args.push('--max-steps', String(opts.maxSteps));
+  args.push('--max-steps', String(opts.maxSteps), '--invariant', opts.invariant ?? em.invariantName);
   return verifyWithArgs(em, args, execImpl);
 }
 ```
-
-> If Task 1 Step 2 recorded **NO ITF** for consecution counterexamples, add to `verifyWithArgs` (before the final `throw`) a branch that returns `{ violated: true, ms: … }` when `e.stderr`/`e.stdout` matches the induction-counterexample pattern Task 1 observed (e.g. `/Inductive.*violated|does not hold in the next state/`). Record the exact pattern from Task 1; do not invent it.
 
 - [ ] **Step 4: Run the unit tests to verify they pass**
 
@@ -233,37 +229,37 @@ Expected: PASS (new tests + all pre-existing retry/port tests).
 
 - [ ] **Step 5: Write the failing integration test (real quint)**
 
-Append to `lattice/test/solvers/quint-adapter.integration.test.ts`:
+Append to `lattice/test/solvers/quint-adapter.integration.test.ts`. These modules mirror the spike's validated havoc-init consecution harness (the invariant binds `c` over a bounded set, as the spike found necessary; `indInit` havocs `c` over that set = an arbitrary hypothesis-satisfying state):
 
 ```ts
-import { runQuintInductive } from '../../src/solvers/quint-adapter.js';
+import { runQuintVerify } from '../../src/solvers/quint-adapter.js';
 
-describe('runQuintInductive (integration, real quint)', () => {
-  const inductive: QuintEmission = { source:
-    `module m {\n  var c: int\n  action init = { c' = 0 }\n  action step = { c' = c + 1 }\n  val inv = c >= 0\n}`,
+describe('runQuintVerify custom --init (integration, real quint)', () => {
+  const consecutionHolds: QuintEmission = { source:
+    `module m {\n  var c: int\n  action init = { c' = 0 }\n  action indInit = { nondet x = oneOf(0.to(5)) c' = x }\n  action step = { c' = if (c < 5) c + 1 else c }\n  val inv = c.in(0.to(5))\n}`,
     invariantName: 'inv', varTypes: {} };
-  const nonInductive: QuintEmission = { source:
-    `module m {\n  var c: int\n  action init = { c' = 0 }\n  action step = { c' = c - 1 }\n  val inv = c >= 0\n}`,
+  const consecutionFails: QuintEmission = { source:
+    `module m {\n  var c: int\n  action init = { c' = 0 }\n  action indInit = { nondet x = oneOf(0.to(5)) c' = x }\n  action step = { c' = c - 1 }\n  val inv = c.in(0.to(5))\n}`,
     invariantName: 'inv', varTypes: {} };
 
-  it('reports no violation for an inductive invariant', async () => {
-    const r = await runQuintInductive(inductive, { inductiveInvariant: 'inv' });
+  it('holds (no violation) when the step preserves the invariant from any hypothesis state', async () => {
+    const r = await runQuintVerify(consecutionHolds, { init: 'indInit', invariant: 'inv', maxSteps: 1 });
     expect(r.violated).toBe(false);
   }, 180_000);
 
-  it('reports a violation (CTI) for a non-inductive invariant', async () => {
-    const r = await runQuintInductive(nonInductive, { inductiveInvariant: 'inv' });
+  it('reports a CTI when a step breaks the invariant from a hypothesis state', async () => {
+    const r = await runQuintVerify(consecutionFails, { init: 'indInit', invariant: 'inv', maxSteps: 1 });
     expect(r.violated).toBe(true);
   }, 180_000);
 });
 ```
 
-Note: `QuintEmission` is already imported in this file via `astToQuint` usage; if not, add `import type { QuintEmission } from '../../src/emit/quint.js';`.
+Note: `QuintEmission` is already imported in this file (via `astToQuint` usage); if not, add `import type { QuintEmission } from '../../src/emit/quint.js';`.
 
 - [ ] **Step 6: Run the integration test**
 
-Run: `cd lattice && npx vitest run test/solvers/quint-adapter.integration.test.ts -t "runQuintInductive"`
-Expected: PASS. (If the CTI case errors instead of returning `violated:true`, apply the Task 1 Step-3 fallback branch — the integration test is the gate that decides.)
+Run: `cd lattice && npx vitest run test/solvers/quint-adapter.integration.test.ts -t "runQuintVerify"`
+Expected: PASS — `consecutionHolds` → `violated:false`; `consecutionFails` → `violated:true` (two-state CTI). This matches the spike's Step-2/Step-3 evidence.
 
 - [ ] **Step 7: Full check + commit**
 
@@ -273,11 +269,13 @@ Expected: PASS, goldens A–D green.
 ```bash
 cd /Users/taras/projects/spec-core/.claude/worktrees/ecstatic-swirles-d47547
 git add lattice/src/solvers/quint-adapter.ts lattice/test/solvers/quint-adapter.test.ts lattice/test/solvers/quint-adapter.integration.test.ts
-git commit -m "feat(solvers): quint adapter induction mode (runQuintInductive)
+git commit -m "feat(solvers): quint adapter custom --init verify (runQuintVerify)
 
-Shares the spawn/retry/port-isolation core with runQuint; passes
---inductive-invariant (+ optional --invariant/--init) for real Apalache
-1-step induction. Foundation for the entailment classifier (Plan 2).
+Shares the spawn/retry/port-isolation core with runQuint; passes a custom
+--init (+ --invariant/--max-steps) so the classifier's havoc-init
+consecution/entailment probes run as ordinary verify calls. The spike
+showed --inductive-invariant is unusable on the emitted machine; this is
+the validated mechanism. Foundation for the entailment classifier (Plan 2).
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
@@ -294,11 +292,11 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Consumes: `CaseState` (from `evaluate.js`), the existing `appendLedger` / `readLedger`.
 - Produces:
   ```ts
-  // new LedgerEntry member:
+  // new LedgerEntry member (verdict set per design §5 hybrid protocol; reachable? set by escalation):
   { kind: 'classified'; at: string; invariant: string; conjunct?: string;
-    verdict: 'entailed' | 'independent' | 'violated';
+    verdict: 'entailed' | 'independent' | 'not-inductive' | 'violated';
     tier: 'sound' | 'abstract'; caveat?: string;
-    witness?: CaseState; pinnedBy?: string[]; provenance: string }
+    witness?: CaseState; reachable?: boolean; pinnedBy?: string[]; provenance: string }
   // helper:
   export function readClassifications(dir: string): Extract<LedgerEntry, { kind: 'classified' }>[]
   ```
@@ -324,11 +322,20 @@ describe('classified ledger entry', () => {
       verdict: 'entailed', tier: 'sound',
       pinnedBy: ['settle.requires'], provenance: 'induction 2026-07-09',
     });
-    expect(readLedger(dir).length).toBe(2);
+    appendLedger(dir, {
+      kind: 'classified', at: '2026-07-09T00:00:02Z',
+      invariant: 'activePaidInFull', verdict: 'violated', tier: 'sound',
+      reachable: true,
+      witness: { entities: [], trace: [] },
+      provenance: 'escalated 2026-07-09',
+    });
+    expect(readLedger(dir).length).toBe(3);
     const cls = readClassifications(dir);
-    expect(cls.length).toBe(1);
+    expect(cls.length).toBe(2);
     expect(cls[0]!.verdict).toBe('entailed');
     expect(cls[0]!.pinnedBy).toEqual(['settle.requires']);
+    expect(cls[1]!.verdict).toBe('violated');
+    expect(cls[1]!.reachable).toBe(true);
   });
 });
 ```
@@ -345,9 +352,9 @@ In `lattice/src/engine/session.ts`, add the new member to the `LedgerEntry` unio
 ```ts
   | { kind: 'rename'; at: string; scope: import('./renames.js').RenameScope; path: string; from: string; to: string }
   | { kind: 'classified'; at: string; invariant: string; conjunct?: string;
-      verdict: 'entailed' | 'independent' | 'violated';
+      verdict: 'entailed' | 'independent' | 'not-inductive' | 'violated';
       tier: 'sound' | 'abstract'; caveat?: string;
-      witness?: CaseState; pinnedBy?: string[]; provenance: string };
+      witness?: CaseState; reachable?: boolean; pinnedBy?: string[]; provenance: string };
 ```
 
 Add at the end of the file:
@@ -392,4 +399,4 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Placeholder scan:** The one conditional ("NO ITF" fallback in Task 2 Step 3, `classified` in a `switch` in Task 3 Step 5) is gated on a concrete Task-1 observation / tsc output, not a vague "handle edge cases" — the plan says exactly what to write and forbids inventing the pattern. No TBD/TODO.
 
-**Type consistency:** `QuintResult`, `QuintEmission`, `ExecLike`, `CaseState`, `LedgerEntry` are used verbatim as defined in the current source (`quint-adapter.ts`, `emit/quint.ts`, `session.ts`). `runQuintInductive`/`InductiveOpts`/`readClassifications` names match between their "Produces" blocks and their implementations. `runQuint`'s external signature is unchanged, so existing callers (`cli.ts`) and tests are unaffected.
+**Type consistency:** `QuintResult`, `QuintEmission`, `ExecLike`, `CaseState`, `LedgerEntry` are used verbatim as defined in the current source (`quint-adapter.ts`, `emit/quint.ts`, `session.ts`). `runQuintVerify`/`VerifyOpts`/`readClassifications` names match between their "Produces" blocks and their implementations. `runQuint`'s external signature is unchanged, so existing callers (`cli.ts`) and tests are unaffected. The `classified` verdict enum (`entailed`/`independent`/`not-inductive`/`violated`) and `reachable?` field match design §5/§7.1 after the Option-3 decision.

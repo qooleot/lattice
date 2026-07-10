@@ -93,13 +93,23 @@ large slice; it ships as **small sequenced PRs** (§12), but the design is one c
 the pillars share machinery (C's pruning reuses A's induction queries; B's stuck-state reuses the
 reachability shape).
 
-### 3.2 Query encoding = Apalache-induction throughout (brief fork 2) — DECIDED
+### 3.2 Query encoding = 1-step induction via a havoc-init harness (brief fork 2) — DECIDED, mechanism refined by the spike
 
-Entailment (A), consecution (C), and reachability (B) are all encoded as real 1-step induction /
-reachability queries through `quint verify --inductive-invariant` (+ a custom `--init` for
-consecution-from-arbitrary-state, so a CTI need not be reachable-from-init). Rationale: the spike
-made the rigorous option cheap. We do **not** fall back to bounded-from-init reachability as the
-primary mode; bounded checking remains available where a property is not inductive-shaped.
+The human's decision is real 1-step induction (not bounded-from-init reachability). The Task-1 spike
+(2026-07-09, [`2026-07-09-inference-spike-notes.md`](2026-07-09-inference-spike-notes.md)) established
+that the `quint verify --inductive-invariant` **flag is unusable on our emitted machine** (its Phase 1
+rejects the emitter's permissive nondet `init`; its Phase 2 cannot bind the map/record state). The
+working, validated mechanism delivers the *same* semantics by hand:
+
+- Emit a **havoc `--init indInit` action** that assigns *and* havocs every state variable over its
+  domain and asserts the induction hypothesis, then `quint verify --init indInit --invariant I
+  --max-steps 1`. This is genuine consecution-from-an-arbitrary-state — real induction, just encoded
+  through `--init` instead of the flag.
+- **Reachability** (the escalation probe of §5) reuses the *existing* bounded `runQuint` from the real
+  `init`.
+
+So "induction throughout" stands; only the flag changes. See §4.1/§5 for the mechanism and §2.1-adjacent
+spike notes for the raw evidence.
 
 ### 3.3 Frozen-data honesty = abstract-evolution over-approximation (brief fork 4) — DECIDED
 
@@ -140,14 +150,17 @@ work finish rather than interleave.
 
 ## 4. Solver adapter & emitter changes
 
-### 4.1 `src/solvers/quint-adapter.ts` — induction mode
+### 4.1 `src/solvers/quint-adapter.ts` — custom-`--init` verify
 
-Extend `runQuint` (or add a sibling `runQuintInduction`) to pass `--inductive-invariant <Inv>` and,
-for consecution-from-arbitrary-state, a custom `--init` predicate that constrains the start state to
-satisfy `Inv` (rather than the machine's real `init`). The result surface stays
-`{ violated, witness, ms }`; a violated consecution query returns the **CTI** as its witness. Honor
-the existing port-isolation pattern and the known orphan-JVM / load-sensitive-latency quirks
-(golden trace B) — induction queries may be slower; budget for it in tests.
+Generalize the adapter to run `quint verify` with a **custom `--init` action name**, a chosen
+`--invariant`, and `--max-steps` (the spike showed `--inductive-invariant` itself is unusable here —
+§3.2). Concretely: extract a shared spawn/retry/port core, keep `runQuint(em, maxSteps)` (bounded,
+default `init`/invariant) as the reachability primitive, and add `runQuintVerify(em, { init?,
+invariant?, maxSteps })` for the consecution/entailment probes. The result surface is unchanged
+`{ violated, witness, ms }`; the spike confirmed a **consecution CTI writes an ITF and exits non-zero**,
+so violation detection reuses `runQuint`'s exact `exit != 0 && existsSync(itf)` path — no new branch.
+Honor the existing per-call ephemeral-port isolation and the orphan-JVM / load-sensitive-latency
+quirks (golden trace B) — induction probes spawn a JVM each; budget generous timeouts in tests.
 
 ### 4.2 `src/emit/quint.ts` — new query shapes + abstract-evolution steps
 
@@ -165,21 +178,46 @@ work is emitting *candidate* guards and the abstract steps, not re-plumbing exis
 
 ## 5. Pillar A — the entailment classifier
 
-For each adopted invariant `I`, flip it from **assumption** to **goal** and run induction with the
-machine's guards + all *other* adopted invariants as assumptions:
+For each adopted invariant `I`, classify it with a **two-probe induction base + on-demand
+reachability escalation** (fork-1 label decision, hybrid "Option 3", 2026-07-09). Both induction
+probes assume the machine's guards + all *other* adopted invariants (`peers`) — never `I` itself
+(circular). "Inductive" here has its formal meaning: initiation (`init ⇒ I`) **and** consecution
+(from *any* `peers ∧ I` state, one `step` preserves `I`) — strictly stronger than "true on all
+reachable states".
 
-- **entailed** — `I` is inductive and redundant (`¬I` unreachable without asserting `I`). The
-  guards + structure already force it. This is the `settle`-guard case: `paid ⇒ amountPaid == totalDue`
-  holds because the only step into `paid` is `settle`, guarded `amountPaid == totalDue`. Kept as a
-  **regression anchor** — never auto-deleted (slice-4 §11 doctrine).
-- **independent** — `¬I` is reachable without `I`, but `I` is maintained once asserted. Load-bearing;
-  it genuinely narrows the machine. The coupling invariants (`retryCapWhilePastDue`,
-  `activePaidInFull`) are the expected examples — no guard establishes them.
-- **violated** — a CTI exists: a state satisfying `I` (and peers) steps to `¬I` under a
-  guard-permitted transition. This is plan §9.1's "your rule holds here but one step breaks it —
-  forgot a guard?" The CTI is a first-class elicitation witness.
+**Base labels (two probes, always run):**
 
-Output is a per-invariant label with provenance; **never silent deletion**, even for *entailed*.
+- **Probe 1 — consecution:** havoc-`indInit` asserting `peers ∧ I`, `--invariant I --max-steps 1`.
+  - *Fails* (CTI) → **not-inductive** (base). The CTI names the step that breaks `I` — the direct
+    input to Pillar C ("`I` isn't enforced here; strengthen or confirm intended").
+  - *Holds* → continue to Probe 2.
+- **Probe 2 — entailment:** havoc-`indInit` asserting `peers`, `--invariant (peers ⇒ I) --max-steps 0`.
+  - *Holds* (every `peers`-state already satisfies `I`) → **entailed**. `I` is redundant — the guards
+    + peers force it. This is the `settle`-guard case: `paid ⇒ amountPaid == totalDue`. Kept as a
+    **regression anchor** — never auto-deleted (slice-4 §11 doctrine).
+  - *Fails* → **independent**. `I` is self-maintained given peers but not implied by them — genuinely
+    load-bearing.
+
+**On-demand escalation (reachability, run only when triggered):** a `not-inductive` finding can be
+escalated — by the user (`classify --escalate <inv>`) or by Pillar C while deciding whether a CTI is
+worth strengthening against — via a bounded `runQuint` reachability probe from the *real* `init`:
+
+- CTI **reachable** → promote to **violated** (a real reachable counterexample; the reachable witness
+  is attached). Plan §9.1's "forgot a guard?".
+- CTI **unreachable** → stays **not-inductive**, annotated *"holds on all reachable states within the
+  bound; fragile — no guard enforces it."*
+
+This keeps the classify-on-every-apply fast path to two probes (fork 3), and pays for reachability only
+per-finding-on-demand.
+
+> **Correction to an earlier assumption.** The committed coupling invariants (`activePaidInFull`,
+> `retryCapWhilePastDue`) are **not** guard-enforced (`recover`/`activate` reach `active` with no
+> payment/count re-check), so they classify **not-inductive**, and `activePaidInFull` escalates to
+> **violated** (its CTI is reachable). That the machine's own transitions can violate them is a genuine
+> finding this slice surfaces — either a missing guard or intended-pending-guards, resolved by the human.
+
+Output is a per-invariant (per-conjunct, §6.4) label with provenance; **never silent deletion**, even
+for *entailed*.
 
 **Method⊨transition entailment.** A `performs` method's `requires` is checked against its
 transition's guard as a pure entailment query, treating method params as universally quantified
@@ -268,10 +306,11 @@ A new **append-only** ledger kind:
 
 ```
 { kind: 'classified', at, invariant: <name/id>, conjunct?: <index/path>,
-  verdict: 'entailed' | 'independent' | 'violated',
+  verdict: 'entailed' | 'independent' | 'not-inductive' | 'violated',
   tier: 'sound' | 'abstract',           // from the §6.4 gate
-  caveat?: <string>,                     // present for abstract-tier violations
-  witness?: <CaseState>,                 // the CTI, for violated
+  caveat?: <string>,                     // present for abstract-tier findings
+  witness?: <CaseState>,                 // the CTI, for not-inductive/violated
+  reachable?: <boolean>,                 // set by escalation: true ⇒ promoted to violated
   pinnedBy?: [<invariant names>],        // what forced an entailed/auto-adopted verdict
   provenance: <string> }
 ```
@@ -396,10 +435,17 @@ after checkout (`src/parse/generated/` is gitignored). Goldens A–D never weake
 `git add -A`.
 
 1. **Worked classification** on the committed Subscriptions spec: `neverOverpaidAndPaidExact`'s
-   `paid`-conjunct classifies **entailed** (Tier-1/sound); both coupling invariants classify
-   **independent**; the `amountPaid <= totalDue` conjunct classifies via abstract accrual.
+   `paid`-conjunct classifies **entailed** (consecution holds, entailment probe holds); the coupling
+   invariants (`activePaidInFull`, `retryCapWhilePastDue`) classify **not-inductive** at base, and
+   `activePaidInFull` **escalates to violated** (reachable CTI) — asserting the §5 correction; the
+   `amountPaid <= totalDue` conjunct classifies via abstract accrual.
 2. **Seeded violation:** mutate `settle` to `requires amountPaid >= totalDue` → the overpayment
-   invariant classifies **violated** with a concrete witness.
+   invariant classifies **not-inductive**, and **escalates to violated** with a concrete reachable
+   witness.
+2b. **Unreachable-CTI control:** an invariant whose consecution CTI is unreachable (e.g. the
+   `active ⇒ paidInvoiceCount >= 1` shape, blocked by `activate`'s guard on the frozen counter)
+   classifies **not-inductive** and, on escalation, **stays not-inductive** (reachability finds no
+   counterexample) — asserting the hybrid escalation does not over-promote.
 3. **Method⊨transition:** `SubscriptionService.activate` (no `requires`) vs `activate`'s
    `paidInvoiceCount >= 1` guard → the "method weaker than guard" flag renders in `status`/prose.
 4. **Stuck-state probe:** a fixture with an unsatisfiable `finalize` guard → draft is stuck; the
