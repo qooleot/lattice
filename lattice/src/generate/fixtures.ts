@@ -78,3 +78,27 @@ export const tableInput: GenInput = {
       provenance: 'seed:template' } as LedgerEntry,
   ],
 };
+
+// Exercises the outbox event-payload projection: the aggregate carries a field (`secret`) that is
+// not part of the declared event's shape, so a handler that appends the full row instead of the
+// declared event fields would leak it into the outbox payload.
+export const emitsInput: GenInput = {
+  model: {
+    context: 'Widgets', enums: [], values: [], entities: [], services: [],
+    events: [{ name: 'WidgetActivated', fields: [{ name: 'widgetId', type: { kind: 'prim', prim: 'Id' } }] }],
+    aggregates: [{
+      kind: 'aggregate', name: 'Widget',
+      fields: [
+        { name: 'widgetId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'secret', type: { kind: 'prim', prim: 'Text' } },
+      ],
+      machine: {
+        regions: [{ name: 'status', initial: 'inactive', states: [
+          { name: 'inactive', tags: [] }, { name: 'active', tags: [] }] }],
+        transitions: [{ name: 'activate', region: 'status', from: ['inactive'], to: 'active', emits: 'WidgetActivated' }],
+      },
+    }],
+  },
+  adopted: [],
+  ledger: [],
+};

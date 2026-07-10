@@ -99,7 +99,7 @@ function tableInvariantChecks(a: PlanAggregate): RowInvariantCheck[] {
     .map(inv => ({ name: inv.name, anchors: inv.anchors.provenance }));
 }
 
-function transitionHandler(a: PlanAggregate, t: PlanTransition, hasFlatten: boolean): string {
+function transitionHandler(a: PlanAggregate, t: PlanTransition, hasFlatten: boolean, plan: GenPlan): string {
   const fromStates = t.from.map(s => `'${s}'`).join(', ');
   const guardTs = t.requires ? predToTs(t.requires, 'row') : undefined;
   const checks = rowInvariantChecks(a);
@@ -143,7 +143,10 @@ function transitionHandler(a: PlanAggregate, t: PlanTransition, hasFlatten: bool
     );
   }
   if (t.emits) {
-    lines.push(`    appendOutbox(db, '${t.emits}', id, row);`);
+    const eventDef = plan.events.find(e => e.name === t.emits);
+    if (!eventDef) throw new Error(`transition ${t.name} emits unknown event '${t.emits}'`);
+    const payload = eventDef.fields.map(f => `${f.name}: row.${f.name}`).join(', ');
+    lines.push(`    appendOutbox(db, '${t.emits}', id, { ${payload} });`);
     lines.push(`    return '${t.emits}';`);
   } else {
     lines.push(`    return undefined;`);
@@ -158,7 +161,7 @@ function transitionHandler(a: PlanAggregate, t: PlanTransition, hasFlatten: bool
 function aggregateCommands(a: PlanAggregate, plan: GenPlan): { src: string; flattenSrc?: string } {
   const flattenSrc = renderFlattenHelper(a, plan);
   const hasFlatten = flattenSrc !== undefined;
-  const handlers = a.transitions.map(t => transitionHandler(a, t, hasFlatten)).join('\n\n');
+  const handlers = a.transitions.map(t => transitionHandler(a, t, hasFlatten, plan)).join('\n\n');
   return { src: handlers, flattenSrc };
 }
 

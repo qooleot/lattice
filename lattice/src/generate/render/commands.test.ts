@@ -5,7 +5,7 @@ import { renderRepo } from './repo.js';
 import { renderCommands } from './commands.js';
 import { renderTypes } from './types.js';
 import { buildPlan } from '../plan.js';
-import { tinyInput } from '../fixtures.js';
+import { tinyInput, emitsInput } from '../fixtures.js';
 import type { GenInput } from '../types.js';
 import { loadGeneratedModule } from '../../../test-support/loadGenerated.js';
 
@@ -157,5 +157,27 @@ describe('generated command handlers — table-kind (unique) invariant re-check'
     const res = mod.publish(db, 'doc2');
     expect(res.ok).toBe(true);
     expect(getDocStatus(db, 'doc2')).toBe('published');
+  });
+});
+
+describe('generated command handlers — outbox event payload projection', () => {
+  it('appends only the declared event fields to the outbox, not the whole aggregate row', async () => {
+    const plan = buildPlan(emitsInput);
+    const db = new Database(':memory:');
+    db.exec(renderDdl(plan));
+    const mod = await loadGeneratedModule({
+      'types.ts': renderTypes(plan),
+      'invariants.ts': '',
+      'repo.ts': renderRepo(plan),
+      'commands.ts': renderCommands(plan),
+    });
+    mod.insertWidget(db, { widgetId: 'w1', secret: 'do-not-leak', status: 'inactive' });
+
+    const res = mod.activate(db, 'w1');
+    expect(res.ok).toBe(true);
+    expect(res.event).toBe('WidgetActivated');
+
+    const outboxRow = db.prepare('SELECT payload FROM outbox WHERE event_type = ?').get('WidgetActivated') as { payload: string };
+    expect(JSON.parse(outboxRow.payload)).toEqual({ widgetId: 'w1' });
   });
 });
