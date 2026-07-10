@@ -156,3 +156,34 @@ describe('quint adapter flattens nested value-record fields to underscore keys',
     expect(sub.fields).toEqual({ period_start: 3, period_end: 9 });
   });
 });
+
+import { runQuintVerify } from '../../src/solvers/quint-adapter.js';
+
+describe('runQuintVerify flag construction', () => {
+  it('passes a custom --init and --invariant when given', async () => {
+    const exec = vi.fn().mockRejectedValue(failWith('error: parsing failed\nsyntax error'));
+    await expect(runQuintVerify(em, { init: 'indInit', invariant: 'PaidConjunct', maxSteps: 1 }, exec))
+      .rejects.toThrow(/quint verify failed without a counterexample/);
+    const args = exec.mock.calls[0]![1] as string[];
+    expect(args[args.indexOf('--init') + 1]).toBe('indInit');
+    expect(args[args.indexOf('--invariant') + 1]).toBe('PaidConjunct');
+    expect(args[args.indexOf('--max-steps') + 1]).toBe('1');
+  });
+
+  it('defaults --invariant to em.invariantName and omits --init when not given', async () => {
+    const exec = vi.fn().mockRejectedValue(failWith('error: parsing failed'));
+    await expect(runQuintVerify(em, { maxSteps: 3 }, exec)).rejects.toThrow();
+    const args = exec.mock.calls[0]![1] as string[];
+    expect(args[args.indexOf('--invariant') + 1]).toBe('q_inv'); // em.invariantName
+    expect(args).not.toContain('--init');
+  });
+
+  it('retries once on a transient gRPC error, like runQuint', async () => {
+    const exec = vi.fn()
+      .mockRejectedValueOnce(failWith('Error: 14 UNAVAILABLE: Connection dropped'))
+      .mockResolvedValueOnce({ stdout: '[ok] No violation found', stderr: '' });
+    const r = await runQuintVerify(em, { init: 'indInit', maxSteps: 1 }, exec);
+    expect(r.violated).toBe(false);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+});
