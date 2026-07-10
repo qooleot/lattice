@@ -181,4 +181,15 @@ describe('astToQuint', () => {
       body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['grace'] }, right: { kind: 'param', name: 'delta' } } };
     expect(() => astToQuint(traceBModel, { kind: 'probe-forbid', hi: paramLeak, exclusions: [], maxSteps: 8 })).toThrow(/param terms/);
   });
+
+  // Plan 2 Task 2 (refactor guard): buildOwnerInit's extraction must not change astToQuint's
+  // emitted `init` action — every region-state field still gets the fixed `initial` literal
+  // (not a nondet draw), and per-field nondet draws are still emitted for plain fields.
+  it('real init still uses the fixed initial region-state literal (refactor guard)', () => {
+    const em = astToQuint(invoicingModel, { kind: 'probe-forbid', hi: someStatePredicateOnInvoice, exclusions: [], maxSteps: 5 });
+    expect(em.source).toContain('Lifecycle_state: "Draft"'); // fixed initial, not a nondet draw
+    expect(em.source).toContain('Access_state: "Trialing"'); // fixed initial, not a nondet draw
+    expect(em.source).toContain('nondet nd_subscription_grace = oneOf(Set(0, 24, 72, 100))');
+    expect(em.source).toContain('nondet nd_invoice_subscription = oneOf(SUBSCRIPTION_IDS)');
+  });
 });

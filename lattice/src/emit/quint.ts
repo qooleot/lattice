@@ -19,10 +19,10 @@ export interface QuintQuery {
 }
 export interface QuintEmission { source: string; invariantName: string; varTypes: Record<string, string> }
 
-const varName = (n: string) => n.charAt(0).toLowerCase() + n.slice(1) + 's';
+export const varName = (n: string) => n.charAt(0).toLowerCase() + n.slice(1) + 's';
 const isIntPrim = (p: string) => ['Int', 'Money', 'Date', 'Duration'].includes(p);
 const INT_POOL = 'Set(0, 24, 72, 100)';
-const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
+export const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
 
 function fieldQType(m: DomainModel, f: Field): string | null {
   if (f.key) return null;
@@ -161,7 +161,55 @@ function predToQuint(m: DomainModel, p: Predicate, self: string, ownerName: stri
   }
 }
 
-function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
+// Per-owner init-record construction (design §3.5/§6.1), shared by astToQuint (Task 2, this
+// module) and astToQuintClassify (Task 3, sibling emitter — havoc initial state for the
+// solver-induction spike). `stateDraw` controls only the region-state field: 'fixed' reproduces
+// today's astToQuint behavior (the region's declared `initial` literal); 'havoc' instead draws it
+// from a `nondet oneOf(Set(...))` over every declared state name, so the classifier can start
+// Apalache from an arbitrary (not necessarily reachable) region state. Owned-collection init (the
+// `Map(...)` + `Count` draws) never branches on `stateDraw` — a havoc initial state still needs
+// the same per-slot field draws as the fixed path.
+export function buildOwnerInit(
+  m: DomainModel, o: AggregateDef | EntityDef, tag: string, stateDraw: 'fixed' | 'havoc',
+): { inits: string[]; nondets: string[] } {
+  const machine = (o as AggregateDef).machine;
+  const nondets: string[] = [];
+  const inits: string[] = [`exists: ${machine ? 'true' : 'false'}`];   // machine-bearing exist from init; plain entities are created
+  for (const f of o.fields) {
+    const nd = initValue(m, f, nondets, tag);
+    if (nd) inits.push(`${f.name}: ${nd}`);
+  }
+  for (const r of machine?.regions ?? []) {
+    if (stateDraw === 'fixed') {
+      inits.push(`${r.name}_state: "${r.initial}"`);
+    } else {
+      const nd = `nd_${tag}_${r.name}_state`;
+      nondets.push(`nondet ${nd} = oneOf(Set(${r.states.map(s => `"${s.name}"`).join(', ')}))`);
+      inits.push(`${r.name}_state: ${nd}`);
+    }
+  }
+  // Owned collections (design §6.1): per-index nondet draws at init. Action-scope `nondet` can't
+  // be drawn per-element inside a fold, so each of the OWNED_BOUND slots gets its own flat draw
+  // (every bounded map is still reachable — see design deviation note in the commit body).
+  const ownedFields = (o.kind === 'aggregate' ? o.fields.filter(f => ownedCollectionChild(o, f)) : []);
+  for (const f of ownedFields) {
+    const child = ownedCollectionChild(o as AggregateDef, f)!;
+    const entries: string[] = [];
+    for (let i = 0; i < OWNED_BOUND; i++) {
+      const kv: string[] = [];
+      for (const cf of child.fields) {
+        const nd = initValue(m, cf, nondets, `${tag}_${f.name}_${i}`);
+        if (nd) kv.push(`${cf.name}: ${nd}`);
+      }
+      entries.push(`${i} -> { ${kv.join(', ')} }`);
+    }
+    nondets.push(`nondet nd_${tag}_${f.name}Count = oneOf(0.to(${OWNED_BOUND}))`);
+    inits.push(`${f.name}: Map(${entries.join(', ')})`, `${f.name}Count: nd_${tag}_${f.name}Count`);
+  }
+  return { inits, nondets };
+}
+
+export function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
   const v = varName(c.aggregate);
   if (c.kind === 'statePredicate') {
     const guard = c.where ? `${predToQuint(m, c.where, 'x', c.aggregate)} implies ` : '';
@@ -274,29 +322,8 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
     decls.push(`var ${v}: str -> { exists: bool, ${fields.join(', ')} }`);
     pools.push(`val ${o.name.toUpperCase()}_IDS = Set("${o.name.toLowerCase()}1", "${o.name.toLowerCase()}2")`);
 
-    const inits: string[] = [`exists: ${machine ? 'true' : 'false'}`];   // machine-bearing exist from init; plain entities are created
-    for (const f of o.fields) {
-      const nd = initValue(m, f, initNondets, o.name.toLowerCase());
-      if (nd) inits.push(`${f.name}: ${nd}`);
-    }
-    for (const r of machine?.regions ?? []) inits.push(`${r.name}_state: "${r.initial}"`);
-    // Per-index nondet draws at init: action-scope `nondet` can't be drawn per-element inside a
-    // fold, so each of the OWNED_BOUND slots gets its own flat draw (every bounded map is still
-    // reachable — see design deviation note in the commit body).
-    for (const f of ownedFields) {
-      const child = ownedCollectionChild(o as AggregateDef, f)!;
-      const entries: string[] = [];
-      for (let i = 0; i < OWNED_BOUND; i++) {
-        const kv: string[] = [];
-        for (const cf of child.fields) {
-          const nd = initValue(m, cf, initNondets, `${o.name.toLowerCase()}_${f.name}_${i}`);
-          if (nd) kv.push(`${cf.name}: ${nd}`);
-        }
-        entries.push(`${i} -> { ${kv.join(', ')} }`);
-      }
-      initNondets.push(`nondet nd_${o.name.toLowerCase()}_${f.name}Count = oneOf(0.to(${OWNED_BOUND}))`);
-      inits.push(`${f.name}: Map(${entries.join(', ')})`, `${f.name}Count: nd_${o.name.toLowerCase()}_${f.name}Count`);
-    }
+    const { inits, nondets } = buildOwnerInit(m, o, o.name.toLowerCase(), 'fixed');
+    initNondets.push(...nondets);
     initSets.push(`${v}' = ${o.name.toUpperCase()}_IDS.mapBy(id => { ${inits.join(', ')} })`);
 
     // actions: declared transitions; generic region mutator when a region has none; create for non-machine entities; enum mutators
