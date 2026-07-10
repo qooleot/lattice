@@ -14,6 +14,8 @@
 // The demo DB lives at a fresh os.tmpdir() path and is removed in a finally block — this script
 // never writes into the package directory, so running it leaves no trace in `git status`.
 
+// SKIPPED (guard predicate shape not recognized — ineligible for the demo scenario): Invoice.finalize, Invoice.settle
+
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
