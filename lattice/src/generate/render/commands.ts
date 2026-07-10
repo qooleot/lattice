@@ -3,9 +3,10 @@ import type { Field } from '../../ast/domain.js';
 import type { Term } from '../../ast/invariant.js';
 import { predToTs } from '../invariantCheck.js';
 
-// The generated check function name for a row-kind (statePredicate) invariant. The Task 7
-// invariants.ts renderer emits a function under this exact name; commands.ts only calls it.
-function checkFnName(invariantName: string): string {
+// The generated check function name for an invariant (row-kind or table-kind). This is the single
+// shared source of truth: the render/invariants.ts renderer imports this exact function so the
+// names it defines always match the names commands.ts calls — never duplicate this logic.
+export function checkFnName(invariantName: string): string {
   return `check${invariantName[0]!.toUpperCase()}${invariantName.slice(1)}`;
 }
 
