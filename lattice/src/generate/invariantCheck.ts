@@ -3,25 +3,30 @@ import type { PlanInvariant } from './plan.js';
 
 const TS_OPS = { eq: '===', ne: '!==', lt: '<', le: '<=', gt: '>', ge: '>=' } as const;
 
-function term(t: Term): string {
+function term(t: Term, rowVar: string): string {
   switch (t.kind) {
-    case 'field': return `row.${t.path.join('.')}`;   // dotted path resolves refs at compile scope (own-row fields in v1)
+    case 'field': return `${rowVar}.${t.path.join('.')}`;   // dotted path resolves refs at compile scope (own-row fields in v1)
     case 'int': return String(t.value);
     case 'enumval': return `'${t.value}'`;
     case 'now': return 'now';
-    case 'plus': return `(${term(t.left)} + ${term(t.right)})`;
+    case 'plus': return `(${term(t.left, rowVar)} + ${term(t.right, rowVar)})`;
     case 'param': throw new Error('param terms are illegal in invariants');
   }
 }
 
-function pred(p: Predicate): string {
+/**
+ * Renders a Predicate to a TS boolean expression over a caller-chosen row-variable name.
+ * Shared by the invariant-check compiler (rowVar 'row') and the command-handler renderer,
+ * which guards `requires` predicates over the loaded row under the same variable name.
+ */
+export function predToTs(p: Predicate, rowVar: string): string {
   switch (p.kind) {
-    case 'cmp': return `${term(p.left)} ${TS_OPS[p.op]} ${term(p.right)}`;
-    case 'inState': return `[${p.states.map(s => `'${s}'`).join(', ')}].includes(row.${p.region})`;
-    case 'and': return p.args.map(a => `(${pred(a)})`).join(' && ');
-    case 'or': return p.args.map(a => `(${pred(a)})`).join(' || ');
-    case 'not': return `!(${pred(p.arg)})`;
-    case 'implies': return `(!(${pred(p.left)}) || (${pred(p.right)}))`;
+    case 'cmp': return `${term(p.left, rowVar)} ${TS_OPS[p.op]} ${term(p.right, rowVar)}`;
+    case 'inState': return `[${p.states.map(s => `'${s}'`).join(', ')}].includes(${rowVar}.${p.region})`;
+    case 'and': return p.args.map(a => `(${predToTs(a, rowVar)})`).join(' && ');
+    case 'or': return p.args.map(a => `(${predToTs(a, rowVar)})`).join(' || ');
+    case 'not': return `!(${predToTs(p.arg, rowVar)})`;
+    case 'implies': return `(!(${predToTs(p.left, rowVar)}) || (${predToTs(p.right, rowVar)}))`;
   }
 }
 
@@ -31,8 +36,8 @@ export function compileInvariantCheck(inv: PlanInvariant): CompiledCheck {
   const c: Candidate = inv.candidate;
   switch (c.kind) {
     case 'statePredicate': {
-      const body = pred(c.body);
-      const bodyTs = c.where ? `!(${pred(c.where)}) || (${body})` : body;
+      const body = predToTs(c.body, 'row');
+      const bodyTs = c.where ? `!(${predToTs(c.where, 'row')}) || (${body})` : body;
       return { name: inv.name, kind: 'row', bodyTs };
     }
     case 'unique': {
