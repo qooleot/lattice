@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Give `@balance`/`@monotonic` data fields a sound over-approximate evolution step (monotone-up while non-terminal) in the *classifier's* emission only, add a per-conjunct structural gate that assigns tier `sound` (enum/region-only) vs `abstract` (data-touching), move honesty caveats onto abstract-tier `violated` findings, and retire the pre-Plan-3 provisional caveat.
+**Goal:** Give **non-`const` numeric** data fields a sound over-approximate evolution step (monotone-up while non-terminal) in the *classifier's* emission only, add a per-conjunct structural gate that assigns tier `sound` (enum/region-only) vs `abstract` (data-touching), move honesty caveats onto abstract-tier `violated` findings, and retire the pre-Plan-3 provisional caveat.
 
 **Architecture:** A flag `QuintQuery.abstractEvolution` gates new `evolve_<owner>_<field>` monotone-up actions inside `astToQuint`; only `astToQuintClassify` sets it, so goldens/elicitation/method-guard emit byte-identically. A new `conjunctsOf`/`fieldsIn` structural gate (pure AST walkers) drives per-conjunct tier assignment in the classifier; abstract-tier holds are trustworthy (over-approximation errs toward false alarms), so caveats move to abstract-tier `violated`.
 
@@ -28,15 +28,15 @@
 - Per-invariant classify call sites: `classifyAdopted` (`cli.ts:112-123`), `classifyOnApply` (`cli.ts:165-179`) — one whole `Candidate` per invariant today; per-conjunct threading + `conjunct` index goes here.
 - Committed tags: `Invoice.amountPaid @balance`; `licenseFeeAmount/usageAmount/totalDue @total`; `accruedUnits/retryCount/paidInvoiceCount/maxRetries/seats` **untagged** (`specs/subscriptions/spec.lat`).
 
-## ⚠️ DESIGN FORK — resolved here, needs human sign-off at plan review (refines design §6.4)
+## Evolution scope — RESOLVED (default-evolving minus `const`; human-locked 2026-07-11)
 
-Design §6.4 said annotation-less counters default to **evolving**. But committed evolving-counters (`accruedUnits`, `retryCount`) and config fields (`maxRetries`, `seats`) are indistinguishable (all untagged `Int`), and defaulting to evolving would let `maxRetries` drift and spuriously violate `retryCapWhilePastDue { latestInvoice.retryCount <= maxRetries }`. **Resolution taken in this plan: evolution is OPT-IN by annotation** —
+The §6.4 config-vs-counter ambiguity (evolving `accruedUnits`/`retryCount` and config `maxRetries`/`seats` were both untagged `Int`) is resolved by the **`const` field modifier** landed in **Plan 3a** (grammar-growth ceremony, merged just before this plan). The rule:
 
-- `@balance` → **monotone-up** (arbitrary non-negative increase while non-terminal).
-- `@monotonic` → **monotone-up** (same; the tag already exists).
-- `@total` and **untagged** → **frozen** (current behavior; `@total`'s "set-once until finalized" needs effects we don't model, so frozen is the honest floor).
+- **Every non-`const` numeric field → monotone-up** (arbitrary non-negative increase while the owner is non-terminal). Uniform — no per-tag shapes. This is design §6.4's **default-evolving**, made safe by `const`.
+- **`const` fields → frozen** (config the author marked immutable: `Subscription.plan`, `Subscription.maxRetries`, `Invoice.subscription` were migrated to `const` in Plan 3a — so `retryCapWhilePastDue`'s `maxRetries` cannot drift).
+- `@balance`/`@total`/`@monotonic` tags no longer gate evolution — any non-`const` numeric field evolves. (`@total`'s "set-once" nuance is subsumed by the coarser-but-sound monotone-up over-approximation; precise set-once would need effects, out of scope.)
 
-This is more conservative than §6.4 (default-frozen, not default-evolving) — it never fabricates evolution the author didn't annotate, avoids config-field false alarms, and still delivers the headline `amountPaid`-accrual flip. **If the human prefers §6.4's default-evolving (or a `@static` opt-out instead), only Task 1's field-selection predicate changes.** Confirm at review; update design §6.4 to match whichever is chosen.
+Consequence to expect (honest, design §6.3 safe direction): `retryCount` (non-const) evolves unbounded, so `retryCapWhilePastDue` (`retryCount <= maxRetries`, `maxRetries` now const/frozen) will classify **`violated` (abstract-tier, caveated)** — because nothing in the *modeled* machine caps `retryCount` (the dunning cap is unmodeled effect logic). That's a real "relies on unmodeled effects" signal, not a bug.
 
 ---
 
@@ -47,7 +47,7 @@ This is more conservative than §6.4 (default-frozen, not default-evolving) — 
 - Test: `lattice/test/emit/quint.test.ts`, `lattice/test/emit/quint-classify.integration.test.ts`
 
 **Interfaces:**
-- Produces: `QuintQuery.abstractEvolution?: boolean`. When set, `astToQuint` emits, for each owner field tagged `balance` or `monotonic` with a numeric type (`isIntPrim`), an action `evolve_<Owner>_<field>` that non-deterministically increases the field by a non-negative delta **only while the owner is non-terminal**, added to `step`. Unset (default) → no such actions (byte-identical to today).
+- Produces: `QuintQuery.abstractEvolution?: boolean`. When set, `astToQuint` emits, for each **non-`const`** numeric field (`isIntPrim`, `!f.const`), an action `evolve_<Owner>_<field>` that non-deterministically increases the field by a non-negative delta **only while the owner is non-terminal**, added to `step`. Unset (default) → no such actions (byte-identical to today).
 
 - [ ] **Step 1: Golden-safety + shape unit tests (write first)**
 
@@ -58,13 +58,13 @@ it('emits NO evolve_ actions without the abstractEvolution flag (golden-safety)'
   const em = astToQuint(subscriptionsModel, { kind: 'probe-permit', hi: paidImpliesExactConjunct, exclusions: [], maxSteps: 5 });
   expect(em.source).not.toContain('action evolve_');
 });
-it('emits a monotone-up evolve action for @balance fields only when flagged', () => {
+it('emits monotone-up evolve actions for non-const numeric fields only when flagged', () => {
   const em = astToQuint(subscriptionsModel, { kind: 'probe-permit', hi: paidImpliesExactConjunct, exclusions: [], maxSteps: 5, abstractEvolution: true });
-  expect(em.source).toContain('action evolve_Invoice_amountPaid');        // @balance -> monotone-up
-  expect(em.source).toMatch(/amountPaid.*\+ /);                            // increase, not set
-  expect(em.source).not.toContain('action evolve_Invoice_totalDue');      // @total -> frozen (no action)
-  expect(em.source).not.toContain('action evolve_Subscription_maxRetries'); // untagged -> frozen
-  expect(em.source).toContain('evolve_Invoice_amountPaid');               // wired into `step = any {...}`
+  expect(em.source).toContain('action evolve_Invoice_amountPaid');          // non-const numeric -> monotone-up
+  expect(em.source).toMatch(/amountPaid.*\+ /);                             // increase, not set
+  expect(em.source).toContain('action evolve_Invoice_totalDue');           // non-const numeric -> evolves too (default-evolving)
+  expect(em.source).not.toContain('action evolve_Subscription_maxRetries'); // const (Plan 3a) -> frozen
+  expect(em.source).toContain('evolve_Invoice_amountPaid');                // wired into `step = any {...}`
 });
 ```
 
@@ -80,20 +80,19 @@ if (q.abstractEvolution) {
     r.states.filter(s => s.tags?.includes('terminal'))
       .map(s => `${v}.get(id).${r.name}_state != "${s.name}"`));
   const nonTerminal = termConj.length ? `(${termConj.join(' and ')})` : 'true';
-  for (const f of o.fields.filter(f => f.type.kind === 'prim' && isIntPrim((f.type as any).prim)
-        && (f.tags?.includes('balance') || f.tags?.includes('monotonic')))) {
+  for (const f of o.fields.filter(f => f.type.kind === 'prim' && isIntPrim((f.type as any).prim) && !f.const)) {
     actions.push(`action evolve_${o.name}_${f.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) nondet dv = oneOf(${INT_POOL}) all { ${nonTerminal}, ${v}' = ${v}.set(id, ${v}.get(id).with("${f.name}", ${v}.get(id).${f.name} + dv)), ${frame([v]).join(', ')} } }`);
   }
 }
 ```
 
-(`isIntPrim` and `INT_POOL` are already exported from `quint.ts` — Plan 2 Task 5 exported them. `StateDef.tags` carries `'terminal'`.) In `src/emit/quint-classify.ts:34`, add `abstractEvolution: true` to the `base` query.
+(`isIntPrim` and `INT_POOL` are already exported from `quint.ts` — Plan 2 Task 5 exported them. `StateDef.tags` carries `'terminal'`; `Field.const` carries the immutability flag from Plan 3a. Every non-`const` numeric field evolves — default-evolving.) In `src/emit/quint-classify.ts:34`, add `abstractEvolution: true` to the `base` query.
 
 - [ ] **Step 4: Run unit — PASS.**
 
 - [ ] **Step 5: Real-quint integration — the accrual flip.** Add to `lattice/test/emit/quint-classify.integration.test.ts`: emit the `amountPaid <= totalDue` conjunct (add fixture `amountPaidAtMostTotalConjunct` = `statePredicate` Invoice `amountPaid <= totalDue`) through `astToQuintClassify` consecution and confirm via real `runQuintVerify` that with abstract accrual it is **violable** (`violated:true`) — accrual drives `amountPaid` past `totalDue` — whereas the same invariant under the *unflagged* frozen machine holds. (This is design §6.3's worked flip; it's what makes abstract-evolution meaningful.)
 
-- [ ] **Step 6: Full check + commit.** `cd lattice && npx tsc --noEmit && npx vitest run` (heed the load note: a lone golden-trace-b latency failure is environmental). Commit `lattice/src/emit/quint.ts`, `lattice/src/emit/quint-classify.ts`, the two test files, `test/fixtures.ts` (new conjunct fixture); message `feat(emit): abstract-evolution monotone-up steps for @balance/@monotonic (classifier-only, flag-gated)`.
+- [ ] **Step 6: Full check + commit.** `cd lattice && npx tsc --noEmit && npx vitest run` (heed the load note: a lone golden-trace-b latency failure is environmental). Commit `lattice/src/emit/quint.ts`, `lattice/src/emit/quint-classify.ts`, the two test files, `test/fixtures.ts` (new conjunct fixture); message `feat(emit): abstract-evolution monotone-up steps for non-const numeric fields (classifier-only, flag-gated)`.
 
 ---
 
@@ -147,7 +146,7 @@ if (q.abstractEvolution) {
 
 - [ ] **Step 5: Real-quint worked classification** (`classify.integration.test.ts`): on `subscriptionsModel`, classify `neverOverpaidAndPaidExact` (whole invariant, via the per-conjunct path) → its `paid ⇒ exact` conjunct classifies **entailed** (`sound`/guard-forced, no caveat) and its `amountPaid <= totalDue` conjunct classifies **violated** with **tier `abstract`** + the over-approximation caveat (accrual drives overpayment). This is the §6.3 headline, end-to-end, real quint.
 
-- [ ] **Step 6: Update design §6.4** to the opt-in-by-annotation resolution (per the fork sign-off) and note the provisional pre-Plan-3 caveat (§10) is now retired/superseded by the structural gate. **Step 7: tsc + full suite + commit** (`classify.ts`, `cli.ts`, both test files, design doc); message `feat(engine): per-conjunct tier gate + abstract-evolution caveats; retire provisional caveat`.
+- [ ] **Step 6: Update design §6.4** to the resolved rule — **default-evolving: every non-`const` numeric field is monotone-up; `const` (Plan 3a) fields frozen** (drop §6.4's "annotation-less counters default evolving with @balance/@total shapes" language in favor of the uniform non-const rule) — and note the provisional pre-Plan-3 caveat (§10) is now retired/superseded by the structural gate. **Step 7: tsc + full suite + commit** (`classify.ts`, `cli.ts`, both test files, design doc); message `feat(engine): per-conjunct tier gate + abstract-evolution caveats; retire provisional caveat`.
 
 ---
 
@@ -157,7 +156,7 @@ Run an integrated review over Plan 3's diff (base = pre-Task-1, head = last Task
 
 ## Self-Review
 
-**Spec coverage:** Task 1 = §6.2 abstract steps (opt-in `@balance`/`@monotonic` monotone-up; `@total`/untagged frozen — the §6.4 fork resolution); Task 2 = §6.4 structural gate (per-conjunct); Task 3 = §6.3 caveat direction (abstract-violated) + retires the provisional caveat + per-conjunct ledger tagging.
+**Spec coverage:** Task 1 = §6.2 abstract steps (default-evolving: non-`const` numeric → monotone-up; `const` frozen — the resolved §6.4 rule, built on Plan 3a's `const`); Task 2 = §6.4 structural gate (per-conjunct); Task 3 = §6.3 caveat direction (abstract-violated) + retires the provisional caveat + per-conjunct ledger tagging.
 
 **Placeholder scan:** Task 1 carries the full evolve-action code; Tasks 2–3 carry interfaces + recursion templates + concrete seams (the salient.ts mirrors, the classify.ts branch edits) — grounded in the landed code, no "TBD"/"handle edges". The one open decision (the §6.4 fork) is explicitly flagged for human sign-off, not silently assumed.
 
