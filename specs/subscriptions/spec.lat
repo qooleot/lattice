@@ -20,13 +20,13 @@ context Subscriptions {
   /// A customer's subscription to a Plan; usage accrues per billing period and resets at rollover
   aggregate Subscription {
     subId            : Id key
-    plan             : ref Catalog.Plan
+    plan             : ref Catalog.Plan const
     seats            : Int
     periodStart      : Date
     periodEnd        : Date
     accruedUnits     : Int
     paidInvoiceCount : Int
-    maxRetries       : Int
+    maxRetries       : Int const
     latestInvoice    : ref Invoice
 
     lifecycle status {
@@ -52,7 +52,7 @@ context Subscriptions {
   /// Period invoice: license-fee portion plus usage portion; partial payments accrue
   aggregate Invoice {
     invoiceId        : Id key
-    subscription     : ref Subscription
+    subscription     : ref Subscription const
     licenseFeeAmount : Money @total
     usageAmount      : Money @total
     totalDue         : Money @total

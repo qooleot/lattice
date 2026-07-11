@@ -27,7 +27,7 @@ context Billing {
 }
 ```
 
-A field is `<camelId> : <type> [key] [@<tag>]*`. `<type>` is one of:
+A field is `<camelId> : <type> [key] [const] [@<tag>]*`. `<type>` is one of:
 
 - **Primitives:** `Int`, `Text`, `Date`, `Duration`, `Money`, `Id`.
 - **An enum name** — any [enum](enum.md) declared in the same context.
@@ -42,8 +42,33 @@ A bare identifier resolves in this order: primitive → declared value → decla
 (`ref`) → enum (the fallback, `unresolved-enum` if it matches nothing declared).
 
 `key` (unquoted, after the type) marks the field as the owner's identity field — see
-[entity](entity.md)/[aggregate](aggregate.md) for the `missing-key` rule. `@`-tags follow; see
-[tags](tags.md).
+[entity](entity.md)/[aggregate](aggregate.md) for the `missing-key` rule. `const` (unquoted, after
+`key` if both are present) follows next; `@`-tags follow that — see [tags](tags.md).
+
+## `const` fields
+
+`const` (unquoted, after an optional `key` and before any `@`-tags) marks a field as immutable
+after the owning entity/aggregate is created — the field may be set at creation but is never
+reassigned afterward:
+
+```lat
+context Billing {
+  aggregate Subscription {
+    subId      : Id key
+    plan       : ref Catalog.Plan const
+    maxRetries : Int const
+    seats      : Int
+  }
+}
+```
+
+- Any field type may carry `const` — primitives, enums, values, `ref`, and `List<T>` alike.
+- It has no bearing on validation or invariants; `diff.ts` and the derived-invariant machinery
+  treat `const` as a modifier only, the same way they treat `key`.
+- Generation (`engine generate`) renders a `const` field as a `readonly` property on the
+  corresponding TypeScript interface in the generated package's `types.ts`.
+- Abstract-evolution analysis (Plan 3) treats `const` fields as frozen: they are excluded from the
+  monotone-evolution defaults applied to plain mutable numeric fields.
 
 ## Cross-context refs are structural only
 

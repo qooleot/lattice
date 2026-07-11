@@ -3,13 +3,13 @@
 // spec: aggregate Subscription
 export interface Subscription {
   subId: string;
-  plan: string;
+  readonly plan: string;
   seats: number;
   periodStart: number;
   periodEnd: number;
   accruedUnits: number;
   paidInvoiceCount: number;
-  maxRetries: number;
+  readonly maxRetries: number;
   latestInvoice: string;
   status: 'trialing' | 'active' | 'pastDue' | 'canceled' | 'expired';
 }
@@ -17,7 +17,7 @@ export interface Subscription {
 // spec: aggregate Invoice
 export interface Invoice {
   invoiceId: string;
-  subscription: string;
+  readonly subscription: string;
   licenseFeeAmount: number;
   usageAmount: number;
   totalDue: number;
