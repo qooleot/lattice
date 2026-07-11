@@ -172,8 +172,8 @@ async function classifyOnApply(
   if (!targets.length) return [];
   const results = await classifyAdopted(m, adopted, targets, deps);
   const entries = results.map(result => ({ kind: 'classified' as const, at: now(), invariant: result.invariant,
-    verdict: result.verdict, tier: result.tier, witness: result.witness, reachable: result.reachable,
-    pinnedBy: result.pinnedBy, provenance: `apply ${isoDay(now())}` }));
+    verdict: result.verdict, tier: result.tier, caveat: result.caveat, witness: result.witness,
+    reachable: result.reachable, pinnedBy: result.pinnedBy, provenance: `apply ${isoDay(now())}` }));
   for (const e of entries) appendLedger(dir, e);
   return entries;
 }
@@ -512,8 +512,8 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         const results = await classifyAdopted(model(), adoptedTracked.map(c => c.inv), targets.map(c => c.inv), deps, reachSteps);
         for (const result of results)
           appendLedger(dir, { kind: 'classified', at: now(), invariant: result.invariant, verdict: result.verdict,
-            tier: result.tier, witness: result.witness, reachable: result.reachable, pinnedBy: result.pinnedBy,
-            provenance: `classify ${isoDay(now())}` });
+            tier: result.tier, caveat: result.caveat, witness: result.witness, reachable: result.reachable,
+            pinnedBy: result.pinnedBy, provenance: `classify ${isoDay(now())}` });
         // Method⊨transition entailment (design §5): flag every performs-method's requires vs its
         // guard. Surfaced here in `classify` (a solver command) as a `methodGuards` section.
         const methodGuards = await checkAllMethodGuards(model(), deps);

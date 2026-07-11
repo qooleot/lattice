@@ -418,6 +418,13 @@ ceremony. Flagged, not silently assumed.
 
 ## 10. Honest ceiling (what this slice does NOT claim)
 
+- **Pre-Plan-3 data-field soundness is provisional.** Abstract-evolution modeling (§6, real accrual
+  semantics for data fields) is deferred to Plan 3 and is not in the code yet. Until then, an
+  unguarded data-field invariant classifying `entailed`/`independent` with `tier:'sound'` has that
+  soundness resting only on the bounded `INT_POOL` sampling used in emission, not on any accrual
+  argument — the classifier cannot cheaply distinguish a guard-forced verdict (genuinely sound) from
+  a pool-bounded one, so `classifyInvariant` attaches a blanket `caveat` to every `entailed`/
+  `independent` verdict (never to `violated`, the safe false-alarm direction) until Plan 3 lands.
 - **Equal-records slice.** The classifier's havoc-init (`astToQuintClassify`, `mapBy`) binds every
   instance of an aggregate to an *identical* drawn record, so the consecution probe checks induction
   over the "all-instances-of-an-aggregate-equal" slice of the state space, not the full state space.
