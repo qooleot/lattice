@@ -178,43 +178,61 @@ work is emitting *candidate* guards and the abstract steps, not re-plumbing exis
 
 ## 5. Pillar A — the entailment classifier
 
-For each adopted invariant `I`, classify it with a **two-probe induction base + on-demand
-reachability escalation** (fork-1 label decision, hybrid "Option 3", 2026-07-09). Both induction
-probes assume the machine's guards + all *other* adopted invariants (`peers`) — never `I` itself
-(circular). "Inductive" here has its formal meaning: initiation (`init ⇒ I`) **and** consecution
-(from *any* `peers ∧ I` state, one `step` preserves `I`) — strictly stronger than "true on all
-reachable states".
+For each adopted invariant `I`, classify it with **two probes: consecution + reachability-from-real-init**
+(fork-1 label decision "Option 3" as corrected 2026-07-10 by the Plan-2b Task-1 finding — see the
+correction note below). Both probes assume the machine's guards + all *other* adopted invariants
+(`peers`) — never `I` itself (circular).
 
-**Base labels (two probes, always run):**
+**Why reachability, not a 0-step entailment probe (the correction).** A first attempt used a second
+havoc probe at `--max-steps 0` to check "is `I` implied by `peers`?". That is **structurally blind to
+guards**: the havoc `indInit` draws region states *arbitrarily* (e.g. straight into `settlement=paid`)
+and takes **no `step`**, but transition guards only fire *inside* `step`. So a 0-step havoc probe can
+fabricate a `paid` invoice with `amountPaid≠totalDue` that no guard-respecting run reaches, and
+mislabels the guard-forced `paid`-conjunct as `independent`. "Forced by the guards" instead means
+**`¬I` is unreachable from the *real* `init`** — and the real `init` sets region states to their
+`@initial` literal (`draft`), so `paid` is reachable *only* via the guarded `settle`. Reachability from
+the real `init` is therefore the correct discriminator.
 
-- **Probe 1 — consecution:** havoc-`indInit` asserting `peers ∧ I`, `--invariant I --max-steps 1`.
-  - *Fails* (CTI) → **not-inductive** (base). The CTI names the step that breaks `I` — the direct
-    input to Pillar C ("`I` isn't enforced here; strengthen or confirm intended").
-  - *Holds* → continue to Probe 2.
-- **Probe 2 — entailment:** havoc-`indInit` asserting `peers`, `--invariant (peers ⇒ I) --max-steps 0`.
-  - *Holds* (every `peers`-state already satisfies `I`) → **entailed**. `I` is redundant — the guards
-    + peers force it. This is the `settle`-guard case: `paid ⇒ amountPaid == totalDue`. Kept as a
-    **regression anchor** — never auto-deleted (slice-4 §11 doctrine).
-  - *Fails* → **independent**. `I` is self-maintained given peers but not implied by them — genuinely
-    load-bearing.
+**The two probes (both run at classify time — same 2-call cost as the earlier base):**
 
-**On-demand escalation (reachability, run only when triggered):** a `not-inductive` finding can be
-escalated — by the user (`classify --escalate <inv>`) or by Pillar C while deciding whether a CTI is
-worth strengthening against — via a bounded `runQuint` reachability probe from the *real* `init`:
+- **Probe 1 — consecution (inductive?):** havoc-`indInit` asserting `peers ∧ I`, `--init indInit
+  --invariant q_I --max-steps 1`. *Holds* ⇒ `I` is 1-step inductive; *fails* ⇒ not inductive (the CTI
+  names the step that breaks it — Pillar C's input).
+- **Probe 2 — reachability (`¬I` reachable from real init?):** `--init init --invariant q_peersImpliesI
+  --max-steps N` (bounded). A violation ⇒ a peer-consistent state violating `I` is reachable.
 
-- CTI **reachable** → promote to **violated** (a real reachable counterexample; the reachable witness
-  is attached). Plan §9.1's "forgot a guard?".
-- CTI **unreachable** → stays **not-inductive**, annotated *"holds on all reachable states within the
-  bound; fragile — no guard enforces it."*
+**Labels (from the two probe results):**
 
-This keeps the classify-on-every-apply fast path to two probes (fork 3), and pays for reachability only
-per-finding-on-demand.
+- **`¬I` reachable** → **violated** (the machine's own transitions reach a state breaking `I` — a real
+  gap; the reachable witness is attached). Plan §9.1's "forgot a guard?".
+- **`¬I` unreachable (to bound `N`) *and* inductive** → **entailed** — the guards force `I`; it is a
+  redundant **regression anchor**, never auto-deleted (slice-4 §11). This is the `settle`-guard case:
+  `paid ⇒ amountPaid == totalDue`.
+- **`¬I` unreachable (to bound `N`) *and* not inductive** → **independent** — holds on every reachable
+  state within `N` but is not 1-step inductive: load-bearing/fragile, no guard enforces it (the CTI is
+  unreachable within the bound). Carries the consecution CTI for context.
 
-> **Correction to an earlier assumption.** The committed coupling invariants (`activePaidInFull`,
-> `retryCapWhilePastDue`) are **not** guard-enforced (`recover`/`activate` reach `active` with no
-> payment/count re-check), so they classify **not-inductive**, and `activePaidInFull` escalates to
-> **violated** (its CTI is reachable). That the machine's own transitions can violate them is a genuine
-> finding this slice surfaces — either a missing guard or intended-pending-guards, resolved by the human.
+The reachability bound `N` makes *violated*/*entailed* sound up to depth `N`; consecution supplies the
+unbounded inductive argument for *entailed*. `not-inductive` is no longer a standalone verdict — it
+folds into *independent* (holds-reachably-but-not-inductive); the `classified` ledger enum retains the
+string for forward-compatibility but the classifier emits *entailed*/*independent*/*violated*.
+
+> **Correction to an earlier assumption.** The committed coupling invariants are **not** guard-enforced.
+> `activePaidInFull` classifies **violated** — `recover`/`activate` reach `active` with an unpaid
+> `latestInvoice`, a reachable counterexample. That the machine's own transitions can violate an adopted
+> invariant is a genuine finding this slice surfaces — a missing guard or intended-pending-guards,
+> resolved by the human.
+
+Output is a per-invariant (per-conjunct, §6.4) label with provenance; **never silent deletion**, even
+for *entailed*.
+
+**Method⊨transition entailment.** A `performs` method's `requires` is checked against its
+transition's guard as a pure entailment query, treating method params as universally quantified
+(`∀ delta: methodReq(delta, state) ⇒ transitionGuard(state)` — linear, decidable, slice-4 §5.2.1
+own-scalar discipline extended with params). A method weaker than its guard advertises calls that
+will always be rejected (flag); stronger silently narrows the API (flag). On the committed spec,
+`SubscriptionService.activate` has no `requires` while `activate` requires `paidInvoiceCount >= 1`
+→ the "method weaker than guard" flag is the worked example.
 
 Output is a per-invariant (per-conjunct, §6.4) label with provenance; **never silent deletion**, even
 for *entailed*.
@@ -400,6 +418,14 @@ ceremony. Flagged, not silently assumed.
 
 ## 10. Honest ceiling (what this slice does NOT claim)
 
+- **Equal-records slice.** The classifier's havoc-init (`astToQuintClassify`, `mapBy`) binds every
+  instance of an aggregate to an *identical* drawn record, so the consecution probe checks induction
+  over the "all-instances-of-an-aggregate-equal" slice of the state space, not the full state space.
+  `entailed`/`independent`/`violated` are sound **over that slice**; a per-verdict note records this.
+- **Reachability is bounded to depth `N`.** *violated* (a reachable `¬I`) and *entailed* (`¬I`
+  unreachable) are sound only up to the reachability bound `N`; a deeper counterexample could exist
+  beyond `N`. Consecution (inductive) supplies the unbounded argument for *entailed*; a labelled
+  *entailed* means "inductive **and** no shallow (≤N) reachable violation."
 - **Induction is 1-step and bounded by the emitted model.** It proves inductiveness relative to the
   machine-as-modeled, not full temporal correctness.
 - **Abstract accrual over-approximates.** A "violated" verdict on an abstract-tier conjunct may be a
@@ -435,17 +461,16 @@ after checkout (`src/parse/generated/` is gitignored). Goldens A–D never weake
 `git add -A`.
 
 1. **Worked classification** on the committed Subscriptions spec: `neverOverpaidAndPaidExact`'s
-   `paid`-conjunct classifies **entailed** (consecution holds, entailment probe holds); the coupling
-   invariants (`activePaidInFull`, `retryCapWhilePastDue`) classify **not-inductive** at base, and
-   `activePaidInFull` **escalates to violated** (reachable CTI) — asserting the §5 correction; the
+   `paid`-conjunct classifies **entailed** (consecution holds; `¬I` unreachable from real `init`
+   because `settle` gates `paid`); the coupling invariant `activePaidInFull` classifies **violated**
+   (`¬I` reachable — `recover`/`activate` reach `active` unpaid) — asserting the §5 correction; the
    `amountPaid <= totalDue` conjunct classifies via abstract accrual.
 2. **Seeded violation:** mutate `settle` to `requires amountPaid >= totalDue` → the overpayment
-   invariant classifies **not-inductive**, and **escalates to violated** with a concrete reachable
-   witness.
-2b. **Unreachable-CTI control:** an invariant whose consecution CTI is unreachable (e.g. the
-   `active ⇒ paidInvoiceCount >= 1` shape, blocked by `activate`'s guard on the frozen counter)
-   classifies **not-inductive** and, on escalation, **stays not-inductive** (reachability finds no
-   counterexample) — asserting the hybrid escalation does not over-promote.
+   invariant classifies **violated** with a concrete reachable witness.
+2b. **Independent (unreachable-CTI) control:** an invariant that is not 1-step inductive but whose
+   `¬I` is unreachable from real `init` (e.g. the `active ⇒ paidInvoiceCount >= 1` shape, blocked by
+   `activate`'s guard on the frozen counter) classifies **independent** — consecution fails, but
+   reachability finds no counterexample within the bound.
 3. **Method⊨transition:** `SubscriptionService.activate` (no `requires`) vs `activate`'s
    `paidInvoiceCount >= 1` guard → the "method weaker than guard" flag renders in `status`/prose.
 4. **Stuck-state probe:** a fixture with an unsatisfiable `finalize` guard → draft is stuck; the

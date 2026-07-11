@@ -27,7 +27,7 @@
 
 ## FIDELITY CAVEAT (honest ceiling — Task 1 folds it into design §10 + labels)
 
-`astToQuintClassify`'s `indInit` uses `IDS.mapBy(id => {…})`, binding **every instance of an aggregate to an identical drawn record**. So the induction probes explore only the "all-instances-of-an-aggregate-equal" slice of the state space, not the full reachable set. Verdicts (`entailed`/`independent`/`not-inductive`) are **sound over that slice**. Every emitted label and the design must say so; do not claim full-reachable-set soundness.
+`astToQuintClassify`'s `indInit` uses `IDS.mapBy(id => {…})`, binding **every instance of an aggregate to an identical drawn record**. So the consecution probe checks induction over the "all-instances-of-an-aggregate-equal" slice of the state space, not the full state space. Verdicts (`entailed`/`independent`/`violated`) are **sound over that slice**, and reachability is bounded to depth `N` (design §10). Every emitted label and the design must say so; do not claim full-state-space or unbounded soundness.
 
 ---
 
@@ -51,23 +51,20 @@
   // classify.ts:
   export interface Classification {
     invariant: string; conjunct?: string;
-    verdict: 'entailed' | 'independent' | 'not-inductive' | 'violated';
+    verdict: 'entailed' | 'independent' | 'not-inductive' | 'violated';  // emitted: entailed/independent/violated
     tier: 'sound';               // 'abstract' arrives in Plan 3
-    witness?: CaseState;         // CTI, for not-inductive
-    reachable?: boolean;         // set by escalate() (Task 2)
+    witness?: CaseState;         // reachable ¬I (violated) or consecution CTI (independent)
+    reachable?: boolean;         // true on 'violated'
     pinnedBy?: string[];         // peer names, when entailed (guard-level attribution is future work)
   }
   export async function classifyInvariant(
-    m: DomainModel, inv: CandidateInvariant, peers: Candidate[], peerNames: string[], deps: SolverDeps,
+    m: DomainModel, inv: CandidateInvariant, peers: Candidate[], peerNames: string[], deps: SolverDeps, reachSteps?: number,
   ): Promise<Classification>;
   ```
 
-- [ ] **Step 1: Fold the fidelity caveat into design §10**
+- [ ] **Step 1: (design §5/§10/§12 already reflect the corrected 2-probe protocol)**
 
-In `docs/superpowers/specs/2026-07-09-lattice-inference-slice-design.md` §10 (Honest ceiling), add a bullet:
-> - **Equal-records slice.** The classifier's havoc-init (`astToQuintClassify`, `mapBy`) binds every instance of an aggregate to an identical drawn record, so induction is checked over the "all-instances-equal" slice of the state space, not the full reachable set. `entailed`/`independent`/`not-inductive` are sound **over that slice**; a per-verdict note records this.
-
-Commit is folded into this task's final commit.
+The controller landed the corrected protocol (consecution + reachability-from-real-init; the equal-records and reachability-bound caveats) in the design doc before this task. **No design edit is needed here** — read design §5 to confirm the protocol you implement matches, and proceed.
 
 - [ ] **Step 2: Write failing unit tests (fake deps, branch logic)**
 
@@ -82,7 +79,7 @@ import type { CandidateInvariant } from '../../src/ast/invariant.js';
 
 const inv: CandidateInvariant = { id: 'i1', name: 'testInv', prior: 1, source: 'template', candidate: paidImpliesExactConjunct };
 
-// Fake deps whose quintVerify returns queued results in call order (consecution first, then entailment).
+// Fake deps whose quintVerify returns queued results in CALL ORDER: probe 1 = consecution, probe 2 = reachability.
 function fakeDeps(results: { violated: boolean; witness?: any }[]): SolverDeps {
   let i = 0;
   return {
@@ -92,21 +89,27 @@ function fakeDeps(results: { violated: boolean; witness?: any }[]): SolverDeps {
   };
 }
 
-describe('classifyInvariant branch logic', () => {
-  it('consecution fails -> not-inductive with the CTI witness', async () => {
+describe('classifyInvariant branch logic (consecution + reachability)', () => {
+  it('reachability finds ¬I -> violated with the reachable witness (regardless of consecution)', async () => {
     const w = { entities: [{ type: 'Invoice', id: 'invoice1', fields: {} }], trace: [] };
-    const c = await classifyInvariant(subscriptionsModel, inv, [], [], fakeDeps([{ violated: true, witness: w }]));
-    expect(c.verdict).toBe('not-inductive');
+    // [consecution=holds, reachability=violated]
+    const c = await classifyInvariant(subscriptionsModel, inv, [], [], fakeDeps([{ violated: false }, { violated: true, witness: w }]));
+    expect(c.verdict).toBe('violated');
+    expect(c.reachable).toBe(true);
     expect(c.witness).toBe(w);
   });
-  it('consecution holds + entailment holds -> entailed (pinnedBy peers)', async () => {
+  it('¬I unreachable + inductive (consecution holds) -> entailed (pinnedBy peers)', async () => {
+    // [consecution=holds, reachability=clean]
     const c = await classifyInvariant(subscriptionsModel, inv, [], ['peerA'], fakeDeps([{ violated: false }, { violated: false }]));
     expect(c.verdict).toBe('entailed');
     expect(c.pinnedBy).toEqual(['peerA']);
   });
-  it('consecution holds + entailment fails -> independent', async () => {
-    const c = await classifyInvariant(subscriptionsModel, inv, [], [], fakeDeps([{ violated: false }, { violated: true }]));
+  it('¬I unreachable + not inductive (consecution fails) -> independent (carries the consecution CTI)', async () => {
+    const cti = { entities: [{ type: 'Subscription', id: 'subscription1', fields: {} }], trace: [] };
+    // [consecution=violated (CTI), reachability=clean]
+    const c = await classifyInvariant(subscriptionsModel, inv, [], [], fakeDeps([{ violated: true, witness: cti }, { violated: false }]));
     expect(c.verdict).toBe('independent');
+    expect(c.witness).toBe(cti);
   });
 });
 ```
@@ -130,27 +133,31 @@ import { astToQuintClassify } from '../emit/quint-classify.js';
 
 export interface Classification {
   invariant: string; conjunct?: string;
-  verdict: 'entailed' | 'independent' | 'not-inductive' | 'violated';
+  verdict: 'entailed' | 'independent' | 'not-inductive' | 'violated';  // classifier emits entailed/independent/violated; 'not-inductive' kept in the union for fwd-compat
   tier: 'sound';
   witness?: CaseState;
-  reachable?: boolean;
-  pinnedBy?: string[];
+  reachable?: boolean;   // true on 'violated' (reachable ¬I)
+  pinnedBy?: string[];   // peer names, when entailed (guard-level attribution is future work)
 }
 
-// Design §5 two-probe base label. Sound over the equal-records slice (see plan §fidelity caveat).
+// Design §5 corrected 2-probe: consecution (inductive?) + reachability-from-real-init (¬I reachable?).
+// Sound over the equal-records slice, to reachability bound N (see plan §fidelity caveat / design §10).
 export async function classifyInvariant(
   m: DomainModel, inv: CandidateInvariant, peers: Candidate[], peerNames: string[], deps: SolverDeps,
+  reachSteps = 6,
 ): Promise<Classification> {
-  // Probe 1 — consecution: from any (peers ∧ I) state, does one step preserve I?
+  // Probe 1 — consecution (havoc indInit asserts peers ∧ I; one step): is I 1-step inductive?
   const cEm = astToQuintClassify(m, { invariant: inv.candidate, peers, probe: 'consecution', maxSteps: 1 });
   const consec = await deps.quintVerify(cEm, { init: 'indInit', invariant: cEm.invariantName, maxSteps: 1 });
-  if (consec.violated) return { invariant: inv.name, verdict: 'not-inductive', tier: 'sound', witness: consec.witness };
-  // Probe 2 — entailment: does every (peers) state already satisfy I?  (peers ⇒ I at 0 steps)
-  const eEm = astToQuintClassify(m, { invariant: inv.candidate, peers, probe: 'entailment', maxSteps: 0 });
-  const entail = await deps.quintVerify(eEm, { init: 'indInit', invariant: eEm.invariantName, maxSteps: 0 });
-  return entail.violated
-    ? { invariant: inv.name, verdict: 'independent', tier: 'sound' }
-    : { invariant: inv.name, verdict: 'entailed', tier: 'sound', pinnedBy: peerNames };
+  const inductive = !consec.violated;
+  // Probe 2 — reachability from the REAL init (region states = @initial, so guards gate the path):
+  // is a peer-consistent ¬I reachable within reachSteps? q_peersImpliesI from `init`.
+  const rEm = astToQuintClassify(m, { invariant: inv.candidate, peers, probe: 'entailment', maxSteps: reachSteps });
+  const reach = await deps.quintVerify(rEm, { init: 'init', invariant: 'q_peersImpliesI', maxSteps: reachSteps });
+  if (reach.violated) return { invariant: inv.name, verdict: 'violated', tier: 'sound', witness: reach.witness, reachable: true };
+  return inductive
+    ? { invariant: inv.name, verdict: 'entailed', tier: 'sound', pinnedBy: peerNames }
+    : { invariant: inv.name, verdict: 'independent', tier: 'sound', witness: consec.witness };
 }
 ```
 
@@ -163,13 +170,19 @@ Add to `lattice/test/emit/quint-classify.test.ts` a test that emits with a **mul
 - [ ] **Step 8: Integration — worked classification (real quint)**
 
 `lattice/test/engine/classify.integration.test.ts`: with `realDeps`' `quintVerify` (real quint), on `subscriptionsModel`:
-- `paidImpliesExactConjunct` (peers `[]`) → `entailed` (consecution holds, entailment holds — the settle guard forces it).
-- `activePaidInFull` (a coupling invariant, add fixture) → `not-inductive` (design §5 correction).
+- `paidImpliesExactConjunct` (peers `[]`) → **`entailed`**: consecution holds, and `¬(paid ⇒ exact)` is unreachable from the real `init` because `paid` is reachable only via the guarded `settle`.
+- `activePaidInFull` (a coupling invariant, add fixture) → **`violated`**: `¬I` is reachable — `recover`/`activate` reach `active` with an unpaid `latestInvoice` (design §5 correction). Assert `c.reachable === true` and a witness.
 
 ```ts
 it('paid-conjunct classifies entailed on the committed model', async () => {
   const c = await classifyInvariant(subscriptionsModel, paidInvFixture, [], [], realDeps);
   expect(c.verdict).toBe('entailed');
+}, 240_000);
+
+it('activePaidInFull classifies violated (reachable ¬I) on the committed model', async () => {
+  const c = await classifyInvariant(subscriptionsModel, activePaidInFullFixture, [], [], realDeps);
+  expect(c.verdict).toBe('violated');
+  expect(c.reachable).toBe(true);
 }, 240_000);
 ```
 
@@ -179,61 +192,40 @@ Run: `cd lattice && npx tsc --noEmit && npx vitest run`
 Expected: PASS; goldens green.
 
 ```bash
-git add lattice/src/engine/classify.ts lattice/src/engine/planner.ts lattice/src/cli.ts lattice/src/emit/quint-classify.ts lattice/test/engine/classify.test.ts lattice/test/engine/classify.integration.test.ts lattice/test/emit/quint-classify.test.ts lattice/test/fixtures.ts docs/superpowers/specs/2026-07-09-lattice-inference-slice-design.md
-git commit -m "feat(engine): entailment classifier (two-probe base label)
+# NOTE: the design doc was already corrected by the controller and committed separately — do NOT
+# re-stage it here unless `git status` shows it dirty from your own work.
+git add lattice/src/engine/classify.ts lattice/src/engine/planner.ts lattice/src/cli.ts lattice/src/emit/quint-classify.ts lattice/test/engine/classify.test.ts lattice/test/engine/classify.integration.test.ts lattice/test/emit/quint-classify.test.ts lattice/test/fixtures.ts
+git commit -m "feat(engine): entailment classifier (consecution + reachability)
 
-classifyInvariant runs consecution then entailment via a new
-SolverDeps.quintVerify; entailed/independent/not-inductive per design §5.
-Hardens the multi-owner hypothesis substitution; folds the equal-records
-fidelity caveat into design §10.
+classifyInvariant runs the corrected 2-probe (design §5): consecution
+(inductive?) via havoc indInit + reachability-from-real-init (¬I reachable?)
+via q_peersImpliesI from init, through a new SolverDeps.quintVerify. Labels
+entailed/independent/violated. Hardens the multi-owner hypothesis
+substitution.
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 2: On-demand reachability escalation (not-inductive → violated)
+## Task 2: MERGED into Task 1 (corrected protocol)
 
-**Files:** Modify `lattice/src/engine/classify.ts`; Test `classify.test.ts` + `classify.integration.test.ts`.
+The corrected 2-probe (design §5, decided 2026-07-10) makes **reachability a primary probe run every
+classify** — so the standalone on-demand `escalate` this task originally specified is **subsumed by
+`classifyInvariant`** (its Probe 2 *is* the reachability check, and it already returns `violated` with
+`reachable:true`). There is no separate escalation step and no `escalate` export.
 
-**Interfaces:**
-- Produces:
-  ```ts
-  // Reachability from the REAL init. Reuses the classify emission (which contains both `init` and
-  // q_peersImpliesI): a violation of (peers ⇒ I) within maxSteps of the real init = a reachable
-  // peer-consistent counterexample. reachable ⇒ 'violated' + reachable witness; else stays 'not-inductive'.
-  export async function escalate(
-    m: DomainModel, inv: CandidateInvariant, peers: Candidate[], deps: SolverDeps, maxSteps: number,
-  ): Promise<Classification>;
-  ```
+Task-2 coverage moved into Task 1's integration tests: the **seeded-overpayment → violated** case and
+the **unreachable-CTI → independent** control both live in `classify.integration.test.ts` (Task 1
+Step 8). Add both fixtures to `test/fixtures.ts` in Task 1:
+- Seeded overpayment: `subscriptionsModel` with `settle` mutated to `requires amountPaid >= totalDue`,
+  invariant `neverOverpaid` → `classifyInvariant(...)` → `violated`, `reachable:true`, witness present.
+- Unreachable-CTI control: an `active ⇒ paidInvoiceCount >= 1`-shaped invariant (CTI blocked by
+  `activate`'s guard on the frozen counter) → `classifyInvariant(...)` → `independent` (consecution
+  fails, reachability clean).
 
-- [ ] **Step 1: Failing unit tests (fake deps)** — reachable (`violated:true`) → `{ verdict:'violated', reachable:true, witness }`; unreachable (`violated:false`) → `{ verdict:'not-inductive' }`.
-
-- [ ] **Step 2: Run — FAIL.**
-
-- [ ] **Step 3: Implement `escalate`**
-
-```ts
-export async function escalate(
-  m: DomainModel, inv: CandidateInvariant, peers: Candidate[], deps: SolverDeps, maxSteps: number,
-): Promise<Classification> {
-  const em = astToQuintClassify(m, { invariant: inv.candidate, peers, probe: 'entailment', maxSteps });
-  // Real init (permissive draw), bounded run; q_peersImpliesI violated ⇒ reachable peer-consistent ¬I.
-  const r = await deps.quintVerify(em, { init: 'init', invariant: 'q_peersImpliesI', maxSteps });
-  return r.violated
-    ? { invariant: inv.name, verdict: 'violated', tier: 'sound', witness: r.witness, reachable: true }
-    : { invariant: inv.name, verdict: 'not-inductive', tier: 'sound' };
-}
-```
-
-- [ ] **Step 4: Run unit — PASS.**
-
-- [ ] **Step 5: Integration (real quint)** — two fixtures in `test/fixtures.ts`:
-  - Seeded overpayment: `subscriptionsModel` with `settle` guard mutated to `amountPaid >= totalDue`, invariant `neverOverpaid` → `escalate(...)` → `violated`, `reachable:true`, with a witness.
-  - Unreachable-CTI control: an `active ⇒ paidInvoiceCount >= 1`-shaped invariant whose CTI is blocked by `activate`'s guard on the frozen counter → `escalate(...)` stays `not-inductive`.
-  Assert each with real `realDeps`, generous timeout.
-
-- [ ] **Step 6: Full check + commit** (`classify.ts`, both test files, `test/fixtures.ts`).
+*(If a future need arises for a deeper-bound on-demand re-check, add it then — it is not part of this
+plan.)*
 
 ---
 
@@ -242,7 +234,7 @@ export async function escalate(
 **Files:** Modify `lattice/src/cli.ts`; Test `lattice/test/cli-classify.test.ts` (new), `lattice/test/cli-explain.test.ts`.
 
 **Interfaces:**
-- `classify --session DIR [--name INV] [--escalate INV] [--max-steps N]`: classifies all adopted invariants (or the one `--name`); `--escalate INV` runs Task 2 on a prior `not-inductive`. Appends a `classified` ledger entry per result; returns `{ classified: Classification[] }`.
+- `classify --session DIR [--name INV] [--max-steps N]`: classifies all adopted invariants (or the one `--name`); each runs the full 2-probe (`--max-steps` sets the reachability bound, default 6). Appends a `classified` ledger entry per result; returns `{ classified: Classification[] }`.
 - `status`: add `classifications: { entailed, independent, notInductive, violated }` — counts of the **latest** `classified` entry per `(invariant, conjunct)` from `readClassifications(dir)`.
 - `explain <name>`: merge `{ verdict, tier, caveat, witness, pinnedBy, reachable }` from the latest matching `classified` entry into the returned object.
 
@@ -250,7 +242,7 @@ export async function escalate(
 
 - [ ] **Step 2: Run — FAIL.**
 
-- [ ] **Step 3: Implement.** Add `classify` to both switches in `runCommand` (validation block ~cli.ts:149-168; body after ~cli.ts:189). Build peers via `expressibleAdopted('quint', adoptedConstraints(s))` minus the target; call `classifyInvariant`/`escalate`; `appendLedger(dir, { kind:'classified', at:<iso>, invariant, conjunct, verdict, tier, witness, reachable, pinnedBy, provenance:'classify <date>' })` per result. Extend `status` (~cli.ts:277-281) with the counts (latest-per-key reduce over `readClassifications(dir)`). Extend `explain` (~cli.ts:379-405) to merge the latest matching `classified`. Thread `deps` (first classify-from-CLI use of `deps.quintVerify`). Use a fixed timestamp source consistent with the rest of cli.ts (it already stamps `at` via `new Date().toISOString()` — mirror that).
+- [ ] **Step 3: Implement.** Add `classify` to both switches in `runCommand` (validation block ~cli.ts:149-168; body after ~cli.ts:189). Build peers via `expressibleAdopted('quint', adoptedConstraints(s))` minus the target; call `classifyInvariant` (passing `--max-steps` as `reachSteps` when given); `appendLedger(dir, { kind:'classified', at:<iso>, invariant, conjunct, verdict, tier, witness, reachable, pinnedBy, provenance:'classify <date>' })` per result. Extend `status` (~cli.ts:277-281) with the counts (latest-per-key reduce over `readClassifications(dir)`). Extend `explain` (~cli.ts:379-405) to merge the latest matching `classified`. Thread `deps` (first classify-from-CLI use of `deps.quintVerify`). Use a fixed timestamp source consistent with the rest of cli.ts (it already stamps `at` via `new Date().toISOString()` — mirror that).
 
 - [ ] **Step 4: Run — PASS. Step 5: Full check + commit** (`cli.ts`, both test files).
 
@@ -329,4 +321,4 @@ Run the deferred integrated review over Plan 2 + 2b together — base = the comm
 
 **Placeholder scan:** Tasks 1–2 carry full verbatim code (grounded in the landed `astToQuintClassify`/`SolverDeps`); Tasks 3–5 carry interfaces + concrete seams (cli.ts line anchors, the param-renderer recipe, the pool-selection reference) + step-by-step TDD outlines rather than every line, because CLI wiring is mechanical against known anchors and the method-guard harness is best finalized against Task 1's landed `quintVerify`. No "TBD"/"handle errors"; every task ends in a named test + commit.
 
-**Type consistency:** `Classification`, `SolverDeps.quintVerify`, `classifyInvariant`, `escalate`, `checkMethodGuard`, `predToQuintParam` names are consistent across producers/consumers. `Classification.verdict` and the `classified` ledger enum both carry `entailed|independent|not-inductive|violated` + `reachable?`. Escalation reuses `astToQuintClassify`'s existing `q_peersImpliesI` val from the real `init` — no new emission. `quintVerify` signature matches `runQuintVerify`.
+**Type consistency:** `Classification`, `SolverDeps.quintVerify`, `classifyInvariant`, `checkMethodGuard`, `predToQuintParam` names are consistent across producers/consumers. `Classification.verdict` and the `classified` ledger enum both carry `entailed|independent|not-inductive|violated` + `reachable?` (the classifier emits entailed/independent/violated; `not-inductive` retained in the union for fwd-compat). The reachability probe reuses `astToQuintClassify`'s `q_peersImpliesI` val from the real `init` — no new emission, no separate `escalate`. `quintVerify` signature matches `runQuintVerify`.
