@@ -10,6 +10,7 @@ import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
 import { nextQuestion, checkDistinct, adoptedConstraints, expressibleAdopted, type SolverDeps } from './engine/planner.js';
 import { classifyInvariant, type Classification } from './engine/classify.js';
+import { conjunctsOf } from './engine/tier.js';
 import { checkMethodGuard } from './engine/method-guard.js';
 import { renderWitnessTable } from './engine/salient.js';
 import { astToAlloy } from './emit/alloy.js';
@@ -117,7 +118,12 @@ async function classifyAdopted(
     const peerInvs = allAdopted.filter(a => a.id !== inv.id);
     const peers = expressibleAdopted('quint', peerInvs.map(p => p.candidate));
     const peerNames = peerInvs.filter(p => peers.includes(p.candidate)).map(p => p.name);
-    results.push(await classifyInvariant(m, inv, peers, peerNames, deps, reachSteps));
+    // Per-conjunct gate (Plan 3 Task 3): split a top-level `and` body into one Candidate per
+    // conjunct and classify each separately, so the tier + caveat land per conjunct. A single-
+    // conjunct invariant yields exactly one result with `conjunct` undefined (shape unchanged).
+    for (const conj of conjunctsOf(inv.candidate)) {
+      results.push(await classifyInvariant(m, inv, conj, peers, peerNames, deps, reachSteps));
+    }
   }
   return results;
 }
@@ -172,7 +178,7 @@ async function classifyOnApply(
   if (!targets.length) return [];
   const results = await classifyAdopted(m, adopted, targets, deps);
   const entries = results.map(result => ({ kind: 'classified' as const, at: now(), invariant: result.invariant,
-    verdict: result.verdict, tier: result.tier, caveat: result.caveat, witness: result.witness,
+    conjunct: result.conjunct, verdict: result.verdict, tier: result.tier, caveat: result.caveat, witness: result.witness,
     reachable: result.reachable, pinnedBy: result.pinnedBy, provenance: `apply ${isoDay(now())}` }));
   for (const e of entries) appendLedger(dir, e);
   return entries;
@@ -511,9 +517,9 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
 
         const results = await classifyAdopted(model(), adoptedTracked.map(c => c.inv), targets.map(c => c.inv), deps, reachSteps);
         for (const result of results)
-          appendLedger(dir, { kind: 'classified', at: now(), invariant: result.invariant, verdict: result.verdict,
-            tier: result.tier, caveat: result.caveat, witness: result.witness, reachable: result.reachable,
-            pinnedBy: result.pinnedBy, provenance: `classify ${isoDay(now())}` });
+          appendLedger(dir, { kind: 'classified', at: now(), invariant: result.invariant, conjunct: result.conjunct,
+            verdict: result.verdict, tier: result.tier, caveat: result.caveat, witness: result.witness,
+            reachable: result.reachable, pinnedBy: result.pinnedBy, provenance: `classify ${isoDay(now())}` });
         // Method⊨transition entailment (design §5): flag every performs-method's requires vs its
         // guard. Surfaced here in `classify` (a solver command) as a `methodGuards` section.
         const methodGuards = await checkAllMethodGuards(model(), deps);
@@ -551,14 +557,22 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
             : c.kind === 'refsResolve' ? `implied by ref fields on ${c.aggregate}`
             : `implied by Money field on ${c.aggregate}`;
         }
-        // Latest matching `classified` entry (by resolved current name) merges in — the ledger is
-        // append-only and chronological, so the last match is the latest.
+        // Matching `classified` entries (by resolved current name) merge in. The ledger is
+        // append-only and chronological, so keep the latest per conjunct (a per-conjunct classify,
+        // Plan 3 Task 3, emits one entry per conjunct — later entries supersede earlier ones).
         const classifications = readClassifications(dir).filter(e => e.invariant === current);
-        const latestClassification = classifications[classifications.length - 1];
-        if (latestClassification) out.classification = { verdict: latestClassification.verdict,
-          tier: latestClassification.tier, caveat: latestClassification.caveat,
-          witness: latestClassification.witness, pinnedBy: latestClassification.pinnedBy,
-          reachable: latestClassification.reachable };
+        const latestByConjunct = new Map<string, typeof classifications[number]>();
+        for (const e of classifications) latestByConjunct.set(e.conjunct ?? '', e);
+        const latestClass = [...latestByConjunct.values()];
+        const classView = (e: typeof classifications[number]) => ({ verdict: e.verdict, tier: e.tier,
+          caveat: e.caveat, witness: e.witness, pinnedBy: e.pinnedBy, reachable: e.reachable });
+        if (latestClass.length === 1 && latestClass[0]!.conjunct === undefined) {
+          // Single-conjunct invariant: keep the flat `classification` object (shape unchanged).
+          out.classification = classView(latestClass[0]!);
+        } else if (latestClass.length) {
+          // Multi-conjunct: one classification per conjunct, tagged with its index.
+          out.classifications = latestClass.map(e => ({ conjunct: e.conjunct, ...classView(e) }));
+        }
         return out;
       }
       default: return { error: 'unknown-command', cmd };

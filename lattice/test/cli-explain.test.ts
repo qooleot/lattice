@@ -74,6 +74,8 @@ describe('engine explain', () => {
 
     const r: any = await runCommand(['explain', '--session', dir, '--name', 'h1'], inertDeps);
     expect(r.classification.verdict).toBe('entailed');
-    expect(r.classification.tier).toBe('sound');
+    // Plan 3 Task 3 wired the structural tier gate: a `unique ... by [customer]` references a data
+    // field, so conjunctTier now classifies it `abstract` (was a hardcoded `sound` pre-gate).
+    expect(r.classification.tier).toBe('abstract');
   });
 });

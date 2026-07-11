@@ -301,16 +301,22 @@ Re-run of the examples under abstract accrual:
 A static walk over the candidate AST (the `{"kind":"field","path":[...]}` nodes) classifies each
 referenced fact:
 
-- **region/`inState` predicate** → enum fact → **Tier 1** (fully sound under induction; no caveat).
-- **data field** → look at its declared role: `@balance`/`@total` → high-confidence evolving →
-  abstract step + violation-caveat; annotation-less counters (`accruedUnits`, `retryCount`,
-  `paidInvoiceCount`) → treated as evolving (**conservative default**); config-like (`maxRetries`,
-  `seats`), keys, refs → static-ish.
+- **region/`inState` predicate** → enum fact → **`sound` tier** (fully sound under induction; no caveat).
+- **any data-field reference** → **`abstract` tier**. The evolution model is **default-evolving**:
+  every non-`const` numeric field takes an abstract monotone-up step (may increase by an arbitrary
+  non-negative amount while the aggregate is non-terminal), and `const` fields (Plan 3a) stay
+  **frozen** — the uniform non-`const` rule, replacing the earlier `@balance`/`@total`-shape +
+  annotation-less-counter role heuristic. Any conjunct that touches a data field therefore rests on
+  this over-approximation, so its **`violated`** verdict carries the over-approximation caveat, while
+  its `entailed`/`independent` verdicts are trustworthy (a hold survives arbitrary accrual) and carry
+  no caveat.
 
-**Classification is per-conjunct, not per-invariant.** `neverOverpaidAndPaidExact` splits across
-tiers: conjunct `paid ⇒ amountPaid == totalDue` is pinned to `settle`'s guard (Tier-1-like /
-sound), while `amountPaid <= totalDue` is the abstract-accrual one. The classifier reports at
-conjunct granularity.
+**Classification is per-conjunct, not per-invariant.** `neverOverpaidAndPaidExact` splits into two
+conjuncts that share the `abstract` tier (both reference data fields) but land on opposite verdicts:
+`paid ⇒ amountPaid == totalDue` is pinned to `settle`'s guard → **entailed** (a hold under arbitrary
+accrual → no caveat), while `amountPaid <= totalDue` is not guard-forced → the abstract monotone-up
+step drives `amountPaid` past `totalDue` → **violated** with the over-approximation caveat. The
+classifier reports at conjunct granularity.
 
 **Tightening knob (also cuts questions):** emit *other* adopted invariants and adopted guards as
 assumptions alongside the abstract step, so the over-approximation is no looser than necessary —
@@ -418,13 +424,14 @@ ceremony. Flagged, not silently assumed.
 
 ## 10. Honest ceiling (what this slice does NOT claim)
 
-- **Pre-Plan-3 data-field soundness is provisional.** Abstract-evolution modeling (§6, real accrual
-  semantics for data fields) is deferred to Plan 3 and is not in the code yet. Until then, an
-  unguarded data-field invariant classifying `entailed`/`independent` with `tier:'sound'` has that
-  soundness resting only on the bounded `INT_POOL` sampling used in emission, not on any accrual
-  argument — the classifier cannot cheaply distinguish a guard-forced verdict (genuinely sound) from
-  a pool-bounded one, so `classifyInvariant` attaches a blanket `caveat` to every `entailed`/
-  `independent` verdict (never to `violated`, the safe false-alarm direction) until Plan 3 lands.
+- **~~Pre-Plan-3 data-field soundness is provisional.~~ (RETIRED — superseded by the §6.4 structural
+  gate, Plan 3.)** This slice originally attached a blanket provisional `caveat` to every
+  `entailed`/`independent` data-field verdict, on the grounds that pre-abstract-evolution soundness
+  rested only on bounded `INT_POOL` sampling. Plan 3 landed abstract-evolution modeling and the
+  per-conjunct structural gate, so that provisional caveat is **removed**: the caveat now attaches to
+  the correct direction — **`abstract`-tier `violated` findings** (the over-approximation's one safe
+  false-alarm direction, per §6.3) — and `entailed`/`independent` holds are trustworthy and
+  uncaveated. See the "Abstract accrual over-approximates" bullet below for the current rule.
 - **Equal-records slice.** The classifier's havoc-init (`astToQuintClassify`, `mapBy`) binds every
   instance of an aggregate to an *identical* drawn record, so the consecution probe checks induction
   over the "all-instances-of-an-aggregate-equal" slice of the state space, not the full state space.
