@@ -204,7 +204,9 @@ export const traceDSumLe: Candidate = {
 // undefined pool with an illegal dotted identifier — so the machine can't be emitted standalone,
 // exactly the substitution the spike made by hand). `plan` is read by no invariant under test, so
 // dropping it changes nothing about the paid-conjunct consecution. Both aggregates + their real
-// transition guards (notably settle's `amountPaid == totalDue`) are kept verbatim.
+// transition guards (notably settle's `amountPaid == totalDue`) are kept verbatim. `maxRetries` is
+// marked `const` (Plan 3a), mirroring the committed spec (`maxRetries : Int const`) — Plan 3 Task 1
+// uses it as the frozen-under-abstract-evolution counterexample.
 export const subscriptionsModel: DomainModel = {
   context: 'Subscriptions', ticksPerDay: 24,
   enums: [], values: [], entities: [],
@@ -218,7 +220,7 @@ export const subscriptionsModel: DomainModel = {
         { name: 'periodEnd', type: { kind: 'prim', prim: 'Date' } },
         { name: 'accruedUnits', type: { kind: 'prim', prim: 'Int' } },
         { name: 'paidInvoiceCount', type: { kind: 'prim', prim: 'Int' } },
-        { name: 'maxRetries', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'maxRetries', type: { kind: 'prim', prim: 'Int' }, const: true },
         { name: 'latestInvoice', type: { kind: 'ref', target: 'Invoice' } }],
       machine: {
         regions: [{ name: 'status', initial: 'trialing', states: [
@@ -289,6 +291,19 @@ export const paidImpliesExactConjunct: Candidate = {
 export const paidInvFixture: CandidateInvariant = {
   id: 'paid-conjunct', name: 'paidImpliesExactConjunct', prior: 1, source: 'template',
   candidate: paidImpliesExactConjunct,
+};
+
+// The `amountPaid <= totalDue` conjunct of the same committed Invoice invariant
+// Never_Overpaid_And_Paid_Exact (the first `&&` arg; specs/subscriptions/spec.lat:75) — design
+// §6.3's worked abstract-evolution flip (Plan 3 Task 1). Unlike paidImpliesExactConjunct, this
+// conjunct is NOT guard-forced: nothing in the frozen machine prevents amountPaid from exceeding
+// totalDue, so consecution under abstract accrual is meaningfully violable (accrual drives
+// amountPaid past totalDue while `open`, the truth the frozen model can't see).
+export const amountPaidAtMostTotalConjunct: Candidate = {
+  kind: 'statePredicate', aggregate: 'Invoice',
+  body: { kind: 'cmp', op: 'le',
+    left: { kind: 'field', owner: 'self', path: ['amountPaid'] },
+    right: { kind: 'field', owner: 'self', path: ['totalDue'] } },
 };
 
 // The committed Subscriptions coupling invariant (specs/subscriptions/spec.lat:46) — a Subscription

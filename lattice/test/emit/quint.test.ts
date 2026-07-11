@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { astToQuint } from '../../src/emit/quint.js';
-import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice, sumCandidate, periodModel } from '../fixtures.js';
+import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice, sumCandidate, periodModel, subscriptionsModel, paidImpliesExactConjunct } from '../fixtures.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 
@@ -167,6 +167,24 @@ describe('astToQuint', () => {
       expect(em.source).toMatch(/nondet nd_subscription_period_start = oneOf/);
       expect(em.source).toMatch(/nondet nd_subscription_period_end = oneOf/);
       expect(em.source).toContain('period: { start: nd_subscription_period_start, end: nd_subscription_period_end }');
+    });
+  });
+
+  // Plan 3 Task 1 (abstract-evolution): the flag is golden-safe — unset, astToQuint's output is
+  // byte-identical to today (no evolve_ actions at all). Set, every non-const numeric field gets a
+  // monotone-up evolve action (design §6.2/§6.3), except const fields (Plan 3a), which stay frozen.
+  describe('abstractEvolution flag (Plan 3 Task 1)', () => {
+    it('emits NO evolve_ actions without the abstractEvolution flag (golden-safety)', () => {
+      const em = astToQuint(subscriptionsModel, { kind: 'probe-permit', hi: paidImpliesExactConjunct, exclusions: [], maxSteps: 5 });
+      expect(em.source).not.toContain('action evolve_');
+    });
+    it('emits monotone-up evolve actions for non-const numeric fields only when flagged', () => {
+      const em = astToQuint(subscriptionsModel, { kind: 'probe-permit', hi: paidImpliesExactConjunct, exclusions: [], maxSteps: 5, abstractEvolution: true });
+      expect(em.source).toContain('action evolve_Invoice_amountPaid');          // non-const numeric -> monotone-up
+      expect(em.source).toMatch(/amountPaid.*\+ /);                             // increase, not set
+      expect(em.source).toContain('action evolve_Invoice_totalDue');           // non-const numeric -> evolves too (default-evolving)
+      expect(em.source).not.toContain('action evolve_Subscription_maxRetries'); // const (Plan 3a) -> frozen
+      expect(em.source).toContain('evolve_Invoice_amountPaid');                // wired into `step = any {...}`
     });
   });
 

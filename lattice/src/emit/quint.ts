@@ -16,6 +16,11 @@ export interface QuintQuery {
   // prunes a live candidate whose subject matter is unrelated, `permit` contradicts the adoption.
   adopted?: Candidate[];
   maxSteps: number;
+  // Plan 3 Task 1 (design §6.2/§6.3): when set, every non-`const` numeric field gets a monotone-up
+  // evolve action (nondet non-negative increase) gated on the owner being non-terminal, added to
+  // `step` — a sound over-approximation of accrual (real payments are a subset of "arbitrary
+  // non-negative increases"). Unset (default) — no evolve_ actions at all: byte-identical to today.
+  abstractEvolution?: boolean;
 }
 export interface QuintEmission { source: string; invariantName: string; varTypes: Record<string, string> }
 
@@ -363,6 +368,21 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
     for (const f of o.fields.filter(f => f.type.kind === 'enum')) {
       const vals = m.enums.find(e => e.name === (f.type as any).enum)!.values.map(x => `"${x}"`).join(', ');
       actions.push(`action mut_${o.name}_${f.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) nondet nv = oneOf(Set(${vals})) all { ${v}' = ${v}.set(id, ${v}.get(id).with("${f.name}", nv)), ${frame([v]).join(', ')} } }`);
+    }
+
+    // Plan 3 Task 1 (design §6.2): sound over-approximate accrual — every non-const numeric field
+    // may nondeterministically increase by a non-negative amount, but only while the owner is
+    // non-terminal (frozen once terminal). Flag-gated: absent, no evolve_ actions at all.
+    if (q.abstractEvolution) {
+      const machine = (o as AggregateDef).machine;
+      // non-terminal guard: the drawn id is not in any region's @terminal state (frozen once terminal).
+      const termConj = (machine?.regions ?? []).flatMap(r =>
+        r.states.filter(s => s.tags?.includes('terminal'))
+          .map(s => `${v}.get(id).${r.name}_state != "${s.name}"`));
+      const nonTerminal = termConj.length ? `(${termConj.join(' and ')})` : 'true';
+      for (const f of o.fields.filter(f => f.type.kind === 'prim' && isIntPrim((f.type as any).prim) && !f.const)) {
+        actions.push(`action evolve_${o.name}_${f.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) nondet dv = oneOf(${INT_POOL}) all { ${nonTerminal}, ${v}' = ${v}.set(id, ${v}.get(id).with("${f.name}", ${v}.get(id).${f.name} + dv)), ${frame([v]).join(', ')} } }`);
+      }
     }
   }
   actions.push(`action tick = { nondet dt = oneOf(Set(1, 5, 24, 120)) all { now' = now + dt, ${frame(['now']).join(', ')} } }`);

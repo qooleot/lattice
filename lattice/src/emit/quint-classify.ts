@@ -31,7 +31,12 @@ export function astToQuintClassify(m: DomainModel, cq: ClassifyQuery): QuintEmis
   // exactly the machine we want, and we simply discard its predicate section (`val Hi`/`val q_inv`)
   // and append our own indInit + classify vals. This guarantees `step` and the transitions are
   // reused byte-for-byte (not re-derived) and keeps astToQuint the single source of the machine.
-  const base = astToQuint(m, { kind: 'probe-permit', hi: cq.invariant, exclusions: [], maxSteps: cq.maxSteps });
+  // Plan 3 Task 1 (design §6.2/§6.3): the classifier's machine over-approximates numeric-field
+  // evolution (monotone-up, non-terminal-gated) so data-touching invariants get meaningfully
+  // tested via consecution instead of trivially holding under frozen data. This flag is set ONLY
+  // here — method-guard.ts's astToQuint call stays unflagged (its transition-guard check has no
+  // use for accrual, and golden traces must stay byte-identical).
+  const base = astToQuint(m, { kind: 'probe-permit', hi: cq.invariant, exclusions: [], maxSteps: cq.maxSteps, abstractEvolution: true });
   const stepIdx = base.source.indexOf('\n  action step = any {');
   if (stepIdx < 0) throw new Error('astToQuintClassify: could not locate the `step` action in the base emission');
   const head = base.source.slice(0, base.source.indexOf('\n', stepIdx + 1));   // module through the `step` line
