@@ -9,7 +9,7 @@ import { loadState, saveState, appendLedger, readLedger, readClassifications, is
 import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
 import { nextQuestion, checkDistinct, adoptedConstraints, expressibleAdopted, type SolverDeps } from './engine/planner.js';
-import { classifyInvariant } from './engine/classify.js';
+import { classifyInvariant, type Classification } from './engine/classify.js';
 import { renderWitnessTable } from './engine/salient.js';
 import { astToAlloy } from './emit/alloy.js';
 import { astToQuint } from './emit/quint.js';
@@ -103,6 +103,62 @@ function workspaceHook(latPath: string): { written: string[] } | { diagnostics: 
   return w.ok ? { written: w.written } : { diagnostics: w.diagnostics };
 }
 
+/** Classify `targets` (a subset of `allAdopted`) against the FULL adopted set as peers (design
+ *  §7 classifier contract: peers = everything else currently adopted, regardless of whether this
+ *  call is reclassifying all of them or a scoped subset). Shared by the `classify` command (Task 3)
+ *  and `classifyOnApply` (Task 4, below) so the "candidates → classified verdicts" logic exists in
+ *  exactly one place. */
+async function classifyAdopted(
+  m: DomainModel, allAdopted: CandidateInvariant[], targets: CandidateInvariant[], deps: SolverDeps, reachSteps?: number,
+): Promise<Classification[]> {
+  const results: Classification[] = [];
+  for (const inv of targets) {
+    const peerInvs = allAdopted.filter(a => a.id !== inv.id);
+    const peers = expressibleAdopted('quint', peerInvs.map(p => p.candidate));
+    const peerNames = peerInvs.filter(p => peers.includes(p.candidate)).map(p => p.name);
+    results.push(await classifyInvariant(m, inv, peers, peerNames, deps, reachSteps));
+  }
+  return results;
+}
+
+/** Reclassify-on-apply (design §7.2, incremental): recompute `classified` labels only for the
+ *  invariants in THIS apply's dependency set, appending fresh ledger entries for them; everything
+ *  else carries forward its most recent `classified` entry untouched. Keeps full Apalache sweeps
+ *  off the interactive apply path (a full sweep is still available via the standalone `classify`
+ *  command).
+ *
+ *  Dependency-set rule implemented (conservative, scoped — design §7.2's "touched invariant/guard/
+ *  field + any invariant whose body/scope references it"):
+ *    - `changed` is resolved by the CALLER: on a fresh-authored session every adopted invariant is
+ *      "new" (nothing to carry forward), so the caller passes the full adopted-name set; on a
+ *      reconcile apply the caller passes exactly the names reconcile() itself (re)adopted this edit
+ *      (its `ledgerAppends` of kind 'adopted' — the invariants whose body actually changed or that
+ *      were newly added).
+ *    - Only names in `changed` that are quint-expressible are reclassified here.
+ *  Deliberately NOT implemented: broadening to "any adopted invariant over an aggregate whose
+ *  guards/fields changed but whose own body didn't" (design §7.2's fuller rule) — reconcile's
+ *  ModelDiff only reports structural adds/removes as free-text notes (src/parse/diff.ts), not a
+ *  structured per-aggregate change set, and a pure guard-predicate edit on an existing transition
+ *  produces no structural note at all today. Parsing those notes to approximate aggregate scope
+ *  would be fragile and would pull real-solver reclassification onto structural-only edits (e.g. a
+ *  bare "add a transition") that leave every invariant's *own* body untouched. Left as follow-up
+ *  scope, flagged rather than silently assumed (see task-4-report.md). */
+async function classifyOnApply(
+  dir: string, m: DomainModel, adopted: CandidateInvariant[], changed: string[], deps: SolverDeps,
+): Promise<Extract<LedgerEntry, { kind: 'classified' }>[]> {
+  if (!changed.length) return [];
+  const changedSet = new Set(changed);
+  const classifiable = expressibleAdopted('quint', adopted.map(a => a.candidate));
+  const targets = adopted.filter(a => changedSet.has(a.name) && classifiable.includes(a.candidate));
+  if (!targets.length) return [];
+  const results = await classifyAdopted(m, adopted, targets, deps);
+  const entries = results.map(result => ({ kind: 'classified' as const, at: now(), invariant: result.invariant,
+    verdict: result.verdict, tier: result.tier, witness: result.witness, reachable: result.reachable,
+    pinnedBy: result.pinnedBy, provenance: `apply ${isoDay(now())}` }));
+  for (const e of entries) appendLedger(dir, e);
+  return entries;
+}
+
 export function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
   const segs = path.split('.');
   const from = segs[segs.length - 1]!;
@@ -140,7 +196,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       session: { type: 'string' }, model: { type: 'string' }, candidates: { type: 'string' }, candidate: { type: 'string' },
       witness: { type: 'string' }, judge: { type: 'string' }, out: { type: 'string' }, topic: { type: 'string' }, note: { type: 'string' },
       question: { type: 'string' }, answer: { type: 'string' },
-      lat: { type: 'string' }, 'dry-run': { type: 'boolean' },
+      lat: { type: 'string' }, 'dry-run': { type: 'boolean' }, 'no-classify': { type: 'boolean' },
       rename: { type: 'string', multiple: true }, 'force-remove': { type: 'string', multiple: true },
       name: { type: 'string' }, workspace: { type: 'string' }, 'max-steps': { type: 'string' }
     }});
@@ -363,8 +419,13 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           writeFileSync(join(dir, 'model.json'), JSON.stringify(loaded.model, null, 2));
           const written = writeProjections(latPath, loaded.model, loaded.invariants, readLedger(dir));
           const workspace = workspaceHook(latPath);
+          // fresh session: every adopted invariant is new (there is no prior classification to
+          // carry forward), so the dependency set is all of them (see classifyOnApply's doc comment).
+          const classified = values['no-classify'] ? undefined
+            : await classifyOnApply(dir, loaded.model, loaded.invariants, loaded.invariants.map(i => i.name), deps);
           return done({ ok: true, applied: ['fresh session', ...loaded.invariants.map(i => `invariant ${i.name}`)], written,
-            ...outcomeBase, ...(workspace ? { workspace } : {}) });
+            ...outcomeBase, ...(workspace ? { workspace } : {}),
+            ...(classified ? { classification: { reclassified: classified.length } } : {}) });
         }
 
         const r = reconcile({ parsed: { model: loaded.model, invariants: loaded.invariants },
@@ -388,7 +449,15 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         writeFileSync(join(dir, 'model.json'), JSON.stringify(r.model, null, 2));
         const written = writeProjections(latPath, r.model, r.adopted, readLedger(dir));
         const workspace = workspaceHook(latPath);
-        return done({ ok: true, applied: r.applied, written, warnings, ...(workspace ? { workspace } : {}) });
+        // reconcile: the dependency set is exactly the invariants reconcile() itself just (re)adopted
+        // this edit — the 'adopted' entries it appended above (see classifyOnApply's doc comment).
+        const changedNames = r.ledgerAppends
+          .filter((e): e is Extract<LedgerEntry, { kind: 'adopted' }> => e.kind === 'adopted')
+          .map(e => e.invariant.name);
+        const classified = values['no-classify'] ? undefined
+          : await classifyOnApply(dir, r.model, r.adopted, changedNames, deps);
+        return done({ ok: true, applied: r.applied, written, warnings, ...(workspace ? { workspace } : {}),
+          ...(classified ? { classification: { reclassified: classified.length } } : {}) });
       }
       case 'classify': {
         // Only quint-expressible kinds (statePredicate/conservation/cardinality/unique/
@@ -421,17 +490,11 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
 
         const targets = values.name ? classifiable.filter(c => c.inv.name === values.name) : classifiable;
 
-        const results = [];
-        for (const c of targets) {
-          const peerTracked = adoptedTracked.filter(t => t.inv.id !== c.inv.id);
-          const peers = expressibleAdopted('quint', peerTracked.map(t => t.inv.candidate));
-          const peerNames = peerTracked.filter(t => peers.includes(t.inv.candidate)).map(t => t.inv.name);
-          const result = await classifyInvariant(model(), c.inv, peers, peerNames, deps, reachSteps);
+        const results = await classifyAdopted(model(), adoptedTracked.map(c => c.inv), targets.map(c => c.inv), deps, reachSteps);
+        for (const result of results)
           appendLedger(dir, { kind: 'classified', at: now(), invariant: result.invariant, verdict: result.verdict,
             tier: result.tier, witness: result.witness, reachable: result.reachable, pinnedBy: result.pinnedBy,
             provenance: `classify ${isoDay(now())}` });
-          results.push(result);
-        }
         if (values.name) return { classified: results };
         // Bulk classify (no --name): name the adopted invariants that were NOT classified, rather
         // than just dropping them — most real sessions carry template-adopted structural invariants

@@ -123,10 +123,16 @@ describe('engine apply', () => {
 
   it('missing session dir hand-authors a fresh one', async () => {
     const fresh = join(dir, 'fresh-session');
-    const r: any = await runCommand(['apply', '--session', fresh, '--lat', latFile], realDeps);
+    // --no-classify: this fixture carries several quint-expressible adopted invariants, and a
+    // fresh-session apply's dependency set is "all of them" (Task 4) — reclassifying them for real
+    // here would drive real Apalache calls (see engine/classify.integration.test.ts's 240s-per-call
+    // timeouts) in what is otherwise a fast, solver-free unit test about hand-authoring. Reclassify-
+    // on-apply itself is covered with scripted deps below.
+    const r: any = await runCommand(['apply', '--session', fresh, '--lat', latFile, '--no-classify'], realDeps);
     expect(r.ok).toBe(true);
     const ledger = readFileSync(join(fresh, 'ledger.jsonl'), 'utf8');
     expect(ledger).toContain('hand-authored');
+    expect(r.classification).toBeUndefined();
     const state = JSON.parse(readFileSync(join(fresh, 'state.json'), 'utf8'));
     expect(state.phase).toBe('converged');
   });
@@ -227,5 +233,89 @@ describe('engine apply: workspace context-map hook', () => {
     const r: any = await apply();
     expect(r.ok).toBe(true);
     expect(r.workspace).toBeUndefined();
+  });
+});
+
+describe('engine apply: reclassify-on-apply (Task 4)', () => {
+  // A minimal hand-authored spec with one quint-expressible (statePredicate) invariant, so applying
+  // it fresh gives reclassify-on-apply exactly one candidate to classify.
+  const MINI_SPEC = `context Mini {
+  aggregate Widget {
+    widgetId : Id key
+    units    : Int
+    invariant unitsSane { units >= 0 }
+  }
+}
+`;
+
+  // Scripted quintVerify: returns queued results in call order (mirrors cli-classify.test.ts's
+  // scriptedDeps). classifyInvariant makes 2 calls per invariant — [consecution, reachability].
+  function scriptedDeps(results: { violated: boolean; witness?: any }[]) {
+    let i = 0;
+    const calls: unknown[] = [];
+    const deps: any = {
+      alloy: async () => ({ sat: false, instances: [], ms: 0 }),
+      quint: async () => ({ violated: false, ms: 0 }),
+      quintVerify: async (_em: any, opts: any) => { calls.push(opts); return { ...results[i++]!, ms: 0 }; },
+    };
+    return { deps, calls };
+  }
+
+  const readClassifiedEntries = (sessionDir: string) =>
+    readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8').trim().split('\n')
+      .map(l => JSON.parse(l)).filter((e: any) => e.kind === 'classified');
+
+  it('fresh apply classifies the adopted set (everything is "new")', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'lat-apply-classify-'));
+    const latPath = join(fresh, 'spec.lat');
+    writeFileSync(latPath, MINI_SPEC);
+    const sessionDir = join(fresh, 'session');
+    const { deps, calls } = scriptedDeps([{ violated: false }, { violated: false }]);   // unitsSane -> entailed
+
+    const r: any = await runCommand(['apply', '--session', sessionDir, '--lat', latPath], deps);
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(r.classification).toEqual({ reclassified: 1 });
+    expect(calls).toHaveLength(2);   // exactly the one invariant's 2-probe pair, not more
+
+    const classified = readClassifiedEntries(sessionDir);
+    expect(classified).toHaveLength(1);
+    expect(classified[0].invariant).toBe('unitsSane');
+    expect(classified[0].verdict).toBe('entailed');
+  });
+
+  it('apply --no-classify skips the hook entirely — no classified entries, no solver calls', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'lat-apply-noclassify-'));
+    const latPath = join(fresh, 'spec.lat');
+    writeFileSync(latPath, MINI_SPEC);
+    const sessionDir = join(fresh, 'session');
+    const { deps, calls } = scriptedDeps([]);   // if the hook fires anyway, quintVerify starves and this fails loudly
+
+    const r: any = await runCommand(['apply', '--session', sessionDir, '--lat', latPath, '--no-classify'], deps);
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+    expect(r.classification).toBeUndefined();
+    expect(calls).toHaveLength(0);
+    expect(readClassifiedEntries(sessionDir)).toHaveLength(0);
+  });
+
+  it('a no-op re-apply reclassifies nothing — the dependency set is scoped, not the whole adopted set', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'lat-apply-scoped-'));
+    const latPath = join(fresh, 'spec.lat');
+    writeFileSync(latPath, MINI_SPEC);
+    const sessionDir = join(fresh, 'session');
+
+    const first = scriptedDeps([{ violated: false }, { violated: false }]);   // unitsSane -> entailed
+    const r1: any = await runCommand(['apply', '--session', sessionDir, '--lat', latPath], first.deps);
+    expect(r1.classification).toEqual({ reclassified: 1 });
+    expect(readClassifiedEntries(sessionDir)).toHaveLength(1);
+
+    // re-apply the SAME .lat unchanged: reconcile finds nothing added/changed, so classifyOnApply's
+    // dependency set is empty — it must not re-walk the full adopted set (which would also re-append
+    // a redundant `classified` entry for unitsSane).
+    const second = scriptedDeps([]);   // starves if the hook incorrectly re-classifies unitsSane
+    const r2: any = await runCommand(['apply', '--session', sessionDir, '--lat', latPath], second.deps);
+    expect(r2.ok, JSON.stringify(r2)).toBe(true);
+    expect(r2.classification).toEqual({ reclassified: 0 });
+    expect(second.calls).toHaveLength(0);
+    expect(readClassifiedEntries(sessionDir)).toHaveLength(1);   // still just the one from the first apply
   });
 });
