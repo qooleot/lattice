@@ -132,4 +132,65 @@ describe('engine classify CLI', () => {
     const st: any = await runCommand(['status', '--session', dir], inertDeps);
     expect(st.classifications.violated).toBe(1);
   });
+
+  it('status counts reflect only the LATEST classification per invariant, not a naive count-all', async () => {
+    const dir = await setup();
+
+    // First run: h1 -> independent (consecution fails, no reachable ¬I).
+    const first = scriptedDeps([{ violated: true, witness: { entities: [], trace: [] } }, { violated: false }]);
+    await runCommand(['classify', '--session', dir, '--name', 'h1'], first.deps);
+    let st: any = await runCommand(['status', '--session', dir], inertDeps);
+    expect(st.classifications).toEqual({ entailed: 0, independent: 1, notInductive: 0, violated: 0 });
+
+    // Second run on the SAME invariant: h1 -> violated (reachable ¬I this time). The ledger now
+    // holds two `classified` entries for h1; status must count only the latest one — independent's
+    // bucket must drop back to 0, not stay at 1 alongside violated's 1.
+    const second = scriptedDeps([{ violated: false }, { violated: true, witness: { entities: [], trace: [] } }]);
+    await runCommand(['classify', '--session', dir, '--name', 'h1'], second.deps);
+    st = await runCommand(['status', '--session', dir], inertDeps);
+    expect(st.classifications).toEqual({ entailed: 0, independent: 0, notInductive: 0, violated: 1 });
+  });
+
+  it('--name with no matching classifiable target returns an explicit error, never a silent no-op', async () => {
+    const dir = await setup();
+
+    // Case 1: no adopted invariant has this name at all (typo / never proposed).
+    const r1: any = await runCommand(['classify', '--session', dir, '--name', 'no-such-invariant'], inertDeps);
+    expect(r1.error).toBe('not-classifiable');
+    expect(r1.name).toBe('no-such-invariant');
+    expect(r1.hint).toMatch(/no adopted invariant/i);
+
+    // Case 2: the name IS adopted (template-adopted NoOrphan_Subscription, kind refsResolve) but its
+    // kind isn't quint-expressible — distinct hint from case 1, since it's a real invariant just not
+    // classifiable by this engine.
+    const r2: any = await runCommand(['classify', '--session', dir, '--name', 'NoOrphan_Subscription'], inertDeps);
+    expect(r2.error).toBe('not-classifiable');
+    expect(r2.name).toBe('NoOrphan_Subscription');
+    expect(r2.hint).toMatch(/refsResolve/);
+    expect(r2.hint).not.toMatch(/no adopted invariant/i);
+  });
+
+  it('bulk classify (no --name) surfaces adopted-but-unclassifiable invariants in `skipped`', async () => {
+    const dir = await setup();
+    const { deps } = scriptedDeps([
+      { violated: false }, { violated: false },   // h1 -> entailed
+      { violated: false }, { violated: false },   // h2 -> entailed
+    ]);
+    const r: any = await runCommand(['classify', '--session', dir], deps);
+    expect(r.classified).toHaveLength(2);
+    // traceAModel's 3 template-adopted structural invariants (refsResolve/terminal kinds) are
+    // adopted but never quint-classifiable — bulk classify must name them, not just drop them.
+    expect(r.skipped).toEqual(expect.arrayContaining([
+      { name: 'NoOrphan_Subscription', kind: 'refsResolve' },
+      { name: 'Terminal_Subscription_Ended', kind: 'terminal' },
+      { name: 'NoOrphan_Plan', kind: 'refsResolve' },
+    ]));
+    expect(r.skipped).toHaveLength(3);
+  });
+
+  it('--max-steps rejects a non-numeric value instead of letting NaN reach the solver', async () => {
+    const dir = await setup();
+    const r: any = await runCommand(['classify', '--session', dir, '--name', 'h1', '--max-steps', 'not-a-number'], inertDeps);
+    expect(r).toEqual({ error: 'missing-arg', arg: 'max-steps' });
+  });
 });

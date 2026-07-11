@@ -398,8 +398,28 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // template-adopted structural invariants of those unclassifiable kinds.
         const adoptedTracked = s.candidates.filter(c => c.status === 'adopted');
         const classifiable = adoptedTracked.filter(c => expressibleAdopted('quint', [c.inv.candidate]).length > 0);
+
+        // A `--name` that matches no classifiable target must never silently no-op (it would
+        // otherwise fall through to an empty `targets` list and return `{ classified: [] }` with
+        // no signal). Distinguish the two ways that can happen: the name is adopted but its kind
+        // isn't quint-expressible (template-adopted terminal/monotonic/leadsTo/refsResolve), vs.
+        // no adopted invariant carries that name at all (typo, never proposed, still pending).
+        if (values.name && !classifiable.some(c => c.inv.name === values.name)) {
+          const adoptedMatch = adoptedTracked.find(c => c.inv.name === values.name);
+          return { error: 'not-classifiable', name: values.name,
+            hint: adoptedMatch
+              ? `'${values.name}' is adopted with kind '${adoptedMatch.inv.candidate.kind}', which quint cannot classify`
+              : `no adopted invariant named '${values.name}'` };
+        }
+
+        let reachSteps: number | undefined;
+        if (values['max-steps'] !== undefined) {
+          const n = Number(values['max-steps']);
+          if (!Number.isInteger(n) || n <= 0) return { error: 'missing-arg', arg: 'max-steps' };
+          reachSteps = n;
+        }
+
         const targets = values.name ? classifiable.filter(c => c.inv.name === values.name) : classifiable;
-        const reachSteps = values['max-steps'] ? Number(values['max-steps']) : undefined;
 
         const results = [];
         for (const c of targets) {
@@ -412,7 +432,14 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
             provenance: `classify ${isoDay(now())}` });
           results.push(result);
         }
-        return { classified: results };
+        if (values.name) return { classified: results };
+        // Bulk classify (no --name): name the adopted invariants that were NOT classified, rather
+        // than just dropping them — most real sessions carry template-adopted structural invariants
+        // of unclassifiable kinds (see comment above), and a silent drop looks identical to "nothing
+        // else was adopted".
+        const skipped = adoptedTracked.filter(c => !classifiable.includes(c))
+          .map(c => ({ name: c.inv.name, kind: c.inv.candidate.kind }));
+        return { classified: results, skipped };
       }
       case 'explain': {
         const ledger = readLedger(dir);
