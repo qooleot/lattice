@@ -165,6 +165,9 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       checkType(f.type, `${v.name}.${f.name}`);
       checkReservedField(f, `${v.name}.${f.name}`);
       if (f.key) out.push({ code: 'value-no-key', message: `value ${v.name}.${f.name}: value types are keyless — structural equality replaces identity (design §3.5)`, at: `${v.name}.${f.name}` });
+      if (f.const) out.push({ code: 'value-no-const', message: `value ${v.name}.${f.name} cannot be const — value types are immutable by structure`, at: `${v.name}.${f.name}` });
+      // Note: `const` on a KEY field (entity/aggregate) is deliberately tolerated silently — a key
+      // is immutable by nature, so redundant `const` there is harmless and not worth a diagnostic.
       if (f.type.kind !== 'prim' && f.type.kind !== 'enum')
         out.push({ code: 'value-flat', message: `value ${v.name}.${f.name}: value fields carry prim/enum types only in v1`, at: `${v.name}.${f.name}` });
     }

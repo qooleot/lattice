@@ -31,6 +31,24 @@ describe('value objects', () => {
     expect(validateModel(model([withKey])).map(d => d.code)).toContain('value-no-key');
   });
 
+  it('rejects a value field marked const (value-no-const)', () => {
+    const withConst: ValueDef = { kind: 'value', name: 'Period',
+      fields: [
+        { name: 'start', type: { kind: 'prim', prim: 'Date' }, const: true },
+        { name: 'end', type: { kind: 'prim', prim: 'Date' } }] };
+    expect(validateModel(model([withConst])).map(d => d.code)).toContain('value-no-const');
+  });
+
+  it('tolerates const on an entity key field without any diagnostic (redundant but harmless)', () => {
+    const m: DomainModel = {
+      context: 'C', enums: [], events: [], values: [],
+      entities: [{ kind: 'entity', name: 'Widget',
+        fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true, const: true }] }],
+      aggregates: [], services: [],
+    };
+    expect(validateModel(m)).toEqual([]);
+  });
+
   it('rejects a ref-typed field inside a value (value-flat)', () => {
     const withRef: ValueDef = { kind: 'value', name: 'Period',
       fields: [
