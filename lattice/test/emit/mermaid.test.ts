@@ -87,6 +87,18 @@ describe('domainToMermaid', () => {
     expect(domainToMermaid(withValue)).toContain('+term : Period');
   });
 
+  // const field (Plan 3a Task 3): printer/mermaid round-trip fidelity — a const:true field
+  // renders the «readonly» stereotype after «key» in the class member line.
+  it('renders a const field with a «readonly» stereotype', () => {
+    const withConst: DomainModel = { context: 'Billing',
+      enums: [], values: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Lease', fields: [
+        { name: 'leaseId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'startDate', type: { kind: 'prim', prim: 'Date' }, const: true }] }],
+      events: [], services: [] };
+    expect(domainToMermaid(withConst)).toContain('+startDate : Date «readonly»');
+  });
+
   // Task 12: services (design §3.6) — a <<service>> class box (no fields, one +method(params)
   // member per method) plus one dashed dependency edge per distinct performed/created aggregate.
   it('renders a service class box and dashed dependency edges', () => {

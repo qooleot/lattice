@@ -33,11 +33,17 @@ export function fieldArb(name: string, enumNames: string[], valueNames: string[]
   if (valueNames.length) options.push({ weight: 1,
     arbitrary: fc.constantFrom(...valueNames).map(v => ({ kind: 'value' as const, value: v })) });
   const type = fc.oneof(...options);
+  // const (Plan 3a): drawn ~1/4 of the time — low weight so most fields stay non-const, but
+  // frequent enough that the round-trip property (roundtrip.test.ts) reliably exercises the
+  // printer's const-placement ordering (key, then const, then @tags — src/emit/code.ts fieldLines).
+  const isConst = fc.oneof({ weight: 3, arbitrary: fc.constant(false) }, { weight: 1, arbitrary: fc.constant(true) });
   return fc.record({
     type,
+    isConst,
     tags: fc.option(fc.constantFrom(['total'], ['balance'], ['signed']), { nil: undefined }),
-  }).map(({ type, tags }) => {
+  }).map(({ type, isConst, tags }) => {
     const f: Field = { name, type };
+    if (isConst) f.const = true;
     if (tags) f.tags = tags;
     return f;
   });
@@ -55,7 +61,13 @@ function entityFieldArb(name: string, enumNames: string[], ownerNames: string[])
     { weight: 1, arbitrary: fc.oneof(...scalar).map(of => ({ kind: 'list' as const, of })) }];
   if (ownerNames.length) options.push({ weight: 1,
     arbitrary: fc.constantFrom(...ownerNames).map(t => ({ kind: 'ref' as const, target: t })) });
-  return fc.oneof(...options).map(type => ({ name, type }));
+  // const (Plan 3a): same ~1/4-weighted draw as fieldArb — see its comment.
+  const isConst = fc.oneof({ weight: 3, arbitrary: fc.constant(false) }, { weight: 1, arbitrary: fc.constant(true) });
+  return fc.tuple(fc.oneof(...options), isConst).map(([type, c]) => {
+    const f: Field = { name, type };
+    if (c) f.const = true;
+    return f;
+  });
 }
 
 const entityArb = (name: string, enumNames: string[], ownerNames: string[]): fc.Arbitrary<EntityDef> =>

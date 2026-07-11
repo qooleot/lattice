@@ -9,7 +9,7 @@ const m: DomainModel = {
   entities: [{ kind: 'entity', name: 'Plan', doc: 'Entity doc', fields: [
     { name: 'planId', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'fee', type: { kind: 'prim', prim: 'Money' } },
-    { name: 'bonus', type: { kind: 'prim', prim: 'Money' }, tags: ['signed'] }] }],
+    { name: 'bonus', type: { kind: 'prim', prim: 'Money' }, const: true, tags: ['signed'] }] }],
   aggregates: [{ kind: 'aggregate', name: 'Job', fields: [
     { name: 'jobId', type: { kind: 'prim', prim: 'Id' }, key: true },
     { name: 'plan', type: { kind: 'ref', target: 'Plan' } },
@@ -55,7 +55,7 @@ context Demo {
   entity Plan {
     planId : Id key
     fee    : Money
-    bonus  : Money @signed
+    bonus  : Money const @signed
   }
 
   event kicked {
