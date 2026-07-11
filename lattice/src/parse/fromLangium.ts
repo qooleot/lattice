@@ -47,6 +47,7 @@ function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic
   return fs.map(f => {
     const field: Field = { name: f.name, type: mapType(f.type, enums, diags, owners, values) };
     if (f.key) field.key = true;
+    if (f.const) field.const = true;
     if (f.tags.length) field.tags = f.tags.map(t => t.name);
     return field;
   });

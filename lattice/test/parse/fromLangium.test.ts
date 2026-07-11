@@ -159,6 +159,15 @@ describe('loadLatText', () => {
   });
 });
 
+describe('const field modifier', () => {
+  it('maps a const-suffixed field to Field.const === true', () => {
+    const r = loadLatText('context C { aggregate A { aId : Id key\n foo : Int const } }');
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    expect(r.model.aggregates[0]!.fields.find(f => f.name === 'foo')!.const).toBe(true);
+  });
+});
+
 describe('qualified cross-context refs', () => {
   const SPEC = `context Shop {
   entity Customer {
