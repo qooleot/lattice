@@ -5,10 +5,11 @@ import type { DomainModel } from './ast/domain.js';
 import { validateModel } from './ast/validate.js';
 import { validateCandidate } from './ast/grammar.js';
 import type { CandidateInvariant } from './ast/invariant.js';
-import { loadState, saveState, appendLedger, readLedger, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
+import { loadState, saveState, appendLedger, readLedger, readClassifications, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
 import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
-import { nextQuestion, checkDistinct, adoptedConstraints, type SolverDeps } from './engine/planner.js';
+import { nextQuestion, checkDistinct, adoptedConstraints, expressibleAdopted, type SolverDeps } from './engine/planner.js';
+import { classifyInvariant } from './engine/classify.js';
 import { renderWitnessTable } from './engine/salient.js';
 import { astToAlloy } from './emit/alloy.js';
 import { astToQuint } from './emit/quint.js';
@@ -61,7 +62,7 @@ const isSessionBusy = (s: SessionState): boolean =>
   s.phase !== 'converged' || Object.keys(s.pendingWitnesses).length > 0;
 
 const VALID_JUDGES = ['permit', 'forbid', 'undecided'] as const;
-const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit', 'explain']);
+const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit', 'explain', 'classify']);
 // terminal/monotonic/leadsTo/refsResolve are template-adopted only (spec §7/§8): they either crash
 // candidateToQuint when pair-routed against a Quint-side candidate, or (refsResolve) mis-evaluate
 // on Quint witnesses that never populate the fields refsResolve's vacuous-true Alloy semantics
@@ -141,7 +142,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       question: { type: 'string' }, answer: { type: 'string' },
       lat: { type: 'string' }, 'dry-run': { type: 'boolean' },
       rename: { type: 'string', multiple: true }, 'force-remove': { type: 'string', multiple: true },
-      name: { type: 'string' }, workspace: { type: 'string' }
+      name: { type: 'string' }, workspace: { type: 'string' }, 'max-steps': { type: 'string' }
     }});
 
     if (cmd !== 'docs' && !values.session) return { error: 'missing-arg', arg: 'session' };
@@ -275,11 +276,23 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         appendLedger(dir, { kind: 'structure', at: now(), question: values.question!, answer: values.answer! });
         return { ok: true, ledgerCount: readLedger(dir).length };
       }
-      case 'status':
+      case 'status': {
+        // classified entries are append-only (session.ts:29-32) — later entries supersede earlier
+        // ones for the same (invariant, conjunct); keep only the latest per key before counting.
+        const latestByKey = new Map<string, ReturnType<typeof readClassifications>[number]>();
+        for (const e of readClassifications(dir)) latestByKey.set(`${e.invariant}::${e.conjunct ?? ''}`, e);
+        const classifications = { entailed: 0, independent: 0, notInductive: 0, violated: 0 };
+        for (const e of latestByKey.values()) {
+          if (e.verdict === 'entailed') classifications.entailed++;
+          else if (e.verdict === 'independent') classifications.independent++;
+          else if (e.verdict === 'not-inductive') classifications.notInductive++;
+          else if (e.verdict === 'violated') classifications.violated++;
+        }
         return { phase: s.phase, regenAttempts: s.regenAttempts, alternativeAttempts: s.alternativeAttempts,
           candidates: s.candidates.map(c => ({ id: c.inv.id, name: c.inv.name, prior: c.inv.prior, status: c.status })),
           openDecisions: readLedger(dir).filter(e => e.kind === 'open-decision').length,
-          ledgerCount: readLedger(dir).length };
+          ledgerCount: readLedger(dir).length, classifications };
+      }
       case 'witness-show': {
         const p = s.pendingWitnesses[values.witness!];
         return p ? { table: renderWitnessTable(p.witness, model()?.ticksPerDay) } : { error: 'unknown-witness' };
@@ -377,6 +390,30 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         const workspace = workspaceHook(latPath);
         return done({ ok: true, applied: r.applied, written, warnings, ...(workspace ? { workspace } : {}) });
       }
+      case 'classify': {
+        // Only quint-expressible kinds (statePredicate/conservation/cardinality/unique/
+        // sumOverCollection) can be classified — candidateToQuint throws for the rest
+        // (terminal/monotonic/leadsTo/refsResolve, template-adopted only). Filtering here keeps
+        // plain `classify` (no --name) safe to run on any real session, most of which carry
+        // template-adopted structural invariants of those unclassifiable kinds.
+        const adoptedTracked = s.candidates.filter(c => c.status === 'adopted');
+        const classifiable = adoptedTracked.filter(c => expressibleAdopted('quint', [c.inv.candidate]).length > 0);
+        const targets = values.name ? classifiable.filter(c => c.inv.name === values.name) : classifiable;
+        const reachSteps = values['max-steps'] ? Number(values['max-steps']) : undefined;
+
+        const results = [];
+        for (const c of targets) {
+          const peerTracked = adoptedTracked.filter(t => t.inv.id !== c.inv.id);
+          const peers = expressibleAdopted('quint', peerTracked.map(t => t.inv.candidate));
+          const peerNames = peerTracked.filter(t => peers.includes(t.inv.candidate)).map(t => t.inv.name);
+          const result = await classifyInvariant(model(), c.inv, peers, peerNames, deps, reachSteps);
+          appendLedger(dir, { kind: 'classified', at: now(), invariant: result.invariant, verdict: result.verdict,
+            tier: result.tier, witness: result.witness, reachable: result.reachable, pinnedBy: result.pinnedBy,
+            provenance: `classify ${isoDay(now())}` });
+          results.push(result);
+        }
+        return { classified: results };
+      }
       case 'explain': {
         const ledger = readLedger(dir);
         const renames = renameEntries(ledger).filter(r => r.scope === 'invariant');
@@ -402,6 +439,14 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
             : c.kind === 'refsResolve' ? `implied by ref fields on ${c.aggregate}`
             : `implied by Money field on ${c.aggregate}`;
         }
+        // Latest matching `classified` entry (by resolved current name) merges in — the ledger is
+        // append-only and chronological, so the last match is the latest.
+        const classifications = readClassifications(dir).filter(e => e.invariant === current);
+        const latestClassification = classifications[classifications.length - 1];
+        if (latestClassification) out.classification = { verdict: latestClassification.verdict,
+          tier: latestClassification.tier, caveat: latestClassification.caveat,
+          witness: latestClassification.witness, pinnedBy: latestClassification.pinnedBy,
+          reachable: latestClassification.reachable };
         return out;
       }
       default: return { error: 'unknown-command', cmd };
