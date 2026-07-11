@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { astToQuintClassify } from '../../src/emit/quint-classify.js';
-import { subscriptionsModel, paidImpliesExactConjunct, someStatePredicateOnInvoice } from '../fixtures.js';
+import { subscriptionsModel, paidImpliesExactConjunct, someStatePredicateOnInvoice, activePaidInFullCandidate } from '../fixtures.js';
 
 // Emission-shape tests (mirroring test/emit/quint.test.ts's `.toContain` style). The brief's
 // illustrative snippet paired `someStatePredicateOnInvoice` (reads `totalDue`) with `invoicingModel`
@@ -60,5 +60,35 @@ describe('astToQuintClassify', () => {
     const em = astToQuintClassify(subscriptionsModel, { invariant: paidImpliesExactConjunct, peers: [], probe: 'consecution', maxSteps: 1 });
     expect(Object.keys(em.varTypes).length).toBeGreaterThan(0);
     expect(em.varTypes).toMatchObject({ subscriptions: 'Subscription', invoices: 'Invoice' });
+  });
+
+  // Regex-hardening (Plan 2b Task 1, Step 7): hypOf's `\bvar\b` global-replace substitutes each
+  // owner's collection var (e.g. `subscriptions`, `invoices`) with its inline nondet-built map,
+  // ONE owner at a time, mutating the SAME `expr` string across iterations (quint-classify.ts:55).
+  // The footgun this guards against: an EARLIER substitution's inline text could itself contain a
+  // LATER owner's bare var name as a whole word, so the later regex pass would corrupt the
+  // already-substituted map instead of only touching the hypothesis's own reference to that owner.
+  // `activePaidInFullCandidate` (Subscription, `where status in {active}`) ref-hops into
+  // `latestInvoice.{amountPaid,totalDue}` (Invoice) — a genuine multi-owner hypothesis exercising
+  // BOTH owners' substitutions in the same expression, paired here with the Invoice-only
+  // `paidImpliesExactConjunct` as the second peer/invariant so both `subscriptions` and `invoices`
+  // are live substitution targets simultaneously.
+  it('multi-owner hypothesis: substitutes each owner var with its inline map without corrupting either', () => {
+    const em = astToQuintClassify(subscriptionsModel,
+      { invariant: activePaidInFullCandidate, peers: [paidImpliesExactConjunct], probe: 'consecution', maxSteps: 1 });
+    const indInit = em.source.slice(em.source.indexOf('action indInit'), em.source.indexOf('val q_I ='));
+    // Both owners' inline maps are present in the hypothesis (the ref-hop into Invoice from the
+    // Subscription-rooted candidate, and the Invoice-only peer).
+    expect(indInit).toMatch(/\(SUBSCRIPTION_IDS\.mapBy/);
+    expect(indInit).toMatch(/\(INVOICE_IDS\.mapBy/);
+    // No bare `subscriptions`/`invoices` token survives outside a `.mapBy` expr — the only bare
+    // occurrences allowed are the primed var ASSIGNMENTS (`subscriptions' =`/`invoices' =`), which
+    // bind the var rather than reading it, and are emitted before hypothesis substitution ever runs.
+    const bareOccurrences = (name: string) =>
+      [...indInit.matchAll(new RegExp(`\\b${name}\\b`, 'g'))]
+        .map(m => indInit.slice(m.index!, m.index! + name.length + 2))
+        .filter(ctx => !ctx.startsWith(`${name}'`));   // exclude the `subscriptions' =` / `invoices' =` binder
+    expect(bareOccurrences('subscriptions')).toEqual([]);
+    expect(bareOccurrences('invoices')).toEqual([]);
   });
 });

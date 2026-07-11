@@ -49,6 +49,20 @@ export function astToQuintClassify(m: DomainModel, cq: ClassifyQuery): QuintEmis
 
   // A candidate's induction-hypothesis form: candidateToQuint's predicate with each owner's
   // collection var replaced by its inline nondet-built map — a scalar constraint on the drawn record.
+  //
+  // Regex-hardening note (Plan 2b Task 1, Step 7): this loop mutates the SAME `expr` string across
+  // owners, one `\bvar\b` global-replace per owner, in `owners(m)` order. That is safe ONLY because
+  // no owner's inline map text can itself contain another owner's bare collection-var name as a
+  // whole word — verified for the current models (test/emit/quint-classify.test.ts's multi-owner
+  // hardening test, e.g. `activePaidInFullCandidate` ref-hopping Subscription → Invoice): ref
+  // fields draw only an opaque id nondet (`nd_<tag>_<field>`, singular tag, e.g.
+  // `nd_subscription_latestInvoice`) or reference the target's pool constant in UPPER_SNAKE
+  // (`INVOICE_IDS`), never the lowercase plural var name (`invoices`) itself, so an earlier
+  // substitution's inline text never accidentally matches a later owner's `\bvar\b`. If a future
+  // owner/field naming scheme ever emits a bare collection-var name inside another owner's inline
+  // init (e.g. a raw var-name string literal), this would silently corrupt the earlier
+  // substitution — the fix would be to substitute all owners in one pass (a single alternation
+  // regex, longest-name-first) rather than sequentially mutating `expr`.
   const hypOf = (c: Candidate): string => {
     const full = candidateToQuint(m, c, '__h');           // `val __h = <expr>`
     let expr = full.slice(full.indexOf(' = ') + 3);       // <expr>, referencing the collection vars

@@ -2,7 +2,7 @@ import type { Candidate, Predicate, Term } from '../ast/invariant.js';
 import type { DomainModel } from '../ast/domain.js';
 import { routeCandidate } from '../ast/grammar.js';
 import type { AlloyQuery } from '../emit/alloy.js';
-import type { QuintQuery } from '../emit/quint.js';
+import type { QuintEmission, QuintQuery } from '../emit/quint.js';
 import { evaluateCandidate, type CaseState } from './evaluate.js';
 import { activeCandidates } from './hypothesis.js';
 import { extractSalient, renderWitnessTable } from './salient.js';
@@ -11,6 +11,12 @@ import type { LedgerEntry, SalientFact, SessionState } from './session.js';
 export interface SolverDeps {
   alloy(m: DomainModel, q: AlloyQuery, max: number): Promise<{ sat: boolean; instances: CaseState[]; ms: number }>;
   quint(m: DomainModel, q: QuintQuery): Promise<{ violated: boolean; witness?: CaseState; ms: number }>;
+  // The classifier's probe runner (design §5): a raw `quint verify` over an already-emitted
+  // ClassifyQuery module, with an overridable --init/--invariant (indInit/q_I for consecution,
+  // init/q_peersImpliesI for reachability) — distinct from `quint` above, which always emits+runs
+  // the ordinary QuintQuery module with its own default init/invariant.
+  quintVerify(em: QuintEmission, opts: { init?: string; invariant?: string; maxSteps: number }):
+    Promise<{ violated: boolean; witness?: CaseState; ms: number }>;
 }
 export type PlannerOutput =
   | { type: 'question'; witnessId: string; purpose: 'distinguish' | 'probe-forbid' | 'probe-permit'; pair?: [string, string]; witness: CaseState; table: string; salient: SalientFact[]; ms: number }

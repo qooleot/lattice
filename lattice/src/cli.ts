@@ -13,7 +13,7 @@ import { renderWitnessTable } from './engine/salient.js';
 import { astToAlloy } from './emit/alloy.js';
 import { astToQuint } from './emit/quint.js';
 import { runAlloy } from './solvers/alloy-adapter.js';
-import { runQuint } from './solvers/quint-adapter.js';
+import { runQuint, runQuintVerify } from './solvers/quint-adapter.js';
 import { astToProse, renderCandidateEnglish } from './emit/prose.js';
 import { astToCode } from './emit/code.js';
 import { specDiagramFiles } from './emit/mermaid/docs.js';
@@ -41,7 +41,8 @@ export const realDeps: SolverDeps = {
   quint: async (m, q) => {
     const r = await runQuint(astToQuint(m, q), q.maxSteps);
     return { ...r, witness: r.witness ? remapValueKeys(m, r.witness) : r.witness };
-  }
+  },
+  quintVerify: (em, opts) => runQuintVerify(em, opts),
 };
 
 const BAD_JSON = Symbol('bad-json-or-path');

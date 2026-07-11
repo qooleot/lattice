@@ -1,5 +1,5 @@
 import type { DomainModel } from '../src/ast/domain.js';
-import type { Candidate } from '../src/ast/invariant.js';
+import type { Candidate, CandidateInvariant } from '../src/ast/invariant.js';
 
 export const traceAModel: DomainModel = {
   context: 'Billing', ticksPerDay: 24,
@@ -279,6 +279,26 @@ export const paidImpliesExactConjunct: Candidate = {
     right: { kind: 'cmp', op: 'eq',
       left: { kind: 'field', owner: 'self', path: ['amountPaid'] },
       right: { kind: 'field', owner: 'self', path: ['totalDue'] } } },
+};
+export const paidInvFixture: CandidateInvariant = {
+  id: 'paid-conjunct', name: 'paidImpliesExactConjunct', prior: 1, source: 'template',
+  candidate: paidImpliesExactConjunct,
+};
+
+// The committed Subscriptions coupling invariant (specs/subscriptions/spec.lat:46) — a Subscription
+// statePredicate that ref-hops into its `latestInvoice` (design §5's corrected worked example): NOT
+// guard-enforced, so its reachability probe finds a real counterexample (`recover`/`activate` reach
+// `active` with an unpaid `latestInvoice`) — the classifier's `violated` verdict, not `entailed`.
+export const activePaidInFullCandidate: Candidate = {
+  kind: 'statePredicate', aggregate: 'Subscription',
+  where: { kind: 'inState', owner: 'self', region: 'status', states: ['active'] },
+  body: { kind: 'cmp', op: 'eq',
+    left: { kind: 'field', owner: 'self', path: ['latestInvoice', 'amountPaid'] },
+    right: { kind: 'field', owner: 'self', path: ['latestInvoice', 'totalDue'] } },
+};
+export const activePaidInFullFixture: CandidateInvariant = {
+  id: 'active-paid-in-full', name: 'activePaidInFull', prior: 1, source: 'template',
+  candidate: activePaidInFullCandidate,
 };
 
 export const revrecModel: DomainModel = {
