@@ -426,6 +426,12 @@ ceremony. Flagged, not silently assumed.
   unreachable) are sound only up to the reachability bound `N`; a deeper counterexample could exist
   beyond `N`. Consecution (inductive) supplies the unbounded argument for *entailed*; a labelled
   *entailed* means "inductive **and** no shallow (≤N) reachable violation."
+- **Auto-reclassify-on-apply covers invariant-body changes only.** The apply-time hook (§7.2)
+  reclassifies invariants whose *body* changed/was added; a **guard-only edit** on an existing
+  transition produces no invariant diff, so it does **not** refresh labels — cached verdicts can go
+  stale until an explicit `classify` (whose verdict is always freshly computed). Follow-up: a cheap
+  guard-before/after check could emit a "classifications may be stale" warning on such an apply, and
+  newly-materialized `implied-` invariants are likewise only classified on explicit `classify`.
 - **Induction is 1-step and bounded by the emitted model.** It proves inductiveness relative to the
   machine-as-modeled, not full temporal correctness.
 - **Abstract accrual over-approximates.** A "violated" verdict on an abstract-tier conjunct may be a
