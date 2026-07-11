@@ -197,6 +197,90 @@ export const traceDSumLe: Candidate = {
   collection: 'lines', child: 'InvoiceLine', field: 'amount', op: 'le', total: ['totalDue'],
 };
 
+// Plan 2 Task 3 (astToQuintClassify integration): the committed Subscriptions model, transcribed
+// from specs/subscriptions/spec.lat + .lattice-session-subscriptions/model.json. The only
+// deviation is the `plan: ref Catalog.Plan` field, DROPPED here: it is an external qualified ref
+// (fieldQType renders it as opaque `str`, initValue would emit `oneOf(CATALOG.PLAN_IDS)` — an
+// undefined pool with an illegal dotted identifier — so the machine can't be emitted standalone,
+// exactly the substitution the spike made by hand). `plan` is read by no invariant under test, so
+// dropping it changes nothing about the paid-conjunct consecution. Both aggregates + their real
+// transition guards (notably settle's `amountPaid == totalDue`) are kept verbatim.
+export const subscriptionsModel: DomainModel = {
+  context: 'Subscriptions', ticksPerDay: 24,
+  enums: [], values: [], entities: [],
+  aggregates: [
+    {
+      kind: 'aggregate', name: 'Subscription',
+      fields: [
+        { name: 'subId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'seats', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'periodStart', type: { kind: 'prim', prim: 'Date' } },
+        { name: 'periodEnd', type: { kind: 'prim', prim: 'Date' } },
+        { name: 'accruedUnits', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'paidInvoiceCount', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'maxRetries', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'latestInvoice', type: { kind: 'ref', target: 'Invoice' } }],
+      machine: {
+        regions: [{ name: 'status', initial: 'trialing', states: [
+          { name: 'trialing' }, { name: 'active', tags: ['active'] }, { name: 'pastDue', tags: ['active'] },
+          { name: 'canceled', tags: ['terminal'] }, { name: 'expired', tags: ['terminal'] }] }],
+        transitions: [
+          { name: 'activate', region: 'status', from: ['trialing'], to: 'active', emits: 'SubscriptionActivated',
+            requires: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['paidInvoiceCount'] }, right: { kind: 'int', value: 1 } } },
+          { name: 'expireTrial', region: 'status', from: ['trialing'], to: 'expired' },
+          { name: 'paymentFailed', region: 'status', from: ['active'], to: 'pastDue' },
+          { name: 'recover', region: 'status', from: ['pastDue'], to: 'active' },
+          { name: 'cancel', region: 'status', from: ['trialing', 'active', 'pastDue'], to: 'canceled', emits: 'SubscriptionCanceled' },
+          { name: 'dunningExhausted', region: 'status', from: ['pastDue'], to: 'canceled' }],
+      },
+    },
+    {
+      kind: 'aggregate', name: 'Invoice',
+      fields: [
+        { name: 'invoiceId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'subscription', type: { kind: 'ref', target: 'Subscription' } },
+        { name: 'licenseFeeAmount', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
+        { name: 'usageAmount', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
+        { name: 'totalDue', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
+        { name: 'amountPaid', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+        { name: 'retryCount', type: { kind: 'prim', prim: 'Int' } }],
+      machine: {
+        regions: [{ name: 'settlement', initial: 'draft', states: [
+          { name: 'draft' }, { name: 'open', tags: ['active'] }, { name: 'paid', tags: ['terminal'] },
+          { name: 'void', tags: ['terminal'] }, { name: 'uncollectible', tags: ['terminal'] }] }],
+        transitions: [
+          { name: 'finalize', region: 'settlement', from: ['draft'], to: 'open', emits: 'InvoiceFinalized',
+            requires: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['totalDue'] },
+              right: { kind: 'plus', left: { kind: 'field', owner: 'self', path: ['licenseFeeAmount'] }, right: { kind: 'field', owner: 'self', path: ['usageAmount'] } } } },
+          { name: 'settle', region: 'settlement', from: ['open'], to: 'paid', emits: 'InvoicePaid',
+            requires: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['amountPaid'] }, right: { kind: 'field', owner: 'self', path: ['totalDue'] } } },
+          { name: 'voidDraft', region: 'settlement', from: ['draft'], to: 'void' },
+          { name: 'voidOpen', region: 'settlement', from: ['open'], to: 'void' },
+          { name: 'writeOff', region: 'settlement', from: ['open'], to: 'uncollectible' }],
+      },
+    },
+  ],
+  events: [
+    { name: 'SubscriptionActivated', fields: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }] },
+    { name: 'SubscriptionCanceled', fields: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }] },
+    { name: 'InvoicePaid', fields: [{ name: 'invoiceId', type: { kind: 'prim', prim: 'Id' } }] },
+    { name: 'InvoiceFinalized', fields: [{ name: 'invoiceId', type: { kind: 'prim', prim: 'Id' } }] }],
+  services: [],
+};
+
+// The `state settlement in {paid} => amountPaid == totalDue` conjunct of the committed Invoice
+// invariant Never_Overpaid_And_Paid_Exact (the second `and` arg; transcribed from the ledger's
+// adopted entry). Its consecution is forced by settle's guard (`amountPaid == totalDue`), the only
+// transition into `paid` — the worked-example verdict for the classifier's consecution probe.
+export const paidImpliesExactConjunct: Candidate = {
+  kind: 'statePredicate', aggregate: 'Invoice',
+  body: { kind: 'implies',
+    left: { kind: 'inState', owner: 'self', region: 'settlement', states: ['paid'] },
+    right: { kind: 'cmp', op: 'eq',
+      left: { kind: 'field', owner: 'self', path: ['amountPaid'] },
+      right: { kind: 'field', owner: 'self', path: ['totalDue'] } } },
+};
+
 export const revrecModel: DomainModel = {
   context: 'RevRec', ticksPerDay: 24,
   enums: [{ name: 'EntryKind', values: ['Recognition', 'Correction'] }, { name: 'PeriodState', values: ['Open', 'Closed'] }], values: [],

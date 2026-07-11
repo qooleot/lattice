@@ -212,7 +212,7 @@ describe('runQuintVerify entailment probe (--max-steps 0, integration)', () => {
     `module m {\n  var c: int\n  action init = { c' = 0 }\n  action indInit = { nondet x = oneOf(0.to(5)) c' = x }\n  action step = { c' = c }\n  val peersImpliesInv = c.in(0.to(5)) implies (c == 0)\n}`,
     invariantName: 'peersImpliesInv', varTypes: {} };
   const peersStateSatisfiesInv: QuintEmission = { source:
-    `module m {\n  var c: int\n  action init = { c' = 0 }\n  action indInit = { nondet x = oneOf(0.to(5)) c' = x }\n  action step = { c' = c }\n  val peersImpliesInv = c.in(0.to(5)) implies (c.in(0.to(5))) }`.replace('} }','}\n}'),
+    `module m {\n  var c: int\n  action init = { c' = 0 }\n  action indInit = { nondet x = oneOf(0.to(5)) c' = x }\n  action step = { c' = c }\n  val peersImpliesInv = c.in(0.to(5)) implies (c.in(0.to(5)))\n}`,
     invariantName: 'peersImpliesInv', varTypes: {} };
 
   it('returns violated:true (ITF) when a hypothesis state fails the implication at max-steps 0', async () => {
