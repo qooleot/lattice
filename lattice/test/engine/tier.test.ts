@@ -90,4 +90,19 @@ describe('conjunctTier', () => {
   it('tiers a unique candidate (its by-paths reference data fields) as abstract', () => {
     expect(conjunctTier(invoicingModel, draftInvoiceUnique)).toBe('abstract');
   });
+
+  it('tiers a refsResolve candidate with non-empty fields (data-field references) as abstract', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Invoice', fields: ['subscription'] };
+    expect(conjunctTier(invoicingModel, c)).toBe('abstract');
+  });
+
+  it('tiers a refsResolve candidate with no fields as sound', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Invoice' };
+    expect(conjunctTier(invoicingModel, c)).toBe('sound');
+  });
+
+  it('tiers a refsResolve candidate with empty fields array as sound', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Invoice', fields: [] };
+    expect(conjunctTier(invoicingModel, c)).toBe('sound');
+  });
 });

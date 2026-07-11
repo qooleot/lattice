@@ -66,8 +66,13 @@ export function conjunctTier(m: DomainModel, c: Candidate): 'sound' | 'abstract'
       paths.push(...c.by);
       break;
     case 'terminal':
+      // pure region/state facts — never a data field.
+      break;
     case 'refsResolve':
-      // pure region/state (terminal) or existence-only (refsResolve) facts — never a data field.
+      // fields names ref-typed data fields on the aggregate (bare names, like
+      // sumOverCollection.field below) — direct data-field references, so this is abstract
+      // whenever fields is non-empty.
+      paths.push(...(c.fields ?? []).map((f) => [f]));
       break;
     case 'monotonic':
       paths.push(c.field);
