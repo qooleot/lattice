@@ -1,8 +1,8 @@
 // Structural gate (Plan 3 Task 2): pure functions that split a candidate into per-conjunct pieces
 // and classify each conjunct as `'sound'` (checkable from region/state facts alone) or
 // `'abstract'` (references any data field, so it can only be trusted under abstractEvolution's
-// over-approximation — see engine/evaluate.ts's `abstractEvolution` flag, Task 1). No solver calls
-// here; the classifier (Task 3) wires this in.
+// over-approximation — see `QuintQuery.abstractEvolution` in emit/quint.ts, set by
+// emit/quint-classify.ts, Task 1). No solver calls here; the classifier (Task 3) wires this in.
 import type { DomainModel } from '../ast/domain.js';
 import type { Candidate, Path, Predicate, Term } from '../ast/invariant.js';
 
