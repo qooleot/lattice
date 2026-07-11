@@ -265,7 +265,13 @@ export const subscriptionsModel: DomainModel = {
     { name: 'SubscriptionCanceled', fields: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }] },
     { name: 'InvoicePaid', fields: [{ name: 'invoiceId', type: { kind: 'prim', prim: 'Id' } }] },
     { name: 'InvoiceFinalized', fields: [{ name: 'invoiceId', type: { kind: 'prim', prim: 'Id' } }] }],
-  services: [],
+  // Plan 2b Task 5 (method⊨transition): the committed SubscriptionService.activate performs the
+  // `activate` transition (guard `paidInvoiceCount >= 1`) but declares NO `requires` — the worked
+  // "method weaker than guard" example (design §5). Its `subId` param is an Id (no quint pool),
+  // so it is drawn-skipped by the harness; the undefined `requires` renders as the weakest antecedent.
+  services: [{ name: 'SubscriptionService', methods: [
+    { name: 'activate', params: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }],
+      kind: { performs: { aggregate: 'Subscription', transition: 'activate' } } }] }],
 };
 
 // The `state settlement in {paid} => amountPaid == totalDue` conjunct of the committed Invoice

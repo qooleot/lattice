@@ -10,6 +10,7 @@ import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
 import { nextQuestion, checkDistinct, adoptedConstraints, expressibleAdopted, type SolverDeps } from './engine/planner.js';
 import { classifyInvariant, type Classification } from './engine/classify.js';
+import { checkMethodGuard } from './engine/method-guard.js';
 import { renderWitnessTable } from './engine/salient.js';
 import { astToAlloy } from './emit/alloy.js';
 import { astToQuint } from './emit/quint.js';
@@ -119,6 +120,24 @@ async function classifyAdopted(
     results.push(await classifyInvariant(m, inv, peers, peerNames, deps, reachSteps));
   }
   return results;
+}
+
+/** Method⊨transition entailment (design §5, Plan 2b Task 5): for every `performs` method in the
+ *  model's services, flag whether its `requires` is consistent with / weaker-than / stronger-than
+ *  its transition's guard. Surfaced in the `classify` output (the solver-heavy command), never on
+ *  the fast read-only `status` path. Each check is two real `quint verify` probes at --max-steps 0. */
+async function checkAllMethodGuards(
+  m: DomainModel, deps: SolverDeps,
+): Promise<{ service: string; method: string; verdict: string; reachable?: boolean }[]> {
+  const out: { service: string; method: string; verdict: string; reachable?: boolean }[] = [];
+  for (const svc of m.services) {
+    for (const mm of svc.methods) {
+      if (!('performs' in mm.kind)) continue;
+      const r = await checkMethodGuard(m, svc.name, mm.name, deps);
+      out.push({ service: svc.name, method: mm.name, verdict: r.verdict, reachable: r.witness !== undefined });
+    }
+  }
+  return out;
 }
 
 /** Reclassify-on-apply (design §7.2, incremental): recompute `classified` labels only for the
@@ -495,14 +514,17 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           appendLedger(dir, { kind: 'classified', at: now(), invariant: result.invariant, verdict: result.verdict,
             tier: result.tier, witness: result.witness, reachable: result.reachable, pinnedBy: result.pinnedBy,
             provenance: `classify ${isoDay(now())}` });
-        if (values.name) return { classified: results };
+        // Method⊨transition entailment (design §5): flag every performs-method's requires vs its
+        // guard. Surfaced here in `classify` (a solver command) as a `methodGuards` section.
+        const methodGuards = await checkAllMethodGuards(model(), deps);
+        if (values.name) return { classified: results, methodGuards };
         // Bulk classify (no --name): name the adopted invariants that were NOT classified, rather
         // than just dropping them — most real sessions carry template-adopted structural invariants
         // of unclassifiable kinds (see comment above), and a silent drop looks identical to "nothing
         // else was adopted".
         const skipped = adoptedTracked.filter(c => !classifiable.includes(c))
           .map(c => ({ name: c.inv.name, kind: c.inv.candidate.kind }));
-        return { classified: results, skipped };
+        return { classified: results, skipped, methodGuards };
       }
       case 'explain': {
         const ledger = readLedger(dir);

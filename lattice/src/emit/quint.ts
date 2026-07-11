@@ -20,8 +20,8 @@ export interface QuintQuery {
 export interface QuintEmission { source: string; invariantName: string; varTypes: Record<string, string> }
 
 export const varName = (n: string) => n.charAt(0).toLowerCase() + n.slice(1) + 's';
-const isIntPrim = (p: string) => ['Int', 'Money', 'Date', 'Duration'].includes(p);
-const INT_POOL = 'Set(0, 24, 72, 100)';
+export const isIntPrim = (p: string) => ['Int', 'Money', 'Date', 'Duration'].includes(p);
+export const INT_POOL = 'Set(0, 24, 72, 100)';
 export const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
 
 function fieldQType(m: DomainModel, f: Field): string | null {
@@ -80,7 +80,7 @@ function termToQuint(m: DomainModel, t: Term, self: string, ownerName: string): 
     case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
 }
-function pathToQuint(m: DomainModel, path: Path, self: string, ownerName: string): string {
+export function pathToQuint(m: DomainModel, path: Path, self: string, ownerName: string): string {
   let expr = self, owner = ownerName;
   for (let i = 0; i < path.length; i++) {
     const seg = path[i]!;
@@ -109,7 +109,7 @@ function pathToQuint(m: DomainModel, path: Path, self: string, ownerName: string
 // record's placeholder fields to manufacture a counterexample that refers to data that was never
 // instantiated — a spurious witness, not a real violation. refHopsInTerm/predToQuint's `cmp` case
 // below use these to gate each comparison on its ref targets actually existing.
-function refHopsIn(m: DomainModel, path: Path, self: string, ownerName: string): string[] {
+export function refHopsIn(m: DomainModel, path: Path, self: string, ownerName: string): string[] {
   const hops: string[] = [];
   let expr = self, owner = ownerName;
   for (let i = 0; i < path.length; i++) {
