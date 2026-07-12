@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { astToQuint } from '../../src/emit/quint.js';
-import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice, sumCandidate, periodModel } from '../fixtures.js';
+import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice, sumCandidate, periodModel, subscriptionsModel, paidImpliesExactConjunct } from '../fixtures.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 
@@ -170,6 +170,24 @@ describe('astToQuint', () => {
     });
   });
 
+  // Plan 3 Task 1 (abstract-evolution): the flag is golden-safe — unset, astToQuint's output is
+  // byte-identical to today (no evolve_ actions at all). Set, every non-const numeric field gets a
+  // monotone-up evolve action (design §6.2/§6.3), except const fields (Plan 3a), which stay frozen.
+  describe('abstractEvolution flag (Plan 3 Task 1)', () => {
+    it('emits NO evolve_ actions without the abstractEvolution flag (golden-safety)', () => {
+      const em = astToQuint(subscriptionsModel, { kind: 'probe-permit', hi: paidImpliesExactConjunct, exclusions: [], maxSteps: 5 });
+      expect(em.source).not.toContain('action evolve_');
+    });
+    it('emits monotone-up evolve actions for non-const numeric fields only when flagged', () => {
+      const em = astToQuint(subscriptionsModel, { kind: 'probe-permit', hi: paidImpliesExactConjunct, exclusions: [], maxSteps: 5, abstractEvolution: true });
+      expect(em.source).toContain('action evolve_Invoice_amountPaid');          // non-const numeric -> monotone-up
+      expect(em.source).toMatch(/amountPaid.*\+ /);                             // increase, not set
+      expect(em.source).toContain('action evolve_Invoice_totalDue');           // non-const numeric -> evolves too (default-evolving)
+      expect(em.source).not.toContain('action evolve_Subscription_maxRetries'); // const (Plan 3a) -> frozen
+      expect(em.source).toContain('evolve_Invoice_amountPaid');                // wired into `step = any {...}`
+    });
+  });
+
   // Defense-in-depth below validateCandidate (which REJECTS any param-bearing candidate as
   // ill-typed — see test/ast/validate-services.test.ts): a param term must never reach quint
   // emission either. termToQuint's 'param' case throws rather than silently emitting nonsense
@@ -180,5 +198,16 @@ describe('astToQuint', () => {
     const paramLeak: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
       body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['grace'] }, right: { kind: 'param', name: 'delta' } } };
     expect(() => astToQuint(traceBModel, { kind: 'probe-forbid', hi: paramLeak, exclusions: [], maxSteps: 8 })).toThrow(/param terms/);
+  });
+
+  // Plan 2 Task 2 (refactor guard): buildOwnerInit's extraction must not change astToQuint's
+  // emitted `init` action — every region-state field still gets the fixed `initial` literal
+  // (not a nondet draw), and per-field nondet draws are still emitted for plain fields.
+  it('real init still uses the fixed initial region-state literal (refactor guard)', () => {
+    const em = astToQuint(invoicingModel, { kind: 'probe-forbid', hi: someStatePredicateOnInvoice, exclusions: [], maxSteps: 5 });
+    expect(em.source).toContain('Lifecycle_state: "Draft"'); // fixed initial, not a nondet draw
+    expect(em.source).toContain('Access_state: "Trialing"'); // fixed initial, not a nondet draw
+    expect(em.source).toContain('nondet nd_subscription_grace = oneOf(Set(0, 24, 72, 100))');
+    expect(em.source).toContain('nondet nd_invoice_subscription = oneOf(SUBSCRIPTION_IDS)');
   });
 });

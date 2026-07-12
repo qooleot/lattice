@@ -16,13 +16,18 @@ export interface QuintQuery {
   // prunes a live candidate whose subject matter is unrelated, `permit` contradicts the adoption.
   adopted?: Candidate[];
   maxSteps: number;
+  // Plan 3 Task 1 (design §6.2/§6.3): when set, every non-`const` numeric field gets a monotone-up
+  // evolve action (nondet non-negative increase) gated on the owner being non-terminal, added to
+  // `step` — a sound over-approximation of accrual (real payments are a subset of "arbitrary
+  // non-negative increases"). Unset (default) — no evolve_ actions at all: byte-identical to today.
+  abstractEvolution?: boolean;
 }
 export interface QuintEmission { source: string; invariantName: string; varTypes: Record<string, string> }
 
-const varName = (n: string) => n.charAt(0).toLowerCase() + n.slice(1) + 's';
-const isIntPrim = (p: string) => ['Int', 'Money', 'Date', 'Duration'].includes(p);
-const INT_POOL = 'Set(0, 24, 72, 100)';
-const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
+export const varName = (n: string) => n.charAt(0).toLowerCase() + n.slice(1) + 's';
+export const isIntPrim = (p: string) => ['Int', 'Money', 'Date', 'Duration'].includes(p);
+export const INT_POOL = 'Set(0, 24, 72, 100)';
+export const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
 
 function fieldQType(m: DomainModel, f: Field): string | null {
   if (f.key) return null;
@@ -80,7 +85,7 @@ function termToQuint(m: DomainModel, t: Term, self: string, ownerName: string): 
     case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
 }
-function pathToQuint(m: DomainModel, path: Path, self: string, ownerName: string): string {
+export function pathToQuint(m: DomainModel, path: Path, self: string, ownerName: string): string {
   let expr = self, owner = ownerName;
   for (let i = 0; i < path.length; i++) {
     const seg = path[i]!;
@@ -109,7 +114,7 @@ function pathToQuint(m: DomainModel, path: Path, self: string, ownerName: string
 // record's placeholder fields to manufacture a counterexample that refers to data that was never
 // instantiated — a spurious witness, not a real violation. refHopsInTerm/predToQuint's `cmp` case
 // below use these to gate each comparison on its ref targets actually existing.
-function refHopsIn(m: DomainModel, path: Path, self: string, ownerName: string): string[] {
+export function refHopsIn(m: DomainModel, path: Path, self: string, ownerName: string): string[] {
   const hops: string[] = [];
   let expr = self, owner = ownerName;
   for (let i = 0; i < path.length; i++) {
@@ -161,7 +166,55 @@ function predToQuint(m: DomainModel, p: Predicate, self: string, ownerName: stri
   }
 }
 
-function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
+// Per-owner init-record construction (design §3.5/§6.1), shared by astToQuint (Task 2, this
+// module) and astToQuintClassify (Task 3, sibling emitter — havoc initial state for the
+// solver-induction spike). `stateDraw` controls only the region-state field: 'fixed' reproduces
+// today's astToQuint behavior (the region's declared `initial` literal); 'havoc' instead draws it
+// from a `nondet oneOf(Set(...))` over every declared state name, so the classifier can start
+// Apalache from an arbitrary (not necessarily reachable) region state. Owned-collection init (the
+// `Map(...)` + `Count` draws) never branches on `stateDraw` — a havoc initial state still needs
+// the same per-slot field draws as the fixed path.
+export function buildOwnerInit(
+  m: DomainModel, o: AggregateDef | EntityDef, tag: string, stateDraw: 'fixed' | 'havoc',
+): { inits: string[]; nondets: string[] } {
+  const machine = (o as AggregateDef).machine;
+  const nondets: string[] = [];
+  const inits: string[] = [`exists: ${machine ? 'true' : 'false'}`];   // machine-bearing exist from init; plain entities are created
+  for (const f of o.fields) {
+    const nd = initValue(m, f, nondets, tag);
+    if (nd) inits.push(`${f.name}: ${nd}`);
+  }
+  for (const r of machine?.regions ?? []) {
+    if (stateDraw === 'fixed') {
+      inits.push(`${r.name}_state: "${r.initial}"`);
+    } else {
+      const nd = `nd_${tag}_${r.name}_state`;
+      nondets.push(`nondet ${nd} = oneOf(Set(${r.states.map(s => `"${s.name}"`).join(', ')}))`);
+      inits.push(`${r.name}_state: ${nd}`);
+    }
+  }
+  // Owned collections (design §6.1): per-index nondet draws at init. Action-scope `nondet` can't
+  // be drawn per-element inside a fold, so each of the OWNED_BOUND slots gets its own flat draw
+  // (every bounded map is still reachable — see design deviation note in the commit body).
+  const ownedFields = (o.kind === 'aggregate' ? o.fields.filter(f => ownedCollectionChild(o, f)) : []);
+  for (const f of ownedFields) {
+    const child = ownedCollectionChild(o as AggregateDef, f)!;
+    const entries: string[] = [];
+    for (let i = 0; i < OWNED_BOUND; i++) {
+      const kv: string[] = [];
+      for (const cf of child.fields) {
+        const nd = initValue(m, cf, nondets, `${tag}_${f.name}_${i}`);
+        if (nd) kv.push(`${cf.name}: ${nd}`);
+      }
+      entries.push(`${i} -> { ${kv.join(', ')} }`);
+    }
+    nondets.push(`nondet nd_${tag}_${f.name}Count = oneOf(0.to(${OWNED_BOUND}))`);
+    inits.push(`${f.name}: Map(${entries.join(', ')})`, `${f.name}Count: nd_${tag}_${f.name}Count`);
+  }
+  return { inits, nondets };
+}
+
+export function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
   const v = varName(c.aggregate);
   if (c.kind === 'statePredicate') {
     const guard = c.where ? `${predToQuint(m, c.where, 'x', c.aggregate)} implies ` : '';
@@ -274,29 +327,8 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
     decls.push(`var ${v}: str -> { exists: bool, ${fields.join(', ')} }`);
     pools.push(`val ${o.name.toUpperCase()}_IDS = Set("${o.name.toLowerCase()}1", "${o.name.toLowerCase()}2")`);
 
-    const inits: string[] = [`exists: ${machine ? 'true' : 'false'}`];   // machine-bearing exist from init; plain entities are created
-    for (const f of o.fields) {
-      const nd = initValue(m, f, initNondets, o.name.toLowerCase());
-      if (nd) inits.push(`${f.name}: ${nd}`);
-    }
-    for (const r of machine?.regions ?? []) inits.push(`${r.name}_state: "${r.initial}"`);
-    // Per-index nondet draws at init: action-scope `nondet` can't be drawn per-element inside a
-    // fold, so each of the OWNED_BOUND slots gets its own flat draw (every bounded map is still
-    // reachable — see design deviation note in the commit body).
-    for (const f of ownedFields) {
-      const child = ownedCollectionChild(o as AggregateDef, f)!;
-      const entries: string[] = [];
-      for (let i = 0; i < OWNED_BOUND; i++) {
-        const kv: string[] = [];
-        for (const cf of child.fields) {
-          const nd = initValue(m, cf, initNondets, `${o.name.toLowerCase()}_${f.name}_${i}`);
-          if (nd) kv.push(`${cf.name}: ${nd}`);
-        }
-        entries.push(`${i} -> { ${kv.join(', ')} }`);
-      }
-      initNondets.push(`nondet nd_${o.name.toLowerCase()}_${f.name}Count = oneOf(0.to(${OWNED_BOUND}))`);
-      inits.push(`${f.name}: Map(${entries.join(', ')})`, `${f.name}Count: nd_${o.name.toLowerCase()}_${f.name}Count`);
-    }
+    const { inits, nondets } = buildOwnerInit(m, o, o.name.toLowerCase(), 'fixed');
+    initNondets.push(...nondets);
     initSets.push(`${v}' = ${o.name.toUpperCase()}_IDS.mapBy(id => { ${inits.join(', ')} })`);
 
     // actions: declared transitions; generic region mutator when a region has none; create for non-machine entities; enum mutators
@@ -336,6 +368,21 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
     for (const f of o.fields.filter(f => f.type.kind === 'enum')) {
       const vals = m.enums.find(e => e.name === (f.type as any).enum)!.values.map(x => `"${x}"`).join(', ');
       actions.push(`action mut_${o.name}_${f.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) nondet nv = oneOf(Set(${vals})) all { ${v}' = ${v}.set(id, ${v}.get(id).with("${f.name}", nv)), ${frame([v]).join(', ')} } }`);
+    }
+
+    // Plan 3 Task 1 (design §6.2): sound over-approximate accrual — every non-const numeric field
+    // may nondeterministically increase by a non-negative amount, but only while the owner is
+    // non-terminal (frozen once terminal). Flag-gated: absent, no evolve_ actions at all.
+    if (q.abstractEvolution) {
+      const machine = (o as AggregateDef).machine;
+      // non-terminal guard: the drawn id is not in any region's @terminal state (frozen once terminal).
+      const termConj = (machine?.regions ?? []).flatMap(r =>
+        r.states.filter(s => s.tags?.includes('terminal'))
+          .map(s => `${v}.get(id).${r.name}_state != "${s.name}"`));
+      const nonTerminal = termConj.length ? `(${termConj.join(' and ')})` : 'true';
+      for (const f of o.fields.filter(f => f.type.kind === 'prim' && isIntPrim((f.type as any).prim) && !f.const)) {
+        actions.push(`action evolve_${o.name}_${f.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) nondet dv = oneOf(${INT_POOL}) all { ${nonTerminal}, ${v}' = ${v}.set(id, ${v}.get(id).with("${f.name}", ${v}.get(id).${f.name} + dv)), ${frame([v]).join(', ')} } }`);
+      }
     }
   }
   actions.push(`action tick = { nondet dt = oneOf(Set(1, 5, 24, 120)) all { now' = now + dt, ${frame(['now']).join(', ')} } }`);

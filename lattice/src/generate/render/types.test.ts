@@ -17,6 +17,27 @@ describe('renderTypes', () => {
   it('carries a provenance comment naming the aggregate', () => {
     expect(src).toMatch(/\/\/.*aggregate Account/);
   });
+  it('emits readonly for a const field', () => {
+    const plan: GenPlan = {
+      context: 'Bank',
+      aggregates: [{
+        name: 'Account',
+        fields: [
+          { name: 'accountId', type: { kind: 'prim', prim: 'Id' }, const: true },
+          { name: 'balance', type: { kind: 'prim', prim: 'Int' } },
+        ],
+        regions: [],
+        transitions: [],
+        invariants: [],
+      }],
+      events: [],
+    };
+    const out = renderTypes(plan);
+    expect(out).toMatch(/readonly accountId:\s*string;/);
+    expect(out).not.toMatch(/readonly balance/);
+    expect(out).toMatch(/^\s*balance:\s*number;/m);
+  });
+
   it('throws on an unsupported value-kind field instead of emitting uncompilable output', () => {
     const plan: GenPlan = {
       context: 'Bank',

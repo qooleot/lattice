@@ -30,7 +30,7 @@ const randomPort = () => 20000 + Math.floor(Math.random() * 40000);
 const TRANSIENT_QUINT =
   /UNAVAILABLE|RST_STREAM|DEADLINE_EXCEEDED|Failed to bind to address|Error querying reflection endpoint|Failed to launch Apalache server/;
 
-export async function runQuint(em: QuintEmission, maxSteps: number, execImpl: ExecLike = exec): Promise<QuintResult> {
+async function verifyWithArgs(em: QuintEmission, extraArgs: string[], execImpl: ExecLike): Promise<QuintResult> {
   const t0 = Date.now();
   for (let attempt = 0; ; attempt++) {
     const dir = mkdtempSync(join(tmpdir(), 'quint-'));
@@ -39,8 +39,8 @@ export async function runQuint(em: QuintEmission, maxSteps: number, execImpl: Ex
     writeFileSync(qnt, em.source);
     const env = { ...process.env, JAVA_HOME: dirname(dirname(findJava())) };
     try {
-      await execImpl('npx', ['quint', 'verify', '--max-steps', String(maxSteps), '--invariant', em.invariantName,
-        '--server-endpoint', `localhost:${randomPort()}`, '--out-itf', itf, qnt],
+      await execImpl('npx', ['quint', 'verify',
+        '--server-endpoint', `localhost:${randomPort()}`, '--out-itf', itf, ...extraArgs, qnt],
         { env, timeout: 90_000 });
       return { violated: false, ms: Date.now() - t0 };            // exit 0 ⇒ invariant holds to bound
     } catch (e: any) {
@@ -55,6 +55,23 @@ export async function runQuint(em: QuintEmission, maxSteps: number, execImpl: Ex
       throw new Error(`quint verify failed without a counterexample: ${e.stderr ?? e.message}`);
     }
   }
+}
+
+export async function runQuint(em: QuintEmission, maxSteps: number, execImpl: ExecLike = exec): Promise<QuintResult> {
+  return verifyWithArgs(em, ['--max-steps', String(maxSteps), '--invariant', em.invariantName], execImpl);
+}
+
+export interface VerifyOpts {
+  maxSteps: number;
+  init?: string;        // custom --init action name (default: the module's 'init')
+  invariant?: string;   // --invariant def name (default: em.invariantName)
+}
+
+export async function runQuintVerify(em: QuintEmission, opts: VerifyOpts, execImpl: ExecLike = exec): Promise<QuintResult> {
+  const args: string[] = [];
+  if (opts.init) args.push('--init', opts.init);
+  args.push('--max-steps', String(opts.maxSteps), '--invariant', opts.invariant ?? em.invariantName);
+  return verifyWithArgs(em, args, execImpl);
 }
 
 const deBig = (v: any): any => (v && typeof v === 'object' && '#bigint' in v) ? Number(v['#bigint']) : v;

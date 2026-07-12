@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { DomainModel } from '../../src/ast/domain.js';
-import { runQuint } from '../../src/solvers/quint-adapter.js';
+import { runQuint, runQuintVerify } from '../../src/solvers/quint-adapter.js';
 import { astToQuint } from '../../src/emit/quint.js';
 import { evaluateCandidate } from '../../src/engine/evaluate.js';
 import { nextQuestion } from '../../src/engine/planner.js';
@@ -10,6 +10,7 @@ import { realDeps } from '../../src/cli.js';
 import { traceBModel, graceCandidate, invoicingModel, draftInvoiceUnique, graceCap, invoiceLinesModel, someStatePredicateOnInvoice, sumCandidate, periodModel } from '../fixtures.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 import { remapValueKeys } from '../../src/engine/witness.js';
+import type { QuintEmission } from '../../src/emit/quint.js';
 
 describe('quint adapter (integration)', () => {
   it('finds a disagreement witness between grace-0 and grace-window rules', async () => {
@@ -180,5 +181,47 @@ describe('quint adapter (integration)', () => {
     // agree with the witness's own (now-dotted) field values, not just report SOME verdict.
     expect(evaluateCandidate(periodCand, w)).toBe('forbid');
     expect(Number(sub.fields['period.start'])).toBeGreaterThanOrEqual(Number(sub.fields['period.end']));
+  }, 180_000);
+});
+
+describe('runQuintVerify custom --init (integration, real quint)', () => {
+  const consecutionHolds: QuintEmission = { source:
+    `module m {\n  var c: int\n  action init = { c' = 0 }\n  action indInit = { nondet x = oneOf(0.to(5)) c' = x }\n  action step = { c' = if (c < 5) c + 1 else c }\n  val inv = c.in(0.to(5))\n}`,
+    invariantName: 'inv', varTypes: {} };
+  const consecutionFails: QuintEmission = { source:
+    `module m {\n  var c: int\n  action init = { c' = 0 }\n  action indInit = { nondet x = oneOf(0.to(5)) c' = x }\n  action step = { c' = c - 1 }\n  val inv = c.in(0.to(5))\n}`,
+    invariantName: 'inv', varTypes: {} };
+
+  it('holds (no violation) when the step preserves the invariant from any hypothesis state', async () => {
+    const r = await runQuintVerify(consecutionHolds, { init: 'indInit', invariant: 'inv', maxSteps: 1 });
+    expect(r.violated).toBe(false);
+  }, 180_000);
+
+  it('reports a CTI when a step breaks the invariant from a hypothesis state', async () => {
+    const r = await runQuintVerify(consecutionFails, { init: 'indInit', invariant: 'inv', maxSteps: 1 });
+    expect(r.violated).toBe(true);
+  }, 180_000);
+});
+
+describe('runQuintVerify entailment probe (--max-steps 0, integration)', () => {
+  // Probe 2 shape: from an arbitrary hypothesis state, does the invariant hold in that
+  // very state (0 steps)? A hypothesis state that violates `inv` must yield violated:true
+  // with an ITF (not a thrown error) — the classifier's `independent` vs `entailed` split
+  // relies on this.
+  const peersStateViolatesInv: QuintEmission = { source:
+    `module m {\n  var c: int\n  action init = { c' = 0 }\n  action indInit = { nondet x = oneOf(0.to(5)) c' = x }\n  action step = { c' = c }\n  val peersImpliesInv = c.in(0.to(5)) implies (c == 0)\n}`,
+    invariantName: 'peersImpliesInv', varTypes: {} };
+  const peersStateSatisfiesInv: QuintEmission = { source:
+    `module m {\n  var c: int\n  action init = { c' = 0 }\n  action indInit = { nondet x = oneOf(0.to(5)) c' = x }\n  action step = { c' = c }\n  val peersImpliesInv = c.in(0.to(5)) implies (c.in(0.to(5)))\n}`,
+    invariantName: 'peersImpliesInv', varTypes: {} };
+
+  it('returns violated:true (ITF) when a hypothesis state fails the implication at max-steps 0', async () => {
+    const r = await runQuintVerify(peersStateViolatesInv, { init: 'indInit', invariant: 'peersImpliesInv', maxSteps: 0 });
+    expect(r.violated).toBe(true);
+  }, 180_000);
+
+  it('returns violated:false when every hypothesis state satisfies the implication', async () => {
+    const r = await runQuintVerify(peersStateSatisfiesInv, { init: 'indInit', invariant: 'peersImpliesInv', maxSteps: 0 });
+    expect(r.violated).toBe(false);
   }, 180_000);
 });

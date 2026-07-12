@@ -1,5 +1,5 @@
 import type { DomainModel } from '../src/ast/domain.js';
-import type { Candidate } from '../src/ast/invariant.js';
+import type { Candidate, CandidateInvariant } from '../src/ast/invariant.js';
 
 export const traceAModel: DomainModel = {
   context: 'Billing', ticksPerDay: 24,
@@ -195,6 +195,131 @@ export const traceDSumEq: Candidate = {
 export const traceDSumLe: Candidate = {
   kind: 'sumOverCollection', aggregate: 'Invoice',
   collection: 'lines', child: 'InvoiceLine', field: 'amount', op: 'le', total: ['totalDue'],
+};
+
+// Plan 2 Task 3 (astToQuintClassify integration): the committed Subscriptions model, transcribed
+// from specs/subscriptions/spec.lat + .lattice-session-subscriptions/model.json. The only
+// deviation is the `plan: ref Catalog.Plan` field, DROPPED here: it is an external qualified ref
+// (fieldQType renders it as opaque `str`, initValue would emit `oneOf(CATALOG.PLAN_IDS)` — an
+// undefined pool with an illegal dotted identifier — so the machine can't be emitted standalone,
+// exactly the substitution the spike made by hand). `plan` is read by no invariant under test, so
+// dropping it changes nothing about the paid-conjunct consecution. Both aggregates + their real
+// transition guards (notably settle's `amountPaid == totalDue`) are kept verbatim. `maxRetries` is
+// marked `const` (Plan 3a), mirroring the committed spec (`maxRetries : Int const`) — Plan 3 Task 1
+// uses it as the frozen-under-abstract-evolution counterexample.
+export const subscriptionsModel: DomainModel = {
+  context: 'Subscriptions', ticksPerDay: 24,
+  enums: [], values: [], entities: [],
+  aggregates: [
+    {
+      kind: 'aggregate', name: 'Subscription',
+      fields: [
+        { name: 'subId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'seats', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'periodStart', type: { kind: 'prim', prim: 'Date' } },
+        { name: 'periodEnd', type: { kind: 'prim', prim: 'Date' } },
+        { name: 'accruedUnits', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'paidInvoiceCount', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'maxRetries', type: { kind: 'prim', prim: 'Int' }, const: true },
+        { name: 'latestInvoice', type: { kind: 'ref', target: 'Invoice' } }],
+      machine: {
+        regions: [{ name: 'status', initial: 'trialing', states: [
+          { name: 'trialing' }, { name: 'active', tags: ['active'] }, { name: 'pastDue', tags: ['active'] },
+          { name: 'canceled', tags: ['terminal'] }, { name: 'expired', tags: ['terminal'] }] }],
+        transitions: [
+          { name: 'activate', region: 'status', from: ['trialing'], to: 'active', emits: 'SubscriptionActivated',
+            requires: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['paidInvoiceCount'] }, right: { kind: 'int', value: 1 } } },
+          { name: 'expireTrial', region: 'status', from: ['trialing'], to: 'expired' },
+          { name: 'paymentFailed', region: 'status', from: ['active'], to: 'pastDue' },
+          { name: 'recover', region: 'status', from: ['pastDue'], to: 'active' },
+          { name: 'cancel', region: 'status', from: ['trialing', 'active', 'pastDue'], to: 'canceled', emits: 'SubscriptionCanceled' },
+          { name: 'dunningExhausted', region: 'status', from: ['pastDue'], to: 'canceled' }],
+      },
+    },
+    {
+      kind: 'aggregate', name: 'Invoice',
+      fields: [
+        { name: 'invoiceId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'subscription', type: { kind: 'ref', target: 'Subscription' } },
+        { name: 'licenseFeeAmount', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
+        { name: 'usageAmount', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
+        { name: 'totalDue', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
+        { name: 'amountPaid', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+        { name: 'retryCount', type: { kind: 'prim', prim: 'Int' } }],
+      machine: {
+        regions: [{ name: 'settlement', initial: 'draft', states: [
+          { name: 'draft' }, { name: 'open', tags: ['active'] }, { name: 'paid', tags: ['terminal'] },
+          { name: 'void', tags: ['terminal'] }, { name: 'uncollectible', tags: ['terminal'] }] }],
+        transitions: [
+          { name: 'finalize', region: 'settlement', from: ['draft'], to: 'open', emits: 'InvoiceFinalized',
+            requires: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['totalDue'] },
+              right: { kind: 'plus', left: { kind: 'field', owner: 'self', path: ['licenseFeeAmount'] }, right: { kind: 'field', owner: 'self', path: ['usageAmount'] } } } },
+          { name: 'settle', region: 'settlement', from: ['open'], to: 'paid', emits: 'InvoicePaid',
+            requires: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['amountPaid'] }, right: { kind: 'field', owner: 'self', path: ['totalDue'] } } },
+          { name: 'voidDraft', region: 'settlement', from: ['draft'], to: 'void' },
+          { name: 'voidOpen', region: 'settlement', from: ['open'], to: 'void' },
+          { name: 'writeOff', region: 'settlement', from: ['open'], to: 'uncollectible' }],
+      },
+    },
+  ],
+  events: [
+    { name: 'SubscriptionActivated', fields: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }] },
+    { name: 'SubscriptionCanceled', fields: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }] },
+    { name: 'InvoicePaid', fields: [{ name: 'invoiceId', type: { kind: 'prim', prim: 'Id' } }] },
+    { name: 'InvoiceFinalized', fields: [{ name: 'invoiceId', type: { kind: 'prim', prim: 'Id' } }] }],
+  // Plan 2b Task 5 (method⊨transition): the committed SubscriptionService.activate performs the
+  // `activate` transition (guard `paidInvoiceCount >= 1`) but declares NO `requires` — the worked
+  // "method weaker than guard" example (design §5). Its `subId` param is an Id (no quint pool),
+  // so it is drawn-skipped by the harness; the undefined `requires` renders as the weakest antecedent.
+  services: [{ name: 'SubscriptionService', methods: [
+    { name: 'activate', params: [{ name: 'subId', type: { kind: 'prim', prim: 'Id' } }],
+      kind: { performs: { aggregate: 'Subscription', transition: 'activate' } } }] }],
+};
+
+// The `state settlement in {paid} => amountPaid == totalDue` conjunct of the committed Invoice
+// invariant Never_Overpaid_And_Paid_Exact (the second `and` arg; transcribed from the ledger's
+// adopted entry). Its consecution is forced by settle's guard (`amountPaid == totalDue`), the only
+// transition into `paid` — the worked-example verdict for the classifier's consecution probe.
+export const paidImpliesExactConjunct: Candidate = {
+  kind: 'statePredicate', aggregate: 'Invoice',
+  body: { kind: 'implies',
+    left: { kind: 'inState', owner: 'self', region: 'settlement', states: ['paid'] },
+    right: { kind: 'cmp', op: 'eq',
+      left: { kind: 'field', owner: 'self', path: ['amountPaid'] },
+      right: { kind: 'field', owner: 'self', path: ['totalDue'] } } },
+};
+export const paidInvFixture: CandidateInvariant = {
+  id: 'paid-conjunct', name: 'paidImpliesExactConjunct', prior: 1, source: 'template',
+  candidate: paidImpliesExactConjunct,
+};
+
+// The `amountPaid <= totalDue` conjunct of the same committed Invoice invariant
+// Never_Overpaid_And_Paid_Exact (the first `&&` arg; specs/subscriptions/spec.lat:75) — design
+// §6.3's worked abstract-evolution flip (Plan 3 Task 1). Unlike paidImpliesExactConjunct, this
+// conjunct is NOT guard-forced: nothing in the frozen machine prevents amountPaid from exceeding
+// totalDue, so consecution under abstract accrual is meaningfully violable (accrual drives
+// amountPaid past totalDue while `open`, the truth the frozen model can't see).
+export const amountPaidAtMostTotalConjunct: Candidate = {
+  kind: 'statePredicate', aggregate: 'Invoice',
+  body: { kind: 'cmp', op: 'le',
+    left: { kind: 'field', owner: 'self', path: ['amountPaid'] },
+    right: { kind: 'field', owner: 'self', path: ['totalDue'] } },
+};
+
+// The committed Subscriptions coupling invariant (specs/subscriptions/spec.lat:46) — a Subscription
+// statePredicate that ref-hops into its `latestInvoice` (design §5's corrected worked example): NOT
+// guard-enforced, so its reachability probe finds a real counterexample (`recover`/`activate` reach
+// `active` with an unpaid `latestInvoice`) — the classifier's `violated` verdict, not `entailed`.
+export const activePaidInFullCandidate: Candidate = {
+  kind: 'statePredicate', aggregate: 'Subscription',
+  where: { kind: 'inState', owner: 'self', region: 'status', states: ['active'] },
+  body: { kind: 'cmp', op: 'eq',
+    left: { kind: 'field', owner: 'self', path: ['latestInvoice', 'amountPaid'] },
+    right: { kind: 'field', owner: 'self', path: ['latestInvoice', 'totalDue'] } },
+};
+export const activePaidInFullFixture: CandidateInvariant = {
+  id: 'active-paid-in-full', name: 'activePaidInFull', prior: 1, source: 'template',
+  candidate: activePaidInFullCandidate,
 };
 
 export const revrecModel: DomainModel = {

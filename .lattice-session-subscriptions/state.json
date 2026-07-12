@@ -22,7 +22,8 @@
             "type": {
               "kind": "ref",
               "target": "Catalog.Plan"
-            }
+            },
+            "const": true
           },
           {
             "name": "seats",
@@ -64,7 +65,8 @@
             "type": {
               "kind": "prim",
               "prim": "Int"
-            }
+            },
+            "const": true
           },
           {
             "name": "latestInvoice",
@@ -199,7 +201,8 @@
             "type": {
               "kind": "ref",
               "target": "Subscription"
-            }
+            },
+            "const": true
           },
           {
             "name": "licenseFeeAmount",

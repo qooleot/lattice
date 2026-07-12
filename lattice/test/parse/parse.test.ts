@@ -86,6 +86,11 @@ describe('parseLat', () => {
       expect(r.ok, `body failed: ${b}\n${JSON.stringify(!r.ok && r.diagnostics)}`).toBe(true);
     }
   });
+
+  it('parses the const field modifier (suffix, after key, before tags)', () => {
+    const r = parseLat('context C { aggregate A { aId : Id key\n foo : Int const\n bar : Id key const } }');
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+  });
 });
 
 describe('ID terminal matches the AST identifier rule (single source, spec §3.3)', () => {

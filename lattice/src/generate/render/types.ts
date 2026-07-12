@@ -11,7 +11,7 @@ function tsType(t: TypeRef): string {
   }
 }
 
-function fieldLine(f: Field): string { return `  ${f.name}: ${tsType(f.type)};`; }
+function fieldLine(f: Field): string { return `  ${f.const ? 'readonly ' : ''}${f.name}: ${tsType(f.type)};`; }
 
 function aggregateInterface(a: PlanAggregate): string {
   const lines = a.fields.map(fieldLine);

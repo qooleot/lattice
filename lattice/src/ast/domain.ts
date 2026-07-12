@@ -13,6 +13,7 @@ export interface Field {
   name: string;
   type: TypeRef;
   key?: boolean;
+  const?: boolean;
   tags?: string[];   // semantic tags (spec plan §10.1): 'balance', 'total', 'monotonic', …
 }
 export interface StateDef { name: string; tags?: ('active' | 'terminal')[] }

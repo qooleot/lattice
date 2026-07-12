@@ -25,7 +25,11 @@ export type LedgerEntry =
   | { kind: 'adopted'; at: string; invariant: CandidateInvariant; provenance: string }
   | { kind: 'declined'; at: string; invariant: CandidateInvariant; reason: string }
   | { kind: 'structure'; at: string; question: string; answer: string }
-  | { kind: 'rename'; at: string; scope: import('./renames.js').RenameScope; path: string; from: string; to: string };
+  | { kind: 'rename'; at: string; scope: import('./renames.js').RenameScope; path: string; from: string; to: string }
+  | { kind: 'classified'; at: string; invariant: string; conjunct?: string;
+      verdict: 'entailed' | 'independent' | 'not-inductive' | 'violated';
+      tier: 'sound' | 'abstract'; caveat?: string;
+      witness?: CaseState; reachable?: boolean; pinnedBy?: string[]; provenance: string };
 
 /** Calendar day of an ISO timestamp — the human-facing date in provenance and refusal text. */
 export const isoDay = (at: string): string => at.slice(0, 10);
@@ -54,4 +58,7 @@ export function appendLedger(dir: string, e: LedgerEntry): void {
 export function readLedger(dir: string): LedgerEntry[] {
   if (!existsSync(ledgerFile(dir))) return [];
   return readFileSync(ledgerFile(dir), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+}
+export function readClassifications(dir: string): Extract<LedgerEntry, { kind: 'classified' }>[] {
+  return readLedger(dir).filter((e): e is Extract<LedgerEntry, { kind: 'classified' }> => e.kind === 'classified');
 }

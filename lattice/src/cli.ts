@@ -5,15 +5,18 @@ import type { DomainModel } from './ast/domain.js';
 import { validateModel } from './ast/validate.js';
 import { validateCandidate } from './ast/grammar.js';
 import type { CandidateInvariant } from './ast/invariant.js';
-import { loadState, saveState, appendLedger, readLedger, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
+import { loadState, saveState, appendLedger, readLedger, readClassifications, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
 import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
-import { nextQuestion, checkDistinct, adoptedConstraints, type SolverDeps } from './engine/planner.js';
+import { nextQuestion, checkDistinct, adoptedConstraints, expressibleAdopted, type SolverDeps } from './engine/planner.js';
+import { classifyInvariant, type Classification } from './engine/classify.js';
+import { conjunctsOf } from './engine/tier.js';
+import { checkMethodGuard } from './engine/method-guard.js';
 import { renderWitnessTable } from './engine/salient.js';
 import { astToAlloy } from './emit/alloy.js';
 import { astToQuint } from './emit/quint.js';
 import { runAlloy } from './solvers/alloy-adapter.js';
-import { runQuint } from './solvers/quint-adapter.js';
+import { runQuint, runQuintVerify } from './solvers/quint-adapter.js';
 import { astToProse, renderCandidateEnglish } from './emit/prose.js';
 import { astToCode } from './emit/code.js';
 import { specDiagramFiles } from './emit/mermaid/docs.js';
@@ -41,7 +44,8 @@ export const realDeps: SolverDeps = {
   quint: async (m, q) => {
     const r = await runQuint(astToQuint(m, q), q.maxSteps);
     return { ...r, witness: r.witness ? remapValueKeys(m, r.witness) : r.witness };
-  }
+  },
+  quintVerify: (em, opts) => runQuintVerify(em, opts),
 };
 
 const BAD_JSON = Symbol('bad-json-or-path');
@@ -60,7 +64,7 @@ const isSessionBusy = (s: SessionState): boolean =>
   s.phase !== 'converged' || Object.keys(s.pendingWitnesses).length > 0;
 
 const VALID_JUDGES = ['permit', 'forbid', 'undecided'] as const;
-const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit', 'explain']);
+const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit', 'explain', 'classify']);
 // terminal/monotonic/leadsTo/refsResolve are template-adopted only (spec §7/§8): they either crash
 // candidateToQuint when pair-routed against a Quint-side candidate, or (refsResolve) mis-evaluate
 // on Quint witnesses that never populate the fields refsResolve's vacuous-true Alloy semantics
@@ -101,6 +105,85 @@ function workspaceHook(latPath: string): { written: string[] } | { diagnostics: 
   return w.ok ? { written: w.written } : { diagnostics: w.diagnostics };
 }
 
+/** Classify `targets` (a subset of `allAdopted`) against the FULL adopted set as peers (design
+ *  §7 classifier contract: peers = everything else currently adopted, regardless of whether this
+ *  call is reclassifying all of them or a scoped subset). Shared by the `classify` command (Task 3)
+ *  and `classifyOnApply` (Task 4, below) so the "candidates → classified verdicts" logic exists in
+ *  exactly one place. */
+async function classifyAdopted(
+  m: DomainModel, allAdopted: CandidateInvariant[], targets: CandidateInvariant[], deps: SolverDeps, reachSteps?: number,
+): Promise<Classification[]> {
+  const results: Classification[] = [];
+  for (const inv of targets) {
+    const peerInvs = allAdopted.filter(a => a.id !== inv.id);
+    const peers = expressibleAdopted('quint', peerInvs.map(p => p.candidate));
+    const peerNames = peerInvs.filter(p => peers.includes(p.candidate)).map(p => p.name);
+    // Per-conjunct gate (Plan 3 Task 3): split a top-level `and` body into one Candidate per
+    // conjunct and classify each separately, so the tier + caveat land per conjunct. A single-
+    // conjunct invariant yields exactly one result with `conjunct` undefined (shape unchanged).
+    for (const conj of conjunctsOf(inv.candidate)) {
+      results.push(await classifyInvariant(m, inv, conj, peers, peerNames, deps, reachSteps));
+    }
+  }
+  return results;
+}
+
+/** Method⊨transition entailment (design §5, Plan 2b Task 5): for every `performs` method in the
+ *  model's services, flag whether its `requires` is consistent with / weaker-than / stronger-than
+ *  its transition's guard. Surfaced in the `classify` output (the solver-heavy command), never on
+ *  the fast read-only `status` path. Each check is two real `quint verify` probes at --max-steps 0. */
+async function checkAllMethodGuards(
+  m: DomainModel, deps: SolverDeps,
+): Promise<{ service: string; method: string; verdict: string; reachable?: boolean }[]> {
+  const out: { service: string; method: string; verdict: string; reachable?: boolean }[] = [];
+  for (const svc of m.services) {
+    for (const mm of svc.methods) {
+      if (!('performs' in mm.kind)) continue;
+      const r = await checkMethodGuard(m, svc.name, mm.name, deps);
+      out.push({ service: svc.name, method: mm.name, verdict: r.verdict, reachable: r.witness !== undefined });
+    }
+  }
+  return out;
+}
+
+/** Reclassify-on-apply (design §7.2, incremental): recompute `classified` labels only for the
+ *  invariants in THIS apply's dependency set, appending fresh ledger entries for them; everything
+ *  else carries forward its most recent `classified` entry untouched. Keeps full Apalache sweeps
+ *  off the interactive apply path (a full sweep is still available via the standalone `classify`
+ *  command).
+ *
+ *  Dependency-set rule implemented (conservative, scoped — design §7.2's "touched invariant/guard/
+ *  field + any invariant whose body/scope references it"):
+ *    - `changed` is resolved by the CALLER: on a fresh-authored session every adopted invariant is
+ *      "new" (nothing to carry forward), so the caller passes the full adopted-name set; on a
+ *      reconcile apply the caller passes exactly the names reconcile() itself (re)adopted this edit
+ *      (its `ledgerAppends` of kind 'adopted' — the invariants whose body actually changed or that
+ *      were newly added).
+ *    - Only names in `changed` that are quint-expressible are reclassified here.
+ *  Deliberately NOT implemented: broadening to "any adopted invariant over an aggregate whose
+ *  guards/fields changed but whose own body didn't" (design §7.2's fuller rule) — reconcile's
+ *  ModelDiff only reports structural adds/removes as free-text notes (src/parse/diff.ts), not a
+ *  structured per-aggregate change set, and a pure guard-predicate edit on an existing transition
+ *  produces no structural note at all today. Parsing those notes to approximate aggregate scope
+ *  would be fragile and would pull real-solver reclassification onto structural-only edits (e.g. a
+ *  bare "add a transition") that leave every invariant's *own* body untouched. Left as follow-up
+ *  scope, flagged rather than silently assumed (see task-4-report.md). */
+async function classifyOnApply(
+  dir: string, m: DomainModel, adopted: CandidateInvariant[], changed: string[], deps: SolverDeps,
+): Promise<Extract<LedgerEntry, { kind: 'classified' }>[]> {
+  if (!changed.length) return [];
+  const changedSet = new Set(changed);
+  const classifiable = expressibleAdopted('quint', adopted.map(a => a.candidate));
+  const targets = adopted.filter(a => changedSet.has(a.name) && classifiable.includes(a.candidate));
+  if (!targets.length) return [];
+  const results = await classifyAdopted(m, adopted, targets, deps);
+  const entries = results.map(result => ({ kind: 'classified' as const, at: now(), invariant: result.invariant,
+    conjunct: result.conjunct, verdict: result.verdict, tier: result.tier, caveat: result.caveat, witness: result.witness,
+    reachable: result.reachable, pinnedBy: result.pinnedBy, provenance: `apply ${isoDay(now())}` }));
+  for (const e of entries) appendLedger(dir, e);
+  return entries;
+}
+
 export function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
   const segs = path.split('.');
   const from = segs[segs.length - 1]!;
@@ -138,9 +221,9 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       session: { type: 'string' }, model: { type: 'string' }, candidates: { type: 'string' }, candidate: { type: 'string' },
       witness: { type: 'string' }, judge: { type: 'string' }, out: { type: 'string' }, topic: { type: 'string' }, note: { type: 'string' },
       question: { type: 'string' }, answer: { type: 'string' },
-      lat: { type: 'string' }, 'dry-run': { type: 'boolean' },
+      lat: { type: 'string' }, 'dry-run': { type: 'boolean' }, 'no-classify': { type: 'boolean' },
       rename: { type: 'string', multiple: true }, 'force-remove': { type: 'string', multiple: true },
-      name: { type: 'string' }, workspace: { type: 'string' }
+      name: { type: 'string' }, workspace: { type: 'string' }, 'max-steps': { type: 'string' }
     }});
 
     if (cmd !== 'docs' && !values.session) return { error: 'missing-arg', arg: 'session' };
@@ -274,11 +357,23 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         appendLedger(dir, { kind: 'structure', at: now(), question: values.question!, answer: values.answer! });
         return { ok: true, ledgerCount: readLedger(dir).length };
       }
-      case 'status':
+      case 'status': {
+        // classified entries are append-only (session.ts:29-32) — later entries supersede earlier
+        // ones for the same (invariant, conjunct); keep only the latest per key before counting.
+        const latestByKey = new Map<string, ReturnType<typeof readClassifications>[number]>();
+        for (const e of readClassifications(dir)) latestByKey.set(`${e.invariant}::${e.conjunct ?? ''}`, e);
+        const classifications = { entailed: 0, independent: 0, notInductive: 0, violated: 0 };
+        for (const e of latestByKey.values()) {
+          if (e.verdict === 'entailed') classifications.entailed++;
+          else if (e.verdict === 'independent') classifications.independent++;
+          else if (e.verdict === 'not-inductive') classifications.notInductive++;
+          else if (e.verdict === 'violated') classifications.violated++;
+        }
         return { phase: s.phase, regenAttempts: s.regenAttempts, alternativeAttempts: s.alternativeAttempts,
           candidates: s.candidates.map(c => ({ id: c.inv.id, name: c.inv.name, prior: c.inv.prior, status: c.status })),
           openDecisions: readLedger(dir).filter(e => e.kind === 'open-decision').length,
-          ledgerCount: readLedger(dir).length };
+          ledgerCount: readLedger(dir).length, classifications };
+      }
       case 'witness-show': {
         const p = s.pendingWitnesses[values.witness!];
         return p ? { table: renderWitnessTable(p.witness, model()?.ticksPerDay) } : { error: 'unknown-witness' };
@@ -349,8 +444,13 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           writeFileSync(join(dir, 'model.json'), JSON.stringify(loaded.model, null, 2));
           const written = writeProjections(latPath, loaded.model, loaded.invariants, readLedger(dir));
           const workspace = workspaceHook(latPath);
+          // fresh session: every adopted invariant is new (there is no prior classification to
+          // carry forward), so the dependency set is all of them (see classifyOnApply's doc comment).
+          const classified = values['no-classify'] ? undefined
+            : await classifyOnApply(dir, loaded.model, loaded.invariants, loaded.invariants.map(i => i.name), deps);
           return done({ ok: true, applied: ['fresh session', ...loaded.invariants.map(i => `invariant ${i.name}`)], written,
-            ...outcomeBase, ...(workspace ? { workspace } : {}) });
+            ...outcomeBase, ...(workspace ? { workspace } : {}),
+            ...(classified ? { classification: { reclassified: classified.length } } : {}) });
         }
 
         const r = reconcile({ parsed: { model: loaded.model, invariants: loaded.invariants },
@@ -374,7 +474,63 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         writeFileSync(join(dir, 'model.json'), JSON.stringify(r.model, null, 2));
         const written = writeProjections(latPath, r.model, r.adopted, readLedger(dir));
         const workspace = workspaceHook(latPath);
-        return done({ ok: true, applied: r.applied, written, warnings, ...(workspace ? { workspace } : {}) });
+        // reconcile: the dependency set is exactly the invariants reconcile() itself just (re)adopted
+        // this edit — the 'adopted' entries it appended above (see classifyOnApply's doc comment).
+        const changedNames = r.ledgerAppends
+          .filter((e): e is Extract<LedgerEntry, { kind: 'adopted' }> => e.kind === 'adopted')
+          .map(e => e.invariant.name);
+        const classified = values['no-classify'] ? undefined
+          : await classifyOnApply(dir, r.model, r.adopted, changedNames, deps);
+        return done({ ok: true, applied: r.applied, written, warnings, ...(workspace ? { workspace } : {}),
+          ...(classified ? { classification: { reclassified: classified.length } } : {}) });
+      }
+      case 'classify': {
+        // Only quint-expressible kinds (statePredicate/conservation/cardinality/unique/
+        // sumOverCollection) can be classified — candidateToQuint throws for the rest
+        // (terminal/monotonic/leadsTo/refsResolve, template-adopted only). Filtering here keeps
+        // plain `classify` (no --name) safe to run on any real session, most of which carry
+        // template-adopted structural invariants of those unclassifiable kinds.
+        const adoptedTracked = s.candidates.filter(c => c.status === 'adopted');
+        const classifiable = adoptedTracked.filter(c => expressibleAdopted('quint', [c.inv.candidate]).length > 0);
+
+        // A `--name` that matches no classifiable target must never silently no-op (it would
+        // otherwise fall through to an empty `targets` list and return `{ classified: [] }` with
+        // no signal). Distinguish the two ways that can happen: the name is adopted but its kind
+        // isn't quint-expressible (template-adopted terminal/monotonic/leadsTo/refsResolve), vs.
+        // no adopted invariant carries that name at all (typo, never proposed, still pending).
+        if (values.name && !classifiable.some(c => c.inv.name === values.name)) {
+          const adoptedMatch = adoptedTracked.find(c => c.inv.name === values.name);
+          return { error: 'not-classifiable', name: values.name,
+            hint: adoptedMatch
+              ? `'${values.name}' is adopted with kind '${adoptedMatch.inv.candidate.kind}', which quint cannot classify`
+              : `no adopted invariant named '${values.name}'` };
+        }
+
+        let reachSteps: number | undefined;
+        if (values['max-steps'] !== undefined) {
+          const n = Number(values['max-steps']);
+          if (!Number.isInteger(n) || n <= 0) return { error: 'missing-arg', arg: 'max-steps' };
+          reachSteps = n;
+        }
+
+        const targets = values.name ? classifiable.filter(c => c.inv.name === values.name) : classifiable;
+
+        const results = await classifyAdopted(model(), adoptedTracked.map(c => c.inv), targets.map(c => c.inv), deps, reachSteps);
+        for (const result of results)
+          appendLedger(dir, { kind: 'classified', at: now(), invariant: result.invariant, conjunct: result.conjunct,
+            verdict: result.verdict, tier: result.tier, caveat: result.caveat, witness: result.witness,
+            reachable: result.reachable, pinnedBy: result.pinnedBy, provenance: `classify ${isoDay(now())}` });
+        // Method⊨transition entailment (design §5): flag every performs-method's requires vs its
+        // guard. Surfaced here in `classify` (a solver command) as a `methodGuards` section.
+        const methodGuards = await checkAllMethodGuards(model(), deps);
+        if (values.name) return { classified: results, methodGuards };
+        // Bulk classify (no --name): name the adopted invariants that were NOT classified, rather
+        // than just dropping them — most real sessions carry template-adopted structural invariants
+        // of unclassifiable kinds (see comment above), and a silent drop looks identical to "nothing
+        // else was adopted".
+        const skipped = adoptedTracked.filter(c => !classifiable.includes(c))
+          .map(c => ({ name: c.inv.name, kind: c.inv.candidate.kind }));
+        return { classified: results, skipped, methodGuards };
       }
       case 'explain': {
         const ledger = readLedger(dir);
@@ -400,6 +556,22 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           out.implied = c.kind === 'terminal' ? `implied by @terminal on ${c.aggregate}.${c.region}.${c.state}`
             : c.kind === 'refsResolve' ? `implied by ref fields on ${c.aggregate}`
             : `implied by Money field on ${c.aggregate}`;
+        }
+        // Matching `classified` entries (by resolved current name) merge in. The ledger is
+        // append-only and chronological, so keep the latest per conjunct (a per-conjunct classify,
+        // Plan 3 Task 3, emits one entry per conjunct — later entries supersede earlier ones).
+        const classifications = readClassifications(dir).filter(e => e.invariant === current);
+        const latestByConjunct = new Map<string, typeof classifications[number]>();
+        for (const e of classifications) latestByConjunct.set(e.conjunct ?? '', e);
+        const latestClass = [...latestByConjunct.values()];
+        const classView = (e: typeof classifications[number]) => ({ verdict: e.verdict, tier: e.tier,
+          caveat: e.caveat, witness: e.witness, pinnedBy: e.pinnedBy, reachable: e.reachable });
+        if (latestClass.length === 1 && latestClass[0]!.conjunct === undefined) {
+          // Single-conjunct invariant: keep the flat `classification` object (shape unchanged).
+          out.classification = classView(latestClass[0]!);
+        } else if (latestClass.length) {
+          // Multi-conjunct: one classification per conjunct, tagged with its index.
+          out.classifications = latestClass.map(e => ({ conjunct: e.conjunct, ...classView(e) }));
         }
         return out;
       }

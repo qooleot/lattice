@@ -19,7 +19,7 @@ function classLines(name: string, fields: Field[], out: string[]): void {
   out.push(`    class ${name} {`);
   for (const f of fields) {
     if (f.type.kind === 'ref' || f.type.kind === 'list') continue;   // refs are associations, never members
-    out.push(`      +${f.name} : ${typeStr(f.type)}${f.key ? ' «key»' : ''}`);
+    out.push(`      +${f.name} : ${typeStr(f.type)}${f.key ? ' «key»' : ''}${f.const ? ' «readonly»' : ''}`);
   }
   out.push('    }');
 }

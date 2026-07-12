@@ -16,7 +16,7 @@ classDiagram
       +periodEnd : Date
       +accruedUnits : Int
       +paidInvoiceCount : Int
-      +maxRetries : Int
+      +maxRetries : Int «readonly»
     }
     class Invoice {
       +invoiceId : Id «key»

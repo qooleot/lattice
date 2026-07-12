@@ -27,7 +27,7 @@ context Billing {
 }
 ```
 
-A field is `<camelId> : <type> [key] [@<tag>]*`. `<type>` is one of:
+A field is `<camelId> : <type> [key] [const] [@<tag>]*`. `<type>` is one of:
 
 - **Primitives:** `Int`, `Text`, `Date`, `Duration`, `Money`, `Id`.
 - **An enum name** — any [enum](enum.md) declared in the same context.
@@ -42,8 +42,39 @@ A bare identifier resolves in this order: primitive → declared value → decla
 (`ref`) → enum (the fallback, `unresolved-enum` if it matches nothing declared).
 
 `key` (unquoted, after the type) marks the field as the owner's identity field — see
-[entity](entity.md)/[aggregate](aggregate.md) for the `missing-key` rule. `@`-tags follow; see
-[tags](tags.md).
+[entity](entity.md)/[aggregate](aggregate.md) for the `missing-key` rule. `const` (unquoted, after
+`key` if both are present) follows next; `@`-tags follow that — see [tags](tags.md).
+
+## `const` fields
+
+`const` (unquoted, after an optional `key` and before any `@`-tags) marks a field as immutable
+after the owning entity/aggregate is created — the field may be set at creation but is never
+reassigned afterward:
+
+```lat
+context Billing {
+  aggregate Subscription {
+    subId      : Id key
+    plan       : ref Catalog.Plan const
+    maxRetries : Int const
+    seats      : Int
+  }
+}
+```
+
+- Any field type may carry `const` — primitives, enums, `ref`, and `List<T>` alike. (On a *value*
+  sub-field it is rejected with `value-no-const`, since value types are immutable by structure; on a
+  `key` field it is tolerated but redundant.)
+- It has no bearing on *invariant/semantic* validation or on rename/diff detection: `diff.ts` hashes
+  a field by its type only, and the derived-invariant machinery ignores modifiers — `const` is
+  treated the same way as `key`. (It does drive the `value-no-const` rule above.)
+- Generation (`engine generate`) renders a `const` field as a `readonly` property on the
+  corresponding TypeScript interface in the generated package's `types.ts`.
+- `const` on a `ref` field is **not** shown in the mermaid class diagram (refs render as associations,
+  not class members, so the `«readonly»` stereotype appears only on non-ref const fields).
+- Abstract-evolution analysis (planned — the inference slice's Plan 3) *will* treat `const` fields as
+  frozen, excluding them from the monotone-evolution over-approximation applied to plain mutable
+  numeric fields. That analysis does not read `const` yet; this bullet documents the intended use.
 
 ## Cross-context refs are structural only
 
