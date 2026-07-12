@@ -509,7 +509,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         let reachSteps: number | undefined;
         if (values['max-steps'] !== undefined) {
           const n = Number(values['max-steps']);
-          if (!Number.isInteger(n) || n <= 0) return { error: 'missing-arg', arg: 'max-steps' };
+          if (!Number.isInteger(n) || n <= 0) return { error: 'invalid-arg', arg: 'max-steps' };
           reachSteps = n;
         }
 

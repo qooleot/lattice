@@ -20,6 +20,12 @@ const uniqNames = (arb: fc.Arbitrary<string>, min: number, max: number) =>
 const docText = fc.string({ unit: fc.constantFrom(...'abc XYZ,.'.split('')), minLength: 1, maxLength: 30 })
   .map(s => s.trim()).filter(s => s.length > 0);
 
+// const (Plan 3a): drawn ~1/4 of the time — low weight so most fields stay non-const, but
+// frequent enough that the round-trip property (roundtrip.test.ts) reliably exercises the
+// printer's const-placement ordering (key, then const, then @tags — src/emit/code.ts fieldLines).
+// Shared by fieldArb (AGGREGATE fields) and entityFieldArb (ENTITY fields).
+const constDrawArb = fc.oneof({ weight: 3, arbitrary: fc.constant(false) }, { weight: 1, arbitrary: fc.constant(true) });
+
 // AGGREGATE fields: prim/enum/value only — never 'ref'/'list'. candidateArb's refsResolve arm
 // depends on there being no ref fields (see its comment); roundtrip.test.ts asserts the invariant
 // executably. `valueNames` (optional, Task 10) lets a field draw a declared value type — kept a
@@ -33,13 +39,9 @@ export function fieldArb(name: string, enumNames: string[], valueNames: string[]
   if (valueNames.length) options.push({ weight: 1,
     arbitrary: fc.constantFrom(...valueNames).map(v => ({ kind: 'value' as const, value: v })) });
   const type = fc.oneof(...options);
-  // const (Plan 3a): drawn ~1/4 of the time — low weight so most fields stay non-const, but
-  // frequent enough that the round-trip property (roundtrip.test.ts) reliably exercises the
-  // printer's const-placement ordering (key, then const, then @tags — src/emit/code.ts fieldLines).
-  const isConst = fc.oneof({ weight: 3, arbitrary: fc.constant(false) }, { weight: 1, arbitrary: fc.constant(true) });
   return fc.record({
     type,
-    isConst,
+    isConst: constDrawArb,
     tags: fc.option(fc.constantFrom(['total'], ['balance'], ['signed']), { nil: undefined }),
   }).map(({ type, isConst, tags }) => {
     const f: Field = { name, type };
@@ -61,9 +63,7 @@ function entityFieldArb(name: string, enumNames: string[], ownerNames: string[])
     { weight: 1, arbitrary: fc.oneof(...scalar).map(of => ({ kind: 'list' as const, of })) }];
   if (ownerNames.length) options.push({ weight: 1,
     arbitrary: fc.constantFrom(...ownerNames).map(t => ({ kind: 'ref' as const, target: t })) });
-  // const (Plan 3a): same ~1/4-weighted draw as fieldArb — see its comment.
-  const isConst = fc.oneof({ weight: 3, arbitrary: fc.constant(false) }, { weight: 1, arbitrary: fc.constant(true) });
-  return fc.tuple(fc.oneof(...options), isConst).map(([type, c]) => {
+  return fc.tuple(fc.oneof(...options), constDrawArb).map(([type, c]) => {
     const f: Field = { name, type };
     if (c) f.const = true;
     return f;

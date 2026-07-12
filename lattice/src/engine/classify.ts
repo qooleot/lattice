@@ -21,7 +21,7 @@ export interface Classification {
 // one-sided — it can only manufacture SPURIOUS violations, never spurious holds — so the caveat
 // attaches to the `violated` direction alone. Abstract-tier `entailed`/`independent` are trustworthy
 // (a hold survives arbitrary accrual), and `sound`-tier verdicts touch no data field: both uncaveated.
-const OVER_APPROX_CAVEAT = 'abstract-evolution over-approximation: the accrual model permits this; the real (unmodeled) update rule may rule it out — add a guard or confirm intended';
+export const OVER_APPROX_CAVEAT = 'abstract-evolution over-approximation: the accrual model permits this; the real (unmodeled) update rule may rule it out — add a guard or confirm intended';
 
 // Design §5 corrected 2-probe: consecution (inductive?) + reachability-from-real-init (¬I reachable?).
 // Sound over the equal-records slice, to reachability bound N (see plan §fidelity caveat / design §10).

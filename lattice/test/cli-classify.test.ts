@@ -197,6 +197,6 @@ describe('engine classify CLI', () => {
   it('--max-steps rejects a non-numeric value instead of letting NaN reach the solver', async () => {
     const dir = await setup();
     const r: any = await runCommand(['classify', '--session', dir, '--name', 'h1', '--max-steps', 'not-a-number'], inertDeps);
-    expect(r).toEqual({ error: 'missing-arg', arg: 'max-steps' });
+    expect(r).toEqual({ error: 'invalid-arg', arg: 'max-steps' });
   });
 });

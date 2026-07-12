@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyInvariant } from '../../src/engine/classify.js';
+import { classifyInvariant, OVER_APPROX_CAVEAT } from '../../src/engine/classify.js';
 import type { SolverDeps } from '../../src/engine/planner.js';
 import { subscriptionsModel, paidImpliesExactConjunct } from '../fixtures.js';
 import type { Candidate, CandidateInvariant } from '../../src/ast/invariant.js';
@@ -16,7 +16,7 @@ const soundInv: CandidateInvariant = { id: 'i2', name: 'soundInv', prior: 1, sou
 
 // §6.3 abstract-evolution over-approximation caveat — attached ONLY to abstract-tier `violated`
 // findings (the over-approximation can only produce spurious violations, never spurious holds).
-const CAVEAT = 'abstract-evolution over-approximation: the accrual model permits this; the real (unmodeled) update rule may rule it out — add a guard or confirm intended';
+const CAVEAT = OVER_APPROX_CAVEAT;
 
 // Fake deps whose quintVerify returns queued results in CALL ORDER: probe 1 = consecution, probe 2 = reachability.
 function fakeDeps(results: { violated: boolean; witness?: any }[]): SolverDeps {

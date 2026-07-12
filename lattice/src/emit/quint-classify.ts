@@ -22,7 +22,7 @@ export interface ClassifyQuery {
   invariant: Candidate;    // I (the invariant-under-test, or one conjunct)
   peers: Candidate[];      // expressibleAdopted peers (never I)
   probe: 'consecution' | 'entailment';
-  maxSteps: number;        // 1 for consecution, 0 for entailment
+  maxSteps: number;        // 1 for consecution; the reachability bound (reachSteps, default 6) for entailment
 }
 
 export function astToQuintClassify(m: DomainModel, cq: ClassifyQuery): QuintEmission {

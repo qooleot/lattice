@@ -3,6 +3,7 @@ import { mkdtempSync, appendFileSync, readFileSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommand, realDeps } from '../src/cli.js';
+import { OVER_APPROX_CAVEAT } from '../src/engine/classify.js';
 import { traceAModel } from './fixtures.js';
 
 const SESSION = join(import.meta.dirname, '../../.lattice-session-subscriptions');
@@ -77,5 +78,40 @@ describe('engine explain', () => {
     // D1 tier gate: a `unique ... by [customer]` references only a ref (customer), not an evolving
     // (non-const Int/Money) field, so conjunctTier classifies it `sound`.
     expect(r.classification.tier).toBe('sound');
+  });
+
+  it('surfaces classifications as an array for a multi-conjunct invariant, in conjunct order', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-explain-multi-'));
+    const modelFile = join(dir, 'm.json');
+    writeFileSync(modelFile, JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', modelFile], inertDeps);
+    await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+      { id: 'H2', name: 'h2', prior: 0.5, source: 'seed',
+        candidate: { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] } }
+    ])], inertDeps);
+    const stateFile = join(dir, 'state.json');
+    const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+    const h2 = st.candidates.find((c: any) => c.inv.id === 'H2');
+    h2.status = 'adopted';
+    writeFileSync(stateFile, JSON.stringify(st));
+    appendFileSync(join(dir, 'ledger.jsonl'), JSON.stringify({ kind: 'adopted', at: new Date().toISOString(), invariant: h2.inv, provenance: 'test' }) + '\n');
+
+    // Seed two per-conjunct `classified` ledger entries directly (no solver run — this is a
+    // rendering test): conjunct '0' abstract-tier/violated (carries the over-approximation caveat),
+    // conjunct '1' sound-tier/entailed (no caveat). Real per-conjunct classify (Plan 3 Task 3)
+    // emits exactly this shape, one entry per conjunct.
+    appendFileSync(join(dir, 'ledger.jsonl'), JSON.stringify({ kind: 'classified', at: new Date().toISOString(),
+      invariant: 'h2', conjunct: '0', verdict: 'violated', tier: 'abstract', caveat: OVER_APPROX_CAVEAT,
+      reachable: true, provenance: 'test' }) + '\n');
+    appendFileSync(join(dir, 'ledger.jsonl'), JSON.stringify({ kind: 'classified', at: new Date().toISOString(),
+      invariant: 'h2', conjunct: '1', verdict: 'entailed', tier: 'sound', pinnedBy: ['peerX'], provenance: 'test' }) + '\n');
+
+    const r: any = await runCommand(['explain', '--session', dir, '--name', 'h2'], inertDeps);
+    expect(r.classification).toBeUndefined();
+    expect(r.classifications).toHaveLength(2);
+    expect(r.classifications.map((c: any) => c.conjunct)).toEqual(['0', '1']);
+    expect(r.classifications[0]).toMatchObject({ conjunct: '0', verdict: 'violated', tier: 'abstract', caveat: OVER_APPROX_CAVEAT });
+    expect(r.classifications[1]).toMatchObject({ conjunct: '1', verdict: 'entailed', tier: 'sound', pinnedBy: ['peerX'] });
+    expect(r.classifications[1].caveat).toBeUndefined();
   });
 });

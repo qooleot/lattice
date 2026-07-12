@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { classifyInvariant } from '../../src/engine/classify.js';
+import { classifyInvariant, OVER_APPROX_CAVEAT } from '../../src/engine/classify.js';
 import { conjunctsOf } from '../../src/engine/tier.js';
 import { realDeps } from '../../src/cli.js';
 import { subscriptionsModel, paidImpliesExactConjunct, amountPaidAtMostTotalConjunct } from '../fixtures.js';
 import type { Candidate, CandidateInvariant } from '../../src/ast/invariant.js';
 
 // §6.3 abstract-evolution over-approximation caveat — abstract-tier `violated` only.
-const CAVEAT = 'abstract-evolution over-approximation: the accrual model permits this; the real (unmodeled) update rule may rule it out — add a guard or confirm intended';
+const CAVEAT = OVER_APPROX_CAVEAT;
 
 // Reassemble the committed Invoice invariant Never_Overpaid_And_Paid_Exact (spec.lat) as the `and`
 // of its two committed conjunct fixtures — the first arg is `amountPaid <= totalDue`, the second is
