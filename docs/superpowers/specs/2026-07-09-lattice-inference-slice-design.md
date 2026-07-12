@@ -362,12 +362,75 @@ path. A `--no-classify` escape hatch on `apply` is provided for batch/replay sce
 
 ### 7.3 Guard analysis (Pillar B)
 
-- **Stuck-state (fork 6):** find reachable states whose every out-transition is guarded-false. Gate
-  by lifecycle annotation: `@terminal` stuck → silent; non-terminal stuck → boundary question naming
-  the state and the blocking valuation. Never a hard error.
-- **Reachability:** for each guarded state, check it remains reachable once guards compose (e.g., can
-  `paid` still be reached once `finalize`'s and `settle`'s guards compose). An unreachable guarded
-  state is surfaced (dead transition / over-strong guard).
+Two analyses over the transition machine, both **findings** (never hard errors, fork 6): surfaced by
+the solver-heavy `classify` command, persisted to the ledger, counted in `status`, detailed in
+`explain`. Both reuse the existing reachability-from-real-`init` probe — no new solver-adapter work.
+
+**Strategy — structural pre-filter, then solver on the residual (decided 2026-07-11).** A purely
+*structural* check disposes of the easy majority for free; the solver is reserved for the genuinely
+hard residual and for all reachability. The payoff is concrete on the committed `subscriptions`
+spec: **every non-terminal state already has an unguarded escape** — `trialing` (`expireTrial`,
+`cancel`), `active` (`paymentFailed`, `cancel`), `pastDue` (`recover`, `cancel`, `dunningExhausted`),
+`draft` (`voidDraft`), `open` (`voidOpen`, `writeOff`) — so the structural filter clears the entire
+model with **zero solver calls**. A solver probe earns its keep only on a state whose out-transitions
+are *all* guarded (the residual). The alternative — a **pure per-state solver sweep** — is simpler
+and uniform (always yields a witness), but spends ~N solver calls (~15 s each) per run even when the
+answer is structurally obvious, which is unacceptable on the load-sensitive golden/apply budget. The
+hybrid also matches the slice's question-minimization / solver-first-pruning theme (§8.2).
+
+**7.3.1 Stuck-state.** A state `S` is *stuck* when its every out-transition is guarded-false.
+- **Structural filter (no solver):** if any out-transition from `S` is *unguarded*, `S` is never
+  stuck — drop it. Only states whose out-transitions are *all* guarded (or which have *no*
+  out-transition — the terminal shape) survive to the solver.
+- **Solver confirm (residual only):** is a config with an instance in `S` and every out-guard false
+  *reachable* from real `init`? Assert `¬stuck_O_r_S` as the invariant; a **violation ⇒ reachable
+  stuck state**, and the CTI trace is the "blocking valuation" the finding names.
+- **Annotation gating:** `@terminal` stuck → silent (expected). Non-terminal stuck → a finding
+  naming the state and the blocking valuation.
+- *Worked residual example:* if `voidOpen`/`writeOff` were removed, `open`'s only exit is the guarded
+  `settle` (`amountPaid == totalDue`). The structural filter flags `open`; the solver then confirms a
+  reachable `open` invoice with `amountPaid ≠ totalDue` and hands back that concrete record — the
+  actionable boundary question a structural check alone cannot produce.
+
+**7.3.2 Guarded-state reachability.** For each state reached only through guarded transitions, is it
+still reachable once the guards compose? Assert `¬reach_O_r_S`; here a **"holds" verdict ⇒ `S`
+unreachable within `N`** (a dead transition / over-strong guard, carrying the bounded-`N` caveat),
+while a violation ⇒ reachable (fine).
+- *Worked example:* `active` is entered only via `activate` (`requires paidInvoiceCount >= 1`).
+  Whether `active` is reachable turns on whether `paidInvoiceCount` can climb to `1` — a
+  satisfiability-over-the-reachable-range question the structural filter cannot answer but a solver
+  probe settles. (And the answer depends on the machine choice below.)
+
+**7.3.3 Which machine — frozen vs abstract-evolution (§6).** The choice materially changes answers,
+so it is called out rather than assumed:
+- On the **frozen** machine, fields cannot move, so reachability *under-approximates* (e.g. `active`
+  looks unreachable unless `init` happens to draw `paidInvoiceCount ≥ 1`) → many **false**
+  dead-transition alarms; and stuck-state *over-approximates* (flags a state as stuck whenever the
+  fields it needs can't move) → noisier but safe.
+- On the **abstract-evolution** machine (the same one Pillar A's classifier runs on), accrual can
+  satisfy numeric guards, so reachability has *far fewer false positives* (a state still flagged
+  unreachable *even granting arbitrary accrual* is genuinely suspect — an over-strong guard), and a
+  stuck-state flag means "stuck *even under generous accrual*" — i.e. escapable only by an *event*
+  the model doesn't have. **Decision: run both analyses on the abstract-evolution machine** — for
+  consistency with the classifier and because it yields high-confidence, low-false-positive findings.
+  Its blind spot (a state escapable only via accrual the *real* rule wouldn't actually produce) is a
+  documented honest-ceiling item (§10), not silently assumed. *Illustration:* in the residual `open`
+  example above, the frozen machine calls `open` stuck (`amountPaid` frozen ≠ `totalDue`); the
+  abstract-evolution machine does **not** (accrual drives `amountPaid` to `totalDue`, `settle` fires)
+  — the honest reading is "not stuck under the modeled accrual; a payment *event* is what unsticks
+  it," so we do not spam the author with a stuck finding for the ordinary unpaid-invoice case.
+
+**7.3.4 Encoding — `astToQuintGuard`.** A thin emitter twin (mirroring `astToQuintClassify`): take
+the base `astToQuint` machine's `head` (module through the `step` line, `abstractEvolution: true`),
+append the `stuck_O_r_S` / `reach_O_r_S` `val` definitions for the states under analysis, and name
+the negated predicate as the `--invariant`, run from real `init` at `--max-steps N`. No new query
+`kind`; no change to the golden/unflagged emission.
+
+**7.3.5 Surface — ledger + CLI.** A new append-only `guard-finding` ledger entry (state, kind =
+`stuck` | `unreachable`, blocking valuation / witness, provenance) so the read-only `status` can
+report outstanding counts without a solver run, and `explain` can render a state's finding detail.
+`classify` (the solver-heavy command) computes and appends them, alongside the invariant
+classifications and method-guard checks.
 
 ### 7.4 CLI rendering
 
@@ -470,6 +533,14 @@ documented in `docs/language/*.md`. Flagged, not silently assumed.
   rows).
 - **Spurious-CTI discipline:** C presents abstract-tier strengthenings as "the model permits this;
   add a guard or tell me it's impossible," never as a confirmed bug.
+- **Guard analysis (Pillar B) is bounded and machine-relative.** Both analyses run on the
+  abstract-evolution machine (§7.3.3) at reachability depth `N`. A guarded state's *unreachable*
+  finding is sound only to depth `N` (it could be reachable via a longer trace); a *stuck-state*
+  finding means "stuck even under generous accrual" — its blind spot is a state escapable only by
+  accrual the real update rule would not actually produce (which the frozen machine would flag but
+  the abstract one does not). Findings are boundary *questions*, never hard errors. The structural
+  pre-filter's soundness rests on "an unguarded out-transition is always fireable," which holds by
+  construction (an unguarded transition's only precondition is the `from`-state it already occupies).
 
 ## 11. Deferred-work registry (every ceiling item has an address)
 
