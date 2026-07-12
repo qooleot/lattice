@@ -87,13 +87,29 @@ describe('conjunctTier', () => {
     expect(conjunctTier(invoiceLinesModel, someCardinalityOnInvoice)).toBe('sound');
   });
 
-  it('tiers a unique candidate (its by-paths reference data fields) as abstract', () => {
-    expect(conjunctTier(invoicingModel, draftInvoiceUnique)).toBe('abstract');
+  it('tiers a unique candidate (by [subscription] is a ref, not an evolving field) as sound (D1)', () => {
+    expect(conjunctTier(invoicingModel, draftInvoiceUnique)).toBe('sound');
   });
 
-  it('tiers a refsResolve candidate with non-empty fields (data-field references) as abstract', () => {
+  it('tiers a refsResolve candidate whose fields name a ref (not evolving) as sound (D1)', () => {
     const c: Candidate = { kind: 'refsResolve', aggregate: 'Invoice', fields: ['subscription'] };
-    expect(conjunctTier(invoicingModel, c)).toBe('abstract');
+    expect(conjunctTier(invoicingModel, c)).toBe('sound');
+  });
+
+  it('tiers a cmp on maxRetries (const Int, not evolving) as sound (D1)', () => {
+    const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'le', left: { kind: 'field', owner: 'self', path: ['maxRetries'] }, right: { kind: 'int', value: 3 } } };
+    expect(conjunctTier(subscriptionsModel, c)).toBe('sound');
+  });
+
+  it('tiers a cmp on periodStart (Date, not evolving under D2) as sound (D1)', () => {
+    const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt', left: { kind: 'field', owner: 'self', path: ['periodStart'] }, right: { kind: 'field', owner: 'self', path: ['periodEnd'] } } };
+    expect(conjunctTier(subscriptionsModel, c)).toBe('sound');
+  });
+
+  it('tiers a cmp on amountPaid/totalDue (Money, evolving) as abstract (D1)', () => {
+    expect(conjunctTier(subscriptionsModel, amountPaidAtMostTotalConjunct)).toBe('abstract');
   });
 
   it('tiers a refsResolve candidate with no fields as sound', () => {

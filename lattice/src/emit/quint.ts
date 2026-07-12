@@ -26,6 +26,12 @@ export interface QuintEmission { source: string; invariantName: string; varTypes
 
 export const varName = (n: string) => n.charAt(0).toLowerCase() + n.slice(1) + 's';
 export const isIntPrim = (p: string) => ['Int', 'Money', 'Date', 'Duration'].includes(p);
+// Single source of truth for "which fields take abstract monotone-up evolve steps" (D1+D2). Narrower
+// than isIntPrim (the Quint TYPE mapping, above, keeps Date/Duration as int): only Int/Money evolve;
+// Date/Duration are temporal and must NOT take arbitrary monotone-up steps. Also drives the tier gate
+// (engine/tier.ts) so the emission filter and the abstract-tier verdict share one definition.
+export const isEvolvingPrim = (p: string) => ['Int', 'Money'].includes(p);
+export const isEvolvingField = (f: Field) => f.type.kind === 'prim' && isEvolvingPrim(f.type.prim) && !f.const;
 export const INT_POOL = 'Set(0, 24, 72, 100)';
 export const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
 
@@ -380,7 +386,7 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
         r.states.filter(s => s.tags?.includes('terminal'))
           .map(s => `${v}.get(id).${r.name}_state != "${s.name}"`));
       const nonTerminal = termConj.length ? `(${termConj.join(' and ')})` : 'true';
-      for (const f of o.fields.filter(f => f.type.kind === 'prim' && isIntPrim((f.type as any).prim) && !f.const)) {
+      for (const f of o.fields.filter(isEvolvingField)) {
         actions.push(`action evolve_${o.name}_${f.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) nondet dv = oneOf(${INT_POOL}) all { ${nonTerminal}, ${v}' = ${v}.set(id, ${v}.get(id).with("${f.name}", ${v}.get(id).${f.name} + dv)), ${frame([v]).join(', ')} } }`);
       }
     }

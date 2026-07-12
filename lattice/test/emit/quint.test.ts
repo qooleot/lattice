@@ -178,11 +178,14 @@ describe('astToQuint', () => {
       const em = astToQuint(subscriptionsModel, { kind: 'probe-permit', hi: paidImpliesExactConjunct, exclusions: [], maxSteps: 5 });
       expect(em.source).not.toContain('action evolve_');
     });
-    it('emits monotone-up evolve actions for non-const numeric fields only when flagged', () => {
+    it('emits monotone-up evolve actions for non-const Int/Money fields only when flagged (D2: Date/Duration excluded)', () => {
       const em = astToQuint(subscriptionsModel, { kind: 'probe-permit', hi: paidImpliesExactConjunct, exclusions: [], maxSteps: 5, abstractEvolution: true });
-      expect(em.source).toContain('action evolve_Invoice_amountPaid');          // non-const numeric -> monotone-up
+      expect(em.source).toContain('action evolve_Invoice_amountPaid');          // Money -> monotone-up
       expect(em.source).toMatch(/amountPaid.*\+ /);                             // increase, not set
-      expect(em.source).toContain('action evolve_Invoice_totalDue');           // non-const numeric -> evolves too (default-evolving)
+      expect(em.source).toContain('action evolve_Subscription_seats');         // Int -> evolves
+      expect(em.source).toContain('action evolve_Invoice_totalDue');           // Money -> evolves too (default-evolving)
+      expect(em.source).not.toContain('action evolve_Subscription_periodStart'); // Date (D2) -> not evolving
+      expect(em.source).not.toContain('action evolve_Subscription_periodEnd');   // Date (D2) -> not evolving
       expect(em.source).not.toContain('action evolve_Subscription_maxRetries'); // const (Plan 3a) -> frozen
       expect(em.source).toContain('evolve_Invoice_amountPaid');                // wired into `step = any {...}`
     });

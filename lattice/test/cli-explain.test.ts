@@ -74,8 +74,8 @@ describe('engine explain', () => {
 
     const r: any = await runCommand(['explain', '--session', dir, '--name', 'h1'], inertDeps);
     expect(r.classification.verdict).toBe('entailed');
-    // Plan 3 Task 3 wired the structural tier gate: a `unique ... by [customer]` references a data
-    // field, so conjunctTier now classifies it `abstract` (was a hardcoded `sound` pre-gate).
-    expect(r.classification.tier).toBe('abstract');
+    // D1 tier gate: a `unique ... by [customer]` references only a ref (customer), not an evolving
+    // (non-const Int/Money) field, so conjunctTier classifies it `sound`.
+    expect(r.classification.tier).toBe('sound');
   });
 });

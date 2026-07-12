@@ -75,9 +75,10 @@ describe('engine classify CLI', () => {
     const classifiedEntries = ledger.filter((e: any) => e.kind === 'classified');
     expect(classifiedEntries).toHaveLength(2);
     expect(classifiedEntries.map((e: any) => e.invariant).sort()).toEqual(['h1', 'h2']);
-    // Plan 3 Task 3 tier gate: h1/h2 are `unique ... by [customer|plan]`, which reference data
-    // fields → conjunctTier now classifies them `abstract` (was a hardcoded `sound` pre-gate).
-    expect(classifiedEntries.every((e: any) => e.tier === 'abstract')).toBe(true);
+    // D1 tier gate: h1/h2 are `unique ... by [customer|plan]`, both refs — not evolving (non-const
+    // Int/Money) fields — so conjunctTier classifies them `sound` (was `abstract` under the old
+    // "references any data field" rule; traceAModel has no numeric fields at all).
+    expect(classifiedEntries.every((e: any) => e.tier === 'sound')).toBe(true);
     // template-adopted refsResolve/terminal invariants must never reach the classifier (candidateToQuint
     // throws for those kinds) — only h1/h2 appear.
     expect(classifiedEntries.some((e: any) => e.invariant.includes('NoOrphan') || e.invariant.includes('Terminal'))).toBe(false);
@@ -118,8 +119,10 @@ describe('engine classify CLI', () => {
     const r: any = await runCommand(['explain', '--session', dir, '--name', 'h1'], inertDeps);
     expect(r.classification).toBeDefined();
     expect(r.classification.verdict).toBe('entailed');
-    // Plan 3 Task 3 tier gate: `unique ... by [customer]` references a data field → `abstract`.
-    expect(r.classification.tier).toBe('abstract');
+    // D1 tier gate: `unique ... by [customer]` references only a ref (customer), not an evolving
+    // (non-const Int/Money) field, so conjunctTier is `sound` (was `abstract` under the old
+    // "references any data field" rule).
+    expect(r.classification.tier).toBe('sound');
     expect(r.classification.pinnedBy).toEqual(['h2']);
   });
 
