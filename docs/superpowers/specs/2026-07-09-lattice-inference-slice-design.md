@@ -271,6 +271,12 @@ These are **unconditional** abstract steps — no event, no "by how much." That 
 keeps this *out* of the effects language: **transition-conditioned** data changes ("resets to 0 *at
 rollover*", "increases *by* the event amount") are effects and stay out of scope (slice-4 §3.4).
 
+> **Resolved rule (implemented, §6.4):** the per-tag shapes above (`@balance`/counter monotone-up
+> vs `@total` set-once) motivated the design but the *implemented* rule is the coarser, uniform one:
+> **every non-`const` `Int`/`Money` field is monotone-up.** `@total`'s set-once nuance is subsumed by
+> monotone-up (a sound over-approximation of "set once then frozen"); precise set-once would need
+> effects. Only `Int`/`Money` evolve (D2) and `const` fields (Plan 3a) are frozen.
+
 ### 6.3 Why this is honest — the direction of error
 
 Abstract accrual admits *strictly more* behaviors than reality (real payments are a subset of
@@ -301,15 +307,20 @@ Re-run of the examples under abstract accrual:
 A static walk over the candidate AST (the `{"kind":"field","path":[...]}` nodes) classifies each
 referenced fact:
 
-- **region/`inState` predicate** → enum fact → **`sound` tier** (fully sound under induction; no caveat).
-- **any data-field reference** → **`abstract` tier**. The evolution model is **default-evolving**:
-  every non-`const` numeric field takes an abstract monotone-up step (may increase by an arbitrary
-  non-negative amount while the aggregate is non-terminal), and `const` fields (Plan 3a) stay
-  **frozen** — the uniform non-`const` rule, replacing the earlier `@balance`/`@total`-shape +
-  annotation-less-counter role heuristic. Any conjunct that touches a data field therefore rests on
-  this over-approximation, so its **`violated`** verdict carries the over-approximation caveat, while
-  its `entailed`/`independent` verdicts are trustworthy (a hold survives arbitrary accrual) and carry
-  no caveat.
+- **region/`inState` predicate, or a reference only to non-evolving fields** (refs, enums, `const`
+  fields, `Date`/`Duration`) → **`sound` tier** (decided soundly by the frozen model; no caveat).
+- **a reference to an *evolving* field** → **`abstract` tier**. The evolution model gives every
+  **non-`const` `Int`/`Money`** field an abstract monotone-up step (may increase by an arbitrary
+  non-negative amount while the aggregate is non-terminal); `const` fields (Plan 3a) and every
+  non-`Int`/`Money` field (`Date`/`Duration`, refs, enums) stay **frozen**. **The tier is aligned to
+  exactly this evolving set (D1):** a conjunct is `abstract` iff it references a field the model
+  actually evolves — a single predicate (`isEvolvingField`) is the shared source of truth for both
+  the emitted `evolve_` actions and the gate, so a violated *structural* conjunct (e.g. `unique … by
+  [<ref>]`, an enum comparison) is **`sound`** and is *not* mislabeled with an accrual caveat. A
+  conjunct that references an evolving field rests on the over-approximation, so its **`violated`**
+  verdict carries the over-approximation caveat, while its `entailed`/`independent` verdicts are
+  trustworthy (a hold survives arbitrary accrual) and carry no caveat. (**D2:** the evolving set is
+  `Int`/`Money` only — temporal fields do not take arbitrary steps independent of `now`/`tick`.)
 
 **Classification is per-conjunct, not per-invariant.** `neverOverpaidAndPaidExact` splits into two
 conjuncts that share the `abstract` tier (both reference data fields) but land on opposite verdicts:
@@ -414,13 +425,13 @@ re-opened masking blindness for guards).
 
 ## 9. Closed-grammar ceremony (flag for the review pass)
 
-Pillars A/B/C add **analysis**, not surface syntax — the closed grammar stays closed. The one item
-that deserves scrutiny: **abstract-evolution modeling (§6) gives the *existing* `@balance`/`@total`
-annotations a new *solver semantics*.** No new syntax is introduced, but assigning operational
-meaning to existing annotations is arguably a grammar-semantics act. **Decision for the review
-pass:** treat it as an emitter/semantics change documented in `docs/language/*.md` (no `.langium`
-change, no reserved-word change), *unless* the human judges it warrants the full versioned-grammar
-ceremony. Flagged, not silently assumed.
+Pillars A/B/C add **analysis**, not surface syntax — the closed grammar stays closed. As landed
+(D1/D2), abstract-evolution keys off **field *type* (`Int`/`Money`) and the `const` modifier**, not
+off the `@balance`/`@total` annotations — so no existing annotation gained a new solver semantics.
+The one deliberate grammar act was the **`const` keyword itself (Plan 3a)**, which *did* go through
+the full versioned-grammar ceremony (`.langium` + reserved word + lockstep projections + committed-
+spec migration). The abstract-evolution emitter change is otherwise a pure emitter/semantics change
+documented in `docs/language/*.md`. Flagged, not silently assumed.
 
 ## 10. Honest ceiling (what this slice does NOT claim)
 

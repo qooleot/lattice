@@ -72,9 +72,11 @@ context Billing {
   corresponding TypeScript interface in the generated package's `types.ts`.
 - `const` on a `ref` field is **not** shown in the mermaid class diagram (refs render as associations,
   not class members, so the `«readonly»` stereotype appears only on non-ref const fields).
-- Abstract-evolution analysis (planned — the inference slice's Plan 3) *will* treat `const` fields as
-  frozen, excluding them from the monotone-evolution over-approximation applied to plain mutable
-  numeric fields. That analysis does not read `const` yet; this bullet documents the intended use.
+- Abstract-evolution analysis (the inference slice's Plan 3, landed) treats `const` fields as
+  **frozen**, excluding them from the monotone-up over-approximation the classifier applies to plain
+  mutable numeric fields. Only non-`const` `Int`/`Money` fields evolve; `const` fields, `Date`/
+  `Duration`, refs, and enums are frozen. This affects the classifier's solver model only — it has no
+  bearing on generation or on non-classifier emission.
 
 ## Cross-context refs are structural only
 
