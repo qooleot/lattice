@@ -464,6 +464,25 @@ transition-enablement condition, **not** an always-property. This boundary is ex
 abstraction-leak risk of widening the invariant `Candidate` union past its contract (salient
 extraction and masking logic must not assume always-property semantics for guards).
 
+**Concrete shape:** `{ kind: 'guard'; aggregate: string; region: string; transition: string; predicate: Predicate }`
+— the `predicate` is a `cmp`-shaped own-field condition (self = the transition's pre-state record),
+scoped to `<aggregate>.<region>.<transition>`.
+
+**Surface-shrinking boundary (the key to keeping this tractable):** a `guard` candidate is
+**inferred, never authored** (§9 keeps the grammar closed), and it is **session/engine-internal until
+write-back**. It appears in exactly four layers: (1) the `Candidate` union (`invariant.ts`); (2)
+emission (`emit/quint.ts` conjoins an *adopted* guard into its `trans_<owner>_<transition>` action's
+enablement — the §8.3 "assumption", reusing Pillar B's exported `predToQuint`); (3) the strengthening
+engine + planner pruning/masking (§8.5, §8.7); (4) write-back (`emit/code.ts` conjoins it into the
+transition's `requires` clause, code.ts:79). **On write-back the guard dissolves into ordinary
+`requires` text** — after re-parse it is indistinguishable from an authored guard — so the `guard`
+kind needs **no** distinct case in generation, alloy, prose, `diff.ts`, or renames. The kind-switch
+sites that *do* need handling either add a `guard` case (the four layers above, plus `evaluate.ts`
+for pre-state evaluation) or **explicitly exclude it** as a non-always-property (`salient.ts`,
+`tier.ts`, and any "classify this as an invariant" path — a guard is never classified as an
+always-property, only pruned/adopted as an enablement condition). A `default`/exhaustiveness throw at
+the invariant-only sites makes the exclusion loud, not silent.
+
 ### 8.2 Solver-first auto-pruning (the question-minimization mechanism)
 
 When C surfaces a CTI (or B a boundary), for the relevant transition:
@@ -498,6 +517,80 @@ Because guards live in the candidate substrate, the masking-regression machinery
 family) covers them: a newly-adopted guard that makes an existing invariant entailed-by-accident is
 detected, not silent. This is the correctness reason for first-class over probe (which would have
 re-opened masking blindness for guards).
+
+### 8.5 The strengthening engine — `strengthenInvariant`
+
+The engine is a **pure function of the model + a violated invariant + the adopted set + solver deps**,
+returning a `Resolution`. Both entry points (§8.6) call it, so the interactive loop and the CLI share
+one implementation.
+
+```ts
+type Resolution =
+  | { kind: 'auto-adopt'; guard: Candidate /* guard kind */ }          // 1 survivor
+  | { kind: 'inconsistent'; contradicts: string; note: string }        // 0 survivors
+  | { kind: 'distinguish'; survivors: Candidate[] /* guards */ }       // ≥2 survivors
+  | { kind: 'no-transition'; note: string };                          // accrual-only CTI → confirm intended
+export async function strengthenInvariant(
+  m: DomainModel, violated: CandidateInvariant, adopted: Candidate[], deps: SolverDeps,
+): Promise<Resolution>;
+```
+
+**Step 1 — CTI → transition (trace-diff).** Re-run Pillar A's reachability probe (`astToQuintClassify`,
+`init`) to obtain the `violated` CTI witness with its `trace` (`CaseState.trace`, the intermediate
+states). Diff the last trace step against the violating final state:
+- a **region state change** `state_X → state_Y` in region `r` → the declared transition with
+  `from ∋ X, to = Y` in `r` is **the transition to guard**;
+- **only field changes** (an `evolve_`/`tick` step, no region moved) → **`no-transition`**: the
+  violation is an artifact of the abstract-evolution over-approximation with no declared transition to
+  guard, so C says "the model permits this; confirm intended" (spurious-CTI discipline, §10) rather
+  than inventing a guard.
+
+**Step 2 — Generate the shape lattice.** For the identified transition's aggregate, take the
+own-field terms the violated invariant references (the `cmp` operands) and enumerate the `Cmp` shape
+lattice `{eq, le, ge}` over that operand pair — e.g. the overpayment boundary on `settle` →
+`amountPaid == totalDue`, `amountPaid >= totalDue`, `amountPaid <= totalDue`. Each variant is a
+`guard` candidate scoped to that transition. (Own-field-only, per §8.1 / slice-4 §5.2.1 — no
+cross-aggregate or param operands in this slice.)
+
+**Step 3 — Auto-prune with A's queries (no user input).** For each variant, emit the machine with the
+variant conjoined into its transition (as an adopted-guard assumption) and run:
+- **(a) consistency** — is `adopted ∧ variant` satisfiable at all? (a `probe-permit` for a witness).
+  Drop variants with no model.
+- **(b) closes the CTI** — re-run the violated invariant's reachability probe on the variant-guarded
+  machine; drop variants under which `¬I` is *still* reachable (the guard doesn't fix the violation).
+- **(c) equivalence** — two survivors are equivalent if no reachable state separates them (a
+  `distinguish` probe returns no witness); collapse equivalents to one representative.
+
+**Step 4 — Resolve** (§8.2): 1 survivor → `auto-adopt`; 0 → `inconsistent` (name the invariant whose
+consistency query killed the last candidate); ≥2 → `distinguish` (hand the survivors to the existing
+planner distinguish loop, which asks one question per genuinely-separating reachable witness).
+
+### 8.6 Surface — `strengthen` command, write-back, and the interactive hook
+
+- **`engine strengthen <invariant>`** — the explicit, isolated entry (the test surface). Runs
+  `strengthenInvariant`, then **applies** the `Resolution`: `auto-adopt` → adopt the guard candidate
+  (session + `adopted`-kind ledger entry, `pinnedBy` the pruning invariants) and, on the next
+  `apply`, write it back; `inconsistent`/`no-transition` → a finding in the output; `distinguish` →
+  return the survivors + their separating witnesses (the same shape the planner already emits).
+- **Write-back (`emit/code.ts`)** — `astToCode(m, adopted)` conjoins each adopted `guard` candidate
+  into its transition's `requires` (authored `requires` ∧ adopted guards), so the strengthening
+  becomes real `.lat` text on `apply`. After re-parse it is an ordinary transition guard (§8.1).
+- **Interactive hook (the anti-orphan bridge)** — the elicitation loop already classifies invariants
+  (on adopt / via `nextQuestion`). When a `violated` verdict surfaces there, the loop invokes the
+  **same** `strengthenInvariant` engine and folds the `Resolution` into the flow it is already
+  driving: `auto-adopt` → adopt silently, ledger-noted, surfaced in `status`/`explain` (§8.2's "zero
+  questions" kept, but visible after the fact); `inconsistent`/`no-transition` → surfaced as a finding;
+  `distinguish` → emitted as the loop's next question(s) through the existing distinguish machinery.
+  So an author never has to know the CLI command exists — the work is never orphaned.
+
+### 8.7 Masking coverage & the quieting loop (mechanized §8.3/§8.4)
+
+Adopting a guard runs the **same reclassify-on-apply pass** (§7.2) over the affected invariants, so a
+guard that makes an existing invariant entailed-by-accident reclassifies it `entailed` with the guard
+in `pinnedBy` — the masking-regression coverage §8.4 promises, for free, because guards share the
+candidate substrate and the adopted-guard assumptions feed A's induction queries. Each adopted guard
+also shrinks the next CTI's surviving variant space (it is now an adopted assumption the pruning
+queries use), so the loop quiets over time (§8.3).
 
 ## 9. Closed-grammar ceremony (flag for the review pass)
 
@@ -560,6 +653,16 @@ documented in `docs/language/*.md`. Flagged, not silently assumed.
   are append-only and never emit a "cleared" marker, so a site that stops being a candidate after a
   model edit leaves a stale ledger entry `status` keeps counting until a same-key entry supersedes it
   — analogous to the auto-reclassify-on-apply limitation above.
+- **CTI-guided strengthening (Pillar C) is bounded and own-field-shaped.** The generate→prune→resolve
+  engine (§8.5) infers only **own-field `cmp`-shaped** guards (`{eq, le, ge}` over the invariant's
+  operand pair) on **one** transition identified by a single region-state change in the CTI trace; it
+  proposes **no** cross-aggregate, param-carrying, compound (`and`/`or`), or multi-transition guards
+  (their own grammar-growth rows). Pruning queries (consistency / closes-CTI / equivalence) are sound
+  only to the same reachability depth `N` and over the equal-records slice (§10 above). A CTI reachable
+  only via abstract accrual (no declared transition in the trace step) yields `no-transition` — "the
+  model permits this; confirm intended" — never a fabricated guard, per the spurious-CTI discipline.
+  Auto-adoption edits the author's transition on write-back; it is always ledger-noted (`pinnedBy`)
+  and reversible like any adopted candidate, never silent.
 
 ## 11. Deferred-work registry (every ceiling item has an address)
 
