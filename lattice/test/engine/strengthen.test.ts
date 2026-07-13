@@ -18,6 +18,13 @@ describe('ctiTransition', () => {
     expect(ctiTransition(subscriptionsModel, paidExact, w)).toEqual({ owner: 'Invoice', region: 'settlement', transition: 'settle' });
   });
   it('returns null when only fields changed (accrual step, no region moved)', () => {
+    // Both before and final are 'paid' (no region move); final is forbidden (paid, 9≠5) so a
+    // violating instance IS found — this must fall through the region-diff loop, not short-circuit
+    // on the `!bad` guard.
+    const w = { entities: [inv('paid', 9, 5)], trace: [[inv('paid', 3, 5)]] };
+    expect(ctiTransition(subscriptionsModel, paidExact, w)).toBeNull();
+  });
+  it('returns null when no violating instance is found (candidate never forbidden)', () => {
     const w = { entities: [inv('open', 9, 5)], trace: [[inv('open', 3, 5)]] };
     expect(ctiTransition(subscriptionsModel, paidExact, w)).toBeNull();
   });

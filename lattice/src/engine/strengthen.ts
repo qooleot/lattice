@@ -1,6 +1,6 @@
 import type { AggregateDef, DomainModel } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Cmp, Predicate } from '../ast/invariant.js';
-import type { CaseEntity, CaseState } from './evaluate.js';
+import type { CaseState } from './evaluate.js';
 import { evaluateCandidate } from './evaluate.js';
 
 export interface GuardSiteRef { owner: string; region: string; transition: string }
@@ -20,7 +20,7 @@ function invariantCmp(inv: CandidateInvariant): (Predicate & { kind: 'cmp' }) | 
 }
 
 export function ctiTransition(m: DomainModel, violated: CandidateInvariant, w: CaseState): GuardSiteRef | null {
-  const agg = (violated.candidate as any).aggregate as string;
+  const agg = violated.candidate.aggregate;
   if (!w.trace || w.trace.length === 0) return null;                 // violation at init → no transition
   const prev = w.trace[w.trace.length - 1]!;                         // state just before the violating one
   // the violating instance: the aggregate subject where the invariant is forbidden in the final state
