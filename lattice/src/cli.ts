@@ -5,13 +5,14 @@ import type { DomainModel } from './ast/domain.js';
 import { validateModel } from './ast/validate.js';
 import { validateCandidate } from './ast/grammar.js';
 import type { CandidateInvariant } from './ast/invariant.js';
-import { loadState, saveState, appendLedger, readLedger, readClassifications, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
+import { loadState, saveState, appendLedger, readLedger, readClassifications, readGuardFindings, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
 import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
 import { nextQuestion, checkDistinct, adoptedConstraints, expressibleAdopted, type SolverDeps } from './engine/planner.js';
 import { classifyInvariant, type Classification } from './engine/classify.js';
 import { conjunctsOf } from './engine/tier.js';
 import { checkMethodGuard } from './engine/method-guard.js';
+import { analyzeGuards } from './engine/guard-analysis.js';
 import { renderWitnessTable } from './engine/salient.js';
 import { astToAlloy } from './emit/alloy.js';
 import { astToQuint } from './emit/quint.js';
@@ -369,10 +370,13 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           else if (e.verdict === 'not-inductive') classifications.notInductive++;
           else if (e.verdict === 'violated') classifications.violated++;
         }
+        const gf = readGuardFindings(dir);
+        const guardFindings = { stuck: gf.filter(e => e.finding === 'stuck').length,
+                                 unreachable: gf.filter(e => e.finding === 'unreachable').length };
         return { phase: s.phase, regenAttempts: s.regenAttempts, alternativeAttempts: s.alternativeAttempts,
           candidates: s.candidates.map(c => ({ id: c.inv.id, name: c.inv.name, prior: c.inv.prior, status: c.status })),
           openDecisions: readLedger(dir).filter(e => e.kind === 'open-decision').length,
-          ledgerCount: readLedger(dir).length, classifications };
+          ledgerCount: readLedger(dir).length, classifications, guardFindings };
       }
       case 'witness-show': {
         const p = s.pendingWitnesses[values.witness!];
@@ -523,14 +527,22 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // Method⊨transition entailment (design §5): flag every performs-method's requires vs its
         // guard. Surfaced here in `classify` (a solver command) as a `methodGuards` section.
         const methodGuards = await checkAllMethodGuards(model(), deps);
-        if (values.name) return { classified: results, methodGuards };
+        // Guard analysis (design §7.3): structurally-filtered stuck/reachability sites, confirmed
+        // against the abstract-evolution machine. Surfaced here in `classify` (the solver-heavy
+        // command), persisted to the ledger for `status` to count and `explain`-adjacent tooling to
+        // read back later.
+        const guardFindings = await analyzeGuards(model(), deps, reachSteps);
+        for (const f of guardFindings)
+          appendLedger(dir, { kind: 'guard-finding', at: now(), finding: f.finding, owner: f.owner,
+            region: f.region, state: f.state, witness: f.witness, boundedN: f.boundedN, provenance: `classify ${isoDay(now())}` });
+        if (values.name) return { classified: results, methodGuards, guardFindings };
         // Bulk classify (no --name): name the adopted invariants that were NOT classified, rather
         // than just dropping them — most real sessions carry template-adopted structural invariants
         // of unclassifiable kinds (see comment above), and a silent drop looks identical to "nothing
         // else was adopted".
         const skipped = adoptedTracked.filter(c => !classifiable.includes(c))
           .map(c => ({ name: c.inv.name, kind: c.inv.candidate.kind }));
-        return { classified: results, skipped, methodGuards };
+        return { classified: results, skipped, methodGuards, guardFindings };
       }
       case 'explain': {
         const ledger = readLedger(dir);

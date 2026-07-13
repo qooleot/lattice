@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommand, inferRenameSpec } from '../src/cli.js';
+import { appendLedger } from '../src/engine/session.js';
 import { traceAModel, invoiceLinesModel, sumCandidate } from './fixtures.js';
 
 const dpsf = { entities: [
@@ -288,6 +289,20 @@ describe('engine CLI', () => {
     const rg: any = await runCommand(['regenerate', '--session', dir,
       '--candidate', JSON.stringify({ id: 'S2', name: 's2', candidate: sumCandidate })], fakeDeps);
     expect(rg.error).not.toBe('not-elicitable');
+  });
+
+  it('status counts guard findings from the ledger, by finding kind', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'stuck',
+      owner: 'Subscription', region: 'Access', state: 'Active', boundedN: 6, provenance: 'test' });
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'unreachable',
+      owner: 'Subscription', region: 'Access', state: 'Ended', boundedN: 6, provenance: 'test' });
+
+    const st: any = await runCommand(['status', '--session', dir], fakeDeps);
+    expect(st.guardFindings).toEqual({ stuck: 1, unreachable: 1 });
   });
 
   it('structure command appends a structure ledger entry and works pre-init', async () => {

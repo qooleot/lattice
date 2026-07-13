@@ -29,7 +29,10 @@ export type LedgerEntry =
   | { kind: 'classified'; at: string; invariant: string; conjunct?: string;
       verdict: 'entailed' | 'independent' | 'not-inductive' | 'violated';
       tier: 'sound' | 'abstract'; caveat?: string;
-      witness?: CaseState; reachable?: boolean; pinnedBy?: string[]; provenance: string };
+      witness?: CaseState; reachable?: boolean; pinnedBy?: string[]; provenance: string }
+  | { kind: 'guard-finding'; at: string; finding: 'stuck' | 'unreachable';
+      owner: string; region: string; state: string; witness?: CaseState;
+      boundedN: number; provenance: string };
 
 /** Calendar day of an ISO timestamp — the human-facing date in provenance and refusal text. */
 export const isoDay = (at: string): string => at.slice(0, 10);
@@ -61,4 +64,7 @@ export function readLedger(dir: string): LedgerEntry[] {
 }
 export function readClassifications(dir: string): Extract<LedgerEntry, { kind: 'classified' }>[] {
   return readLedger(dir).filter((e): e is Extract<LedgerEntry, { kind: 'classified' }> => e.kind === 'classified');
+}
+export function readGuardFindings(dir: string): Extract<LedgerEntry, { kind: 'guard-finding' }>[] {
+  return readLedger(dir).filter((e): e is Extract<LedgerEntry, { kind: 'guard-finding' }> => e.kind === 'guard-finding');
 }

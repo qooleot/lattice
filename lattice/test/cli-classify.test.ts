@@ -3,7 +3,9 @@ import { mkdtempSync, appendFileSync, readFileSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommand } from '../src/cli.js';
+import { readGuardFindings } from '../src/engine/session.js';
 import { traceAModel } from './fixtures.js';
+import type { DomainModel } from '../src/ast/domain.js';
 
 // Scripted quintVerify: returns queued results in CALL ORDER (mirrors classify.test.ts's fakeDeps
 // pattern). classifyInvariant makes 2 calls per invariant — [consecution, reachability] — in the
@@ -94,7 +96,12 @@ describe('engine classify CLI', () => {
     const r: any = await runCommand(['classify', '--session', dir, '--name', 'h1'], deps);
     expect(r.classified).toHaveLength(1);
     expect(r.classified[0].invariant).toBe('h1');
-    expect(calls).toHaveLength(2);   // only h1's 2-probe pair ran, never h2's
+    // `classify` also runs `analyzeGuards` unconditionally (Task 4) — its probes carry the
+    // `q_not_stuck`/`q_not_reach` invariant names, distinct from classifyAdopted's, so excluding
+    // them recovers the original intent: only h1's 2-probe pair ran through classifyAdopted, never
+    // h2's.
+    const classifyCalls = calls.filter(c => c.opts.invariant !== 'q_not_stuck' && c.opts.invariant !== 'q_not_reach');
+    expect(classifyCalls).toHaveLength(2);
   });
 
   it('--max-steps threads through as the reachability bound (default 6)', async () => {
@@ -198,5 +205,48 @@ describe('engine classify CLI', () => {
     const dir = await setup();
     const r: any = await runCommand(['classify', '--session', dir, '--name', 'h1', '--max-steps', 'not-a-number'], inertDeps);
     expect(r).toEqual({ error: 'invalid-arg', arg: 'max-steps' });
+  });
+
+  // Mirrors guard-structure.test.ts's `guardedOnlyModel`: region `s`, initial `a` (non-terminal),
+  // its only exit `go` is guarded by `n==1` → `a` is a stuck candidate; `b` is reached only via the
+  // guarded `go` → `b` is in the reachability residual. This tests the WIRING (classify calls
+  // analyzeGuards and persists+surfaces its findings), not the solver — Task 3's integration test
+  // already proves the solver direction against real quint.
+  const stuckGuardModel: DomainModel = {
+    context: 'T', ticksPerDay: 24, enums: [], values: [], entities: [], events: [], services: [],
+    aggregates: [{
+      kind: 'aggregate', name: 'W',
+      fields: [{ name: 'wId', type: { kind: 'prim', prim: 'Id' }, key: true },
+               { name: 'n', type: { kind: 'prim', prim: 'Int' } }],
+      machine: {
+        regions: [{ name: 's', initial: 'a', states: [{ name: 'a' }, { name: 'b', tags: ['terminal'] }] }],
+        transitions: [{ name: 'go', region: 's', from: ['a'], to: 'b',
+          requires: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['n'] }, right: { kind: 'int', value: 1 } } }],
+      },
+    }],
+  } as unknown as DomainModel;
+
+  it('classify surfaces a stuck guard finding and persists it to the ledger', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-classify-guard-'));
+    const modelFile = join(dir, 'm.json');
+    writeFileSync(modelFile, JSON.stringify(stuckGuardModel));
+    await runCommand(['init', '--session', dir, '--model', modelFile], inertDeps);
+
+    // A stub `quintVerify` that always reports `violated: true` — a stuck probe treats that as a
+    // confirmed stuck finding; a reachability probe treats it as reachable (no unreachable finding),
+    // so this model yields exactly one finding: `a` is stuck.
+    const guardDeps: any = {
+      alloy: async () => ({ sat: false, instances: [], ms: 0 }),
+      quint: async () => ({ violated: false, ms: 0 }),
+      quintVerify: async () => ({ violated: true, ms: 0 }),
+    };
+    const r: any = await runCommand(['classify', '--session', dir], guardDeps);
+    expect(r.guardFindings).toBeDefined();
+    expect(r.guardFindings).toHaveLength(1);
+    expect(r.guardFindings[0]).toMatchObject({ finding: 'stuck', owner: 'W', region: 's', state: 'a', boundedN: 6 });
+
+    const persisted = readGuardFindings(dir);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0]).toMatchObject({ kind: 'guard-finding', finding: 'stuck', owner: 'W', region: 's', state: 'a', boundedN: 6 });
   });
 });
