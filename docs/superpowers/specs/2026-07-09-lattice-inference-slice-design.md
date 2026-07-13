@@ -385,6 +385,15 @@ hybrid also matches the slice's question-minimization / solver-first-pruning the
 - **Solver confirm (residual only):** is a config with an instance in `S` and every out-guard false
   *reachable* from real `init`? Assert `¬stuck_O_r_S` as the invariant; a **violation ⇒ reachable
   stuck state**, and the CTI trace is the "blocking valuation" the finding names.
+- **Semantics — this is *momentary* (reachable-with-all-exits-blocked), not *permanent* stuck.** The
+  probe is a **safety** check: it fires if *some reachable* config has the instance in `S` with every
+  out-guard false. It deliberately does **not** prove the instance can never escape — a later accrual
+  step (or an unmodeled event) might satisfy a guard and fire a transition. So the finding
+  **over-approximates** "permanently wedged" and errs toward *more* findings (the safe, false-alarm
+  direction, consistent with §6.3): a flagged state is a boundary worth confirming ("an instance can
+  sit in `S` with every exit currently blocked — is that intended, or is a guard/event missing?"),
+  not a proof of a dead end. Proving *permanent* stuck would need an inevitability (liveness) check,
+  out of scope.
 - **Annotation gating:** `@terminal` stuck → silent (expected). Non-terminal stuck → a finding
   naming the state and the blocking valuation.
 - *Worked residual example:* if `voidOpen`/`writeOff` were removed, `open`'s only exit is the guarded
@@ -409,16 +418,20 @@ so it is called out rather than assumed:
   fields it needs can't move) → noisier but safe.
 - On the **abstract-evolution** machine (the same one Pillar A's classifier runs on), accrual can
   satisfy numeric guards, so reachability has *far fewer false positives* (a state still flagged
-  unreachable *even granting arbitrary accrual* is genuinely suspect — an over-strong guard), and a
-  stuck-state flag means "stuck *even under generous accrual*" — i.e. escapable only by an *event*
-  the model doesn't have. **Decision: run both analyses on the abstract-evolution machine** — for
-  consistency with the classifier and because it yields high-confidence, low-false-positive findings.
-  Its blind spot (a state escapable only via accrual the *real* rule wouldn't actually produce) is a
-  documented honest-ceiling item (§10), not silently assumed. *Illustration:* in the residual `open`
-  example above, the frozen machine calls `open` stuck (`amountPaid` frozen ≠ `totalDue`); the
-  abstract-evolution machine does **not** (accrual drives `amountPaid` to `totalDue`, `settle` fires)
-  — the honest reading is "not stuck under the modeled accrual; a payment *event* is what unsticks
-  it," so we do not spam the author with a stuck finding for the ordinary unpaid-invoice case.
+  unreachable *even granting arbitrary accrual* is genuinely suspect — an over-strong guard). The
+  machine choice's real leverage is on **reachability**; it does **not** suppress momentary-stuck
+  findings — because the stuck probe is a *safety* check (§7.3.1), a reachable *pre-accrual* config
+  in `S` with the guard not-yet-satisfied still trips it, on either machine. (E.g. `open` with sole
+  guarded exit `settle: amountPaid == totalDue` *is* flagged momentary-stuck: a reachable `open`
+  invoice with `amountPaid < totalDue` exists before accrual closes the gap. That is the honest
+  reading — "an invoice can sit `open` with the balance unmet until a payment lands" — not a claim
+  that it is permanently wedged.) **Decision: run both analyses on the abstract-evolution machine** — for
+  consistency with the classifier, and because on **reachability** it yields high-confidence,
+  low-false-positive findings (a state unreachable even under arbitrary accrual is genuinely suspect).
+  Its blind spot, for reachability, is the reverse: a state reachable *only* via accrual the *real*
+  update rule would not actually produce is (soundly, but perhaps unhelpfully) reported reachable —
+  so a genuine over-strong-guard dead-transition can be missed. That, plus the momentary-stuck
+  over-approximation above, are the documented honest-ceiling items (§10), not silently assumed.
 
 **7.3.4 Encoding — `astToQuintGuard`.** A thin emitter twin (mirroring `astToQuintClassify`): take
 the base `astToQuint` machine's `head` (module through the `step` line, `abstractEvolution: true`),
@@ -533,14 +546,20 @@ documented in `docs/language/*.md`. Flagged, not silently assumed.
   rows).
 - **Spurious-CTI discipline:** C presents abstract-tier strengthenings as "the model permits this;
   add a guard or tell me it's impossible," never as a confirmed bug.
-- **Guard analysis (Pillar B) is bounded and machine-relative.** Both analyses run on the
-  abstract-evolution machine (§7.3.3) at reachability depth `N`. A guarded state's *unreachable*
-  finding is sound only to depth `N` (it could be reachable via a longer trace); a *stuck-state*
-  finding means "stuck even under generous accrual" — its blind spot is a state escapable only by
-  accrual the real update rule would not actually produce (which the frozen machine would flag but
-  the abstract one does not). Findings are boundary *questions*, never hard errors. The structural
-  pre-filter's soundness rests on "an unguarded out-transition is always fireable," which holds by
-  construction (an unguarded transition's only precondition is the `from`-state it already occupies).
+- **Guard analysis (Pillar B) is bounded, machine-relative, and over-approximate.** Both analyses run
+  on the abstract-evolution machine (§7.3.3) at reachability depth `N`. A guarded state's
+  *unreachable* finding is sound only to depth `N` (it could be reachable via a longer trace), and it
+  can *miss* a genuine dead transition if the state is reachable only via accrual the real update rule
+  would not produce. A *stuck-state* finding is **momentary, not permanent** (§7.3.1): it means "some
+  reachable config sits in the state with every exit currently guarded-false," which *over-approximates*
+  "permanently wedged" — a later accrual step or unmodeled event may still escape, so a flagged state
+  is a boundary question, not a proven dead end (the safe, false-alarm direction per §6.3). All
+  findings are boundary *questions*, never hard errors. The structural pre-filter's soundness rests on
+  "an unguarded out-transition is always fireable," which holds by construction (an unguarded
+  transition's only precondition is the `from`-state it already occupies). *Follow-up:* guard findings
+  are append-only and never emit a "cleared" marker, so a site that stops being a candidate after a
+  model edit leaves a stale ledger entry `status` keeps counting until a same-key entry supersedes it
+  — analogous to the auto-reclassify-on-apply limitation above.
 
 ## 11. Deferred-work registry (every ceiling item has an address)
 

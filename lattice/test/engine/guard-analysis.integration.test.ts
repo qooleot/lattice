@@ -45,4 +45,17 @@ describe('analyzeGuards (integration, real quint)', () => {
     const findings = await analyzeGuards(model, realDeps, 4);
     expect(findings.some(f => f.finding === 'stuck')).toBe(false);
   }, 60_000);
+
+  it('flags MOMENTARY stuck even when the guard is satisfiable via accrual (over-approximation, design §7.3.1)', async () => {
+    // `a`'s sole exit `go` requires `n >= 200`. At init `n` is drawn from INT_POOL (max 100), so the
+    // initial config sits in `a` with the guard FALSE → a reachable stuck config → flagged — even
+    // though abstract-evolution accrual could later push `n` past 200 and escape. This pins the
+    // honest semantics: a stuck finding is MOMENTARY (reachable-with-all-exits-blocked), not a proof
+    // of a permanent dead end. (Under the old, incorrect §7.3.3 reading this would NOT be flagged.)
+    const model = mk(
+      [{ name: 'go', region: 's', from: ['a'], to: 'b', requires: cmp(fld('n'), 'ge', int(200)) }],
+      [{ name: 'a' }, { name: 'b', tags: ['terminal'] }]);
+    const findings = await analyzeGuards(model, realDeps, 4);
+    expect(findings.some(f => f.finding === 'stuck' && f.state === 'a')).toBe(true);
+  }, 60_000);
 });
