@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 import type { DomainModel } from './ast/domain.js';
 import { validateModel } from './ast/validate.js';
 import { validateCandidate } from './ast/grammar.js';
-import type { CandidateInvariant } from './ast/invariant.js';
+import type { CandidateInvariant, Candidate } from './ast/invariant.js';
 import { loadState, saveState, appendLedger, readLedger, readClassifications, readGuardFindings, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
 import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
@@ -184,6 +184,30 @@ async function classifyOnApply(
     reachable: result.reachable, pinnedBy: result.pinnedBy, provenance: `apply ${isoDay(now())}` }));
   for (const e of entries) appendLedger(dir, e);
   return entries;
+}
+
+type GuardCandidate = Extract<Candidate, { kind: 'guard' }>;
+
+/** Mint the deterministic CandidateInvariant for an auto-derived guard (design §8.5-8.7): id/name
+ *  from the site + shape (transition + predicate op) so the `strengthen` command and the interactive
+ *  strengthening hook produce byte-identical adoptions for the same guard. Guards are never authored
+ *  or proposed, so there is no pre-existing id to reuse — this is the single minting point. */
+function guardCandidateInvariant(g: GuardCandidate): CandidateInvariant {
+  const shape = g.predicate.kind === 'cmp' ? g.predicate.op : g.predicate.kind;
+  return { id: `guard-${g.aggregate}-${g.transition}-${shape}`, name: `guard_${g.transition}_${shape}`,
+    prior: 1, source: 'regen', candidate: g };
+}
+
+/** Adopt a derived guard, idempotently (design carried fix v): if a candidate with the same id is
+ *  already adopted, do nothing and return null; otherwise push `{inv, status:'adopted'}` + a
+ *  provenance-tagged `adopted` ledger entry and return the minted invariant. `provTag` names the
+ *  path that derived it (`strengthen` for the command, `auto-strengthen` for the hook). */
+function adoptGuard(s: SessionState, dir: string, g: GuardCandidate, provTag: string): CandidateInvariant | null {
+  const gInv = guardCandidateInvariant(g);
+  if (s.candidates.some(c => c.inv.id === gInv.id && c.status === 'adopted')) return null;
+  s.candidates.push({ inv: gInv, status: 'adopted' });
+  appendLedger(dir, { kind: 'adopted', at: now(), invariant: gInv, provenance: `${provTag} ${isoDay(now())}` });
+  return gInv;
 }
 
 export function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
@@ -545,13 +569,42 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         for (const f of guardFindings)
           appendLedger(dir, { kind: 'guard-finding', at: now(), finding: f.finding, owner: f.owner,
             region: f.region, state: f.state, witness: f.witness, boundedN: f.boundedN, provenance: `classify ${isoDay(now())}` });
+
+        // Interactive-loop strengthening hook (design §8.5-8.7, Task 6), bulk-only (mirrors the
+        // guard-analysis gating above): for each ADOPTED invariant that just classified `violated`,
+        // auto-invoke the CTI-guided strengthening engine against the full adopted spec. An
+        // `auto-adopt` silently adopts the winning guard (idempotently, ledger-noted with an
+        // `auto-strengthen` provenance) and then re-runs the §7.2 reclassify pass over that invariant
+        // so a guard that now forces it reclassifies (masking coverage §8.4). Every other Resolution
+        // (`inconsistent`/`no-transition`/`distinguish`) is a NON-BLOCKING finding surfaced in the
+        // output — `distinguish` carries its survivors (the full interactive question wiring through
+        // the planner is DEFERRED; see task-6 report). Each auto-adopt mutates `adoptedConstraints(s)`,
+        // so a subsequent violated invariant's probe carries the guard just adopted (engine fix i).
+        const autoStrengthened: object[] = [];
+        const violatedNames = [...new Set(results.filter(r => r.verdict === 'violated').map(r => r.invariant))];
+        for (const name of violatedNames) {
+          const target = targets.find(c => c.inv.name === name);
+          if (!target) continue;
+          const res = await strengthenInvariant(model(), target.inv, adoptedConstraints(s), deps, reachSteps ?? 6);
+          if (res.kind !== 'auto-adopt') { autoStrengthened.push({ invariant: name, resolution: res }); continue; }
+          const gInv = adoptGuard(s, dir, res.guard, 'auto-strengthen');
+          // Masking reclassify (§8.4/§8.7): re-run the on-apply classifier over just this invariant now
+          // that the guard is adopted, appending a fresh `classified` entry (status/explain read the
+          // latest). Reuses classifyOnApply/classifyAdopted — no hand-rolled classification.
+          const reclassified = gInv
+            ? await classifyOnApply(dir, model(), s.candidates.filter(c => c.status === 'adopted').map(c => c.inv), [name], deps)
+            : [];
+          autoStrengthened.push({ invariant: name, resolution: res, guard: gInv?.name,
+            reclassified: reclassified.map(e => ({ invariant: e.invariant, verdict: e.verdict, pinnedBy: e.pinnedBy })) });
+        }
+
         // Bulk classify (no --name): name the adopted invariants that were NOT classified, rather
         // than just dropping them — most real sessions carry template-adopted structural invariants
         // of unclassifiable kinds (see comment above), and a silent drop looks identical to "nothing
         // else was adopted".
         const skipped = adoptedTracked.filter(c => !classifiable.includes(c))
           .map(c => ({ name: c.inv.name, kind: c.inv.candidate.kind }));
-        return { classified: results, skipped, methodGuards, guardFindings };
+        return done({ classified: results, skipped, methodGuards, guardFindings, autoStrengthened });
       }
       case 'strengthen': {
         // CTI-guided strengthening (design §8.5-8.7): resolve the named ADOPTED invariant (mirrors
@@ -568,28 +621,14 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           reachSteps = n;
         }
 
-        // strengthenInvariant's `adopted` param is peer constraints only (mirrors classifyAdopted's
-        // contract for classifyInvariant): quint-expressible kinds only — candidateToQuint throws on
-        // template-adopted terminal/monotonic/leadsTo/refsResolve, which astToQuintClassify/astToQuint
-        // would hit immediately since strengthen internally only strips `guard` kind, not those — and
-        // excluding the target's own candidate (it is not its own peer).
-        const peers = expressibleAdopted('quint', adoptedConstraints(s)).filter(c => c !== target.inv.candidate);
-        const res = await strengthenInvariant(model(), target.inv, peers, deps, reachSteps ?? 6);
+        // strengthenInvariant now filters its own peers (quint-expressible, self-excluded) and rides
+        // adopted guards into the machine (carried fix iii), so pass raw adoptedConstraints(s).
+        const res = await strengthenInvariant(model(), target.inv, adoptedConstraints(s), deps, reachSteps ?? 6);
         if (res.kind !== 'auto-adopt') return { strengthened: res };   // finding/survivors — non-blocking (Task 6: distinguish UX)
 
-        // auto-adopt: wrap the winning guard candidate in a CandidateInvariant and adopt it, mirroring
-        // the `s.candidates.push(...) + appendLedger('adopted', ...)` shape used by init/apply above.
-        // Guards are never authored/proposed, so there is no pre-existing id to reuse — mint a
-        // deterministic one from the site + shape (transition + predicate op), same spirit as the
-        // template-adopted ids elsewhere in this file (e.g. `template ${inv.id}` provenance strings).
-        const g = res.guard;
-        const shape = g.predicate.kind === 'cmp' ? g.predicate.op : g.predicate.kind;
-        const gInv: CandidateInvariant = {
-          id: `guard-${g.aggregate}-${g.transition}-${shape}`, name: `guard_${g.transition}_${shape}`,
-          prior: 1, source: 'regen', candidate: g,
-        };
-        s.candidates.push({ inv: gInv, status: 'adopted' });
-        appendLedger(dir, { kind: 'adopted', at: now(), invariant: gInv, provenance: `strengthen ${isoDay(now())}` });
+        // auto-adopt: adopt the winning guard idempotently via the shared minting/ledger helper (same
+        // ids/names the interactive hook produces). A no-op (already adopted) still returns the res.
+        adoptGuard(s, dir, res.guard, 'strengthen');
         return done({ strengthened: res });
       }
       case 'explain': {

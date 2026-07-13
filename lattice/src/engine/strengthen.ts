@@ -2,9 +2,8 @@ import type { AggregateDef, DomainModel } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Cmp, Predicate } from '../ast/invariant.js';
 import type { CaseState } from './evaluate.js';
 import { evaluateCandidate } from './evaluate.js';
-import { astToQuintClassify } from '../emit/quint-classify.js';
 import { astToQuint } from '../emit/quint.js';
-import type { SolverDeps } from './planner.js';
+import { expressibleAdopted, type SolverDeps } from './planner.js';
 
 type Guard = Extract<Candidate, { kind: 'guard' }>;
 
@@ -72,13 +71,25 @@ const dbg = (stage: string, gs: Guard[]) => {
 export async function strengthenInvariant(
   m: DomainModel, violated: CandidateInvariant, adopted: Candidate[], deps: SolverDeps, reachSteps = 6,
 ): Promise<Resolution> {
-  const peers = adopted.filter(c => c.kind !== 'guard');
+  // Peers = quint-expressible always-properties only (candidateToQuint throws on template-adopted
+  // terminal/monotonic/leadsTo/refsResolve and on the `guard` kind), self-excluded — the conjunction
+  // that forms the classify `q_inv`. Moving this filter INTO the engine (design carried fix iii) lets
+  // callers pass raw `adoptedConstraints(s)` (the interactive hook does). Adopted GUARDS never render
+  // as peers but MUST still ride into the machine — astToQuint conjoins them into their trans_ action
+  // (design §8.3) — so they are kept in `machineAdopted` (the `adopted` channel of every probe below).
+  const peers = expressibleAdopted('quint', adopted).filter(c => c !== violated.candidate && c.kind !== 'guard');
+  const guards = adopted.filter((c): c is Guard => c.kind === 'guard');
+  const machineAdopted: Candidate[] = [...peers, ...guards];
 
-  // 1. Obtain the CTI (reachability from the real init) with its trace. The classifier's reachability
-  //    probe (design §5, Pillar A path): q_peersImpliesI = (peers ⇒ I) checked from `init`; a
-  //    violation is a reachable peer-consistent ¬I — the counterexample-to-induction we must close.
-  const rEm = astToQuintClassify(m, { invariant: violated.candidate, peers, probe: 'entailment', maxSteps: reachSteps });
-  const reach = await deps.quintVerify(rEm, { init: 'init', invariant: 'q_peersImpliesI', maxSteps: reachSteps });
+  // 1. Obtain the CTI (reachability from the real init) with its trace. Uses the guard-bearing
+  //    astToQuint `probe-forbid` path (carried fix i): NOT astToQuintClassify, which cannot carry
+  //    guards and would DROP any prior adopted guard on another transition — reporting a spurious CTI
+  //    for an invariant a prior guard already fixes (the interactive hook accumulates such guards).
+  //    q_inv = (peers ⇒ I) checked from `init`; a violation with a witness is a reachable peer-
+  //    consistent ¬I — the counterexample-to-induction we must close. This is byte-equivalent to the
+  //    old q_peersImpliesI reachability property (Task 4 report), just guard-bearing and matching 3b.
+  const rEm = astToQuint(m, { kind: 'probe-forbid', hi: violated.candidate, exclusions: [], adopted: machineAdopted, maxSteps: reachSteps, abstractEvolution: true });
+  const reach = await deps.quintVerify(rEm, { init: 'init', invariant: rEm.invariantName, maxSteps: reachSteps });
   if (!reach.violated || !reach.witness) return { kind: 'no-transition', note: 'invariant not violated (nothing to strengthen)' };
   const site = ctiTransition(m, violated, reach.witness);
   if (!site) return { kind: 'no-transition', note: 'CTI reached via accrual with no declared transition — confirm intended (design §10)' };
@@ -93,7 +104,7 @@ export async function strengthenInvariant(
   //     guard conjoined into its `trans_` action — `violated:true` ⇒ such a state exists ⇒ consistent.
   const consistent: Guard[] = [];
   for (const g of variants) {
-    const r = await deps.quint(m, { kind: 'probe-permit', hi: violated.candidate, exclusions: [], adopted: [...adopted, g], maxSteps: reachSteps, abstractEvolution: true });
+    const r = await deps.quint(m, { kind: 'probe-permit', hi: violated.candidate, exclusions: [], adopted: [...machineAdopted, g], maxSteps: reachSteps, abstractEvolution: true });
     if (r.violated) consistent.push(g);
   }
   dbg('consistent', consistent);
@@ -106,7 +117,7 @@ export async function strengthenInvariant(
   //     q_inv = (peers ⇒ I); `!violated` ⇒ the guard closed the CTI.
   const closers: Guard[] = [];
   for (const g of consistent) {
-    const em = astToQuint(m, { kind: 'probe-forbid', hi: violated.candidate, exclusions: [], adopted: [...adopted, g], maxSteps: reachSteps, abstractEvolution: true });
+    const em = astToQuint(m, { kind: 'probe-forbid', hi: violated.candidate, exclusions: [], adopted: [...machineAdopted, g], maxSteps: reachSteps, abstractEvolution: true });
     const r = await deps.quintVerify(em, { init: 'init', invariant: em.invariantName, maxSteps: reachSteps });
     if (!r.violated) closers.push(g);
   }
@@ -118,7 +129,7 @@ export async function strengthenInvariant(
   const survivors: Guard[] = [];
   for (const g of closers) {
     let dup = false;
-    for (const s of survivors) if (!(await separates(m, s, g, adopted, deps, reachSteps))) { dup = true; break; }
+    for (const s of survivors) if (!(await separates(m, s, g, machineAdopted, deps, reachSteps))) { dup = true; break; }
     if (!dup) survivors.push(g);
   }
   dbg('survivors', survivors);

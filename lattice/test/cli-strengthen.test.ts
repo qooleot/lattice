@@ -136,4 +136,103 @@ describe('engine strengthen CLI', () => {
     const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
     expect(st.candidates.some((c: any) => c.inv.candidate.kind === 'guard')).toBe(false);
   });
+
+  // Carried fix (v): guard-adopt idempotence. Running `strengthen` on the same invariant twice must
+  // not adopt a second copy of the same guard candidate (same id) — the second auto-adopt is a no-op
+  // on the candidate set (it still returns the Resolution).
+  it('re-running strengthen does not adopt a duplicate guard (idempotence)', async () => {
+    const dir = await setup();
+    const first = scriptedDeps();
+    const r1: any = await runCommand(['strengthen', '--session', dir, '--name', 'paidExact'], first.deps);
+    expect(r1.strengthened.kind).toBe('auto-adopt');
+
+    const second = scriptedDeps();
+    const r2: any = await runCommand(['strengthen', '--session', dir, '--name', 'paidExact'], second.deps);
+    expect(r2.strengthened.kind).toBe('auto-adopt');   // still resolves, just no new adoption
+
+    const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
+    const guards = st.candidates.filter((c: any) => c.inv.candidate.kind === 'guard');
+    expect(guards).toHaveLength(1);
+    expect(guards[0].inv.id).toBe('guard-Invoice-settle-eq');
+
+    const ledger = readFileSync(join(dir, 'ledger.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const adoptedGuardEntries = ledger.filter((e: any) => e.kind === 'adopted' && e.invariant.candidate.kind === 'guard');
+    expect(adoptedGuardEntries).toHaveLength(1);   // only the first run appended a ledger entry
+  });
+});
+
+// Scripts quint/quintVerify by the probe's `invariant` NAME + emission FINGERPRINT (not raw call
+// order) so the sequence is robust to the many intervening probes the bulk `classify` command runs
+// (4 NonNegative template invariants classify first, plus method-guard + guard-analysis sweeps).
+//   - `q_peersImpliesI` on the paidExact emission (references amountPaid, totalDue, and the "paid"
+//     state) = the classify reachability for paidExact: violated first (a real CTI), entailed on the
+//     masking reclassify after the guard is adopted. On any OTHER invariant's emission ⇒ not violated
+//     (those classify entailed, so the hook only fires for paidExact).
+//   - `q_inv` = strengthen step-1 CTI + step-3b closes-checks (CTI, then eq-closes/le-open/ge-open ⇒
+//     single survivor eq ⇒ auto-adopt). `q_I`/`q_methodGuard`/`q_not_stuck`/`q_not_reach` ⇒ inert.
+//   - deps.quint (strengthen 3a consistency) ⇒ all three variants consistent.
+function hookDeps() {
+  let peersI = 0, qInv = 0;
+  const paidExactScript = [{ violated: true, witness: ctiWitness }, { violated: false }];
+  const qInvScript = [{ violated: true, witness: ctiWitness }, { violated: false }, { violated: true }, { violated: true }];
+  // Fingerprint paidExact by the invariant-UNDER-TEST `val q_I` line only (its `paid ⇒
+  // amountPaid==totalDue` body). A whole-source check would also match every NonNegative invariant,
+  // since the shared machine names every field/state AND paidExact rides along as a `peerK` val when
+  // those are the target. The NonNegative q_I compares a field to 0, never `amountPaid == totalDue`.
+  const isPaidExact = (src: string) =>
+    (src.split('\n').find(l => l.trimStart().startsWith('val q_I ')) ?? '').includes('x.amountPaid == x.totalDue');
+  const deps: any = {
+    alloy: async () => ({ sat: false, instances: [], ms: 0 }),
+    quint: async () => ({ violated: true, ms: 0 }),
+    quintVerify: async (em: any, opts: any) => {
+      if (opts.invariant === 'q_peersImpliesI') {
+        if (!isPaidExact(em.source)) return { violated: false, ms: 0 };   // other classifiable invariants ⇒ entailed
+        return { ...paidExactScript[Math.min(peersI++, paidExactScript.length - 1)]!, ms: 0 };
+      }
+      if (opts.invariant === 'q_inv') return { ...qInvScript[Math.min(qInv++, qInvScript.length - 1)]!, ms: 0 };
+      return { violated: false, ms: 0 };   // q_I consecution, q_methodGuard, q_not_stuck/q_not_reach
+    },
+  };
+  return { deps };
+}
+
+describe('engine classify interactive strengthening hook (bulk)', () => {
+  it('auto-strengthens a violated invariant: silently adopts the guard, reclassifies (masking), and surfaces it', async () => {
+    const dir = await setup();
+    const { deps } = hookDeps();
+    const r: any = await runCommand(['classify', '--session', dir], deps);
+
+    // paidExact classifies violated → the hook auto-adopts a `settle` guard.
+    expect(r.classified.find((c: any) => c.invariant === 'paidExact').verdict).toBe('violated');
+    expect(r.autoStrengthened).toHaveLength(1);
+    expect(r.autoStrengthened[0]).toMatchObject({
+      invariant: 'paidExact', guard: 'guard_settle_eq',
+      resolution: { kind: 'auto-adopt', guard: { transition: 'settle', predicate: { op: 'eq' } } },
+    });
+    // Masking coverage (§8.4/§8.7): the reclassify pass re-ran for paidExact after the guard adoption
+    // (scripted to `entailed`), proving the §7.2 machinery is invoked over the forced invariant.
+    expect(r.autoStrengthened[0].reclassified).toEqual([
+      { invariant: 'paidExact', verdict: 'entailed', pinnedBy: expect.any(Array) },
+    ]);
+
+    // The guard is now adopted in the session, with the same id the `strengthen` command mints.
+    const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
+    const guard = st.candidates.find((c: any) => c.inv.candidate.kind === 'guard');
+    expect(guard?.status).toBe('adopted');
+    expect(guard.inv.id).toBe('guard-Invoice-settle-eq');
+
+    // Ledger notes the auto-adoption with an `auto-strengthen` provenance (reversible, attributable).
+    const ledger = readFileSync(join(dir, 'ledger.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const autoEntry = ledger.find((e: any) => e.kind === 'adopted' && e.invariant.candidate.kind === 'guard');
+    expect(autoEntry.provenance).toMatch(/^auto-strengthen /);
+  });
+
+  it('is gated to bulk: `--name` classify never runs the hook (no autoStrengthened key)', async () => {
+    const dir = await setup();
+    const { deps } = hookDeps();
+    const r: any = await runCommand(['classify', '--session', dir, '--name', 'paidExact'], deps);
+    expect(r.autoStrengthened).toBeUndefined();
+    const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
+    expect(st.candidates.some((c: any) => c.inv.candidate.kind === 'guard')).toBe(false);
+  });
 });

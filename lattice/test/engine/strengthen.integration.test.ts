@@ -53,4 +53,29 @@ describe('strengthenInvariant (integration, real quint)', () => {
       if (res.guard.predicate.kind === 'cmp') expect(res.guard.predicate.op).toBe('eq');
     }
   }, 240_000);
+
+  // Carried fix (i): step 1's CTI probe MUST carry prior adopted guards. On the stripped variant a
+  // PRIOR adopted guard on `settle` (amountPaid==totalDue) already prevents paidExact's violation, so
+  // there is nothing to strengthen. The old astToQuintClassify step-1 path dropped adopted guards
+  // (they can only ride into the machine via astToQuint's `adopted` channel), so it would report a
+  // SPURIOUS CTI and re-derive a guard for `settle`. With the guard-bearing probe-forbid step 1, the
+  // guard rides into settle's trans_ action → no reachable peer-consistent ¬paidExact → no-transition.
+  it('a prior adopted guard that already fixes the invariant yields no-transition (no spurious CTI)', async () => {
+    const variant = stripSettleGuard(subscriptionsModel);
+    const neverOverpaid: Candidate = {
+      kind: 'statePredicate', aggregate: 'Invoice',
+      body: { kind: 'cmp', op: 'le',
+        left: { kind: 'field', owner: 'self', path: ['amountPaid'] },
+        right: { kind: 'field', owner: 'self', path: ['totalDue'] } },
+    };
+    // The prior adopted guard equivalent to settle's stripped authored `requires`.
+    const settleGuard: Candidate = {
+      kind: 'guard', aggregate: 'Invoice', region: 'settlement', transition: 'settle',
+      predicate: { kind: 'cmp', op: 'eq',
+        left: { kind: 'field', owner: 'self', path: ['amountPaid'] },
+        right: { kind: 'field', owner: 'self', path: ['totalDue'] } },
+    };
+    const res = await strengthenInvariant(variant, paidExact, [neverOverpaid, settleGuard], realDeps, 6);
+    expect(res.kind).toBe('no-transition');
+  }, 240_000);
 });

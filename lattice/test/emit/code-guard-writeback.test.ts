@@ -28,6 +28,16 @@ describe('astToCode: adopted-guard write-back into transition requires', () => {
     expect(settleLine).toContain('amountPaid == totalDue');
   });
 
+  it('dedupes a guard structurally identical to the authored requires (no `p && p`)', () => {
+    // settleGuardInv's predicate is exactly `settle`'s authored requires (amountPaid == totalDue).
+    // Conjoining a predicate with itself must NOT render `amountPaid == totalDue && amountPaid ==
+    // totalDue` (design carried fix iv) — the deduped output is byte-identical to the no-guard form.
+    const text = astToCode(subscriptionsModel, [settleGuardInv]);
+    const settleLine = text.split('\n').find(l => l.includes('transition settle'));
+    expect(settleLine).not.toContain('&&');
+    expect(settleLine).toBe('      transition settle { from open to paid; requires amountPaid == totalDue; emits InvoicePaid }');
+  });
+
   it('renders no-guard transitions byte-identically to the pre-write-back form', () => {
     // No adopted guards at all: `finalize`'s authored requires (totalDue == licenseFeeAmount + usageAmount)
     // and `settle`'s authored requires must render exactly as astToCode did before guard write-back existed.

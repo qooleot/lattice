@@ -74,11 +74,25 @@ function fieldLines(fields: Field[], indent: string, out: string[]): void {
 // adopted guard renders EXACTLY as before (single-item combine returns the authored `requires`
 // object itself, so predToText sees the identical AST) — this keeps no-guard `.lat` output
 // byte-identical, a hard constraint for every model that predates guard adoption.
+// Order-independent structural key for a predicate — recursively sorts object keys so two ASTs that
+// differ only in property insertion order (parsed authored `requires` vs a generated guard predicate)
+// still compare equal.
+function canonKey(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(canonKey).join(',') + ']';
+  return '{' + Object.keys(v as object).sort().map(k => JSON.stringify(k) + ':' + canonKey((v as Record<string, unknown>)[k])).join(',') + '}';
+}
+
 function combineRequires(requires: Predicate | undefined, guards: Predicate[]): Predicate | undefined {
   const all = requires ? [requires, ...guards] : guards;
-  if (all.length === 0) return undefined;
-  if (all.length === 1) return all[0];
-  return { kind: 'and', args: all };
+  // Drop structurally-identical duplicates (design carried fix iv) so a guard equal to the authored
+  // `requires` — or to another guard on the same transition — never renders `p && p`. First
+  // occurrence wins, preserving the authored-then-guards order.
+  const seen = new Set<string>();
+  const deduped = all.filter(p => { const k = canonKey(p); return seen.has(k) ? false : (seen.add(k), true); });
+  if (deduped.length === 0) return undefined;
+  if (deduped.length === 1) return deduped[0];
+  return { kind: 'and', args: deduped };
 }
 
 function machineLines(agg: string, mach: Machine, guardsByTransition: Map<string, Predicate[]>, out: string[]): void {
