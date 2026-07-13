@@ -221,6 +221,7 @@ export function buildOwnerInit(
 }
 
 export function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
+  if (c.kind === 'guard') throw new Error('candidateToQuint: a guard candidate is a transition enablement, not an always-property — conjoin it into its trans_ action, do not render it as a val');
   const v = varName(c.aggregate);
   if (c.kind === 'statePredicate') {
     const guard = c.where ? `${predToQuint(m, c.where, 'x', c.aggregate)} implies ` : '';

@@ -137,6 +137,8 @@ export function evaluateCandidate(c: Candidate, s: CaseState): Verdict {
       return 'permit';
     }
     case 'leadsTo': return 'permit'; // liveness is not judgeable on a finite case; template-only (§6.1)
+    case 'guard':
+      return subjects().every(e => evalPred(c.predicate, e, s)) ? 'permit' : 'forbid';
     case 'sumOverCollection': {
       for (const e of subjects()) {
         const kids = s.entities.filter(x => x.type === c.child && x.fields['owner'] === e.id);

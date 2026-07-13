@@ -106,6 +106,7 @@ export function conjunctTier(m: DomainModel, c: Candidate): 'sound' | 'abstract'
     case 'leadsTo':
       paths.push(...fieldsIn(c.from).paths, ...fieldsIn(c.to).paths);
       break;
+    case 'guard': throw new Error('conjunctTier: guards are transition enablements, never classified as invariants');
   }
   const evolving = evolvingFieldNames(m);
   return paths.some(p => p.some(seg => evolving.has(seg))) ? 'abstract' : 'sound';

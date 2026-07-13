@@ -259,5 +259,6 @@ export function routeCandidate(c: Candidate): Engine {
       const arith = (c.where ? predNeedsArith(c.where) : false) || predNeedsArith(c.body);
       return arith ? 'quint' : 'alloy';
     }
+    case 'guard': throw new Error('routeCandidate: a guard is a transition enablement, not an always-property — it is never solver-routed as an invariant');
   }
 }

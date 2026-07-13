@@ -36,6 +36,7 @@ export function renderCandidateEnglish(c: Candidate): string {
       const rel = c.op === 'eq' ? 'always equals' : c.op === 'le' ? 'never exceeds' : 'is never below';
       return `On every ${c.aggregate}, ${c.total.join('.')} ${rel} the sum of ${c.field} over its ${c.collection}.`;
     }
+    case 'guard': throw new Error('renderCandidateEnglish: a guard is a transition enablement, not an always-property invariant — it has no invariant-prose rendering');
   }
 }
 

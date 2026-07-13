@@ -55,6 +55,7 @@ export function candidateBodyText(c: Candidate): string {
       const ops = { eq: '==', le: '<=', ge: '>=' } as const;
       return `${c.total.join('.')} ${ops[c.op]} sum(${c.collection}, ${c.field})`;
     }
+    case 'guard': throw new Error('candidateBodyText: a guard is a transition enablement, not an always-property — it has no invariant-source rendering (guards are never authored)');
   }
 }
 
