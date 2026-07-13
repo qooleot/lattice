@@ -149,7 +149,7 @@ function refHopsInTerm(m: DomainModel, t: Term, self: string, ownerName: string)
     case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
 }
-function predToQuint(m: DomainModel, p: Predicate, self: string, ownerName: string): string {
+export function predToQuint(m: DomainModel, p: Predicate, self: string, ownerName: string): string {
   switch (p.kind) {
     case 'cmp': {
       const ops: Record<Cmp, string> = { eq: '==', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' };
