@@ -10,6 +10,7 @@ import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
 import { nextQuestion, checkDistinct, adoptedConstraints, expressibleAdopted, type SolverDeps } from './engine/planner.js';
 import { classifyInvariant, type Classification } from './engine/classify.js';
+import { strengthenInvariant } from './engine/strengthen.js';
 import { conjunctsOf } from './engine/tier.js';
 import { checkMethodGuard } from './engine/method-guard.js';
 import { analyzeGuards } from './engine/guard-analysis.js';
@@ -65,7 +66,7 @@ const isSessionBusy = (s: SessionState): boolean =>
   s.phase !== 'converged' || Object.keys(s.pendingWitnesses).length > 0;
 
 const VALID_JUDGES = ['permit', 'forbid', 'undecided'] as const;
-const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit', 'explain', 'classify']);
+const MODEL_COMMANDS = new Set(['propose', 'next-question', 'verdict', 'regenerate', 'witness-show', 'emit', 'explain', 'classify', 'strengthen']);
 // terminal/monotonic/leadsTo/refsResolve are template-adopted only (spec §7/§8): they either crash
 // candidateToQuint when pair-routed against a Quint-side candidate, or (refsResolve) mis-evaluate
 // on Quint witnesses that never populate the fields refsResolve's vacuous-true Alloy semantics
@@ -242,6 +243,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       case 'emit': if (!values.out) return { error: 'missing-arg', arg: 'out' }; break;
       case 'generate': if (!values.out) return { error: 'missing-arg', arg: 'out' }; break;
       case 'explain': if (!values.name) return { error: 'missing-arg', arg: 'name' }; break;
+      case 'strengthen': if (!values.name) return { error: 'missing-arg', arg: 'name' }; break;
       case 'structure':
         if (!values.question) return { error: 'missing-arg', arg: 'question' };
         if (!values.answer) return { error: 'missing-arg', arg: 'answer' };
@@ -550,6 +552,45 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         const skipped = adoptedTracked.filter(c => !classifiable.includes(c))
           .map(c => ({ name: c.inv.name, kind: c.inv.candidate.kind }));
         return { classified: results, skipped, methodGuards, guardFindings };
+      }
+      case 'strengthen': {
+        // CTI-guided strengthening (design §8.5-8.7): resolve the named ADOPTED invariant (mirrors
+        // classify --name's not-found guard — never a silent no-op) and run the generate→prune→
+        // resolve engine against the rest of the adopted spec as peers.
+        const adoptedTracked = s.candidates.filter(c => c.status === 'adopted');
+        const target = adoptedTracked.find(c => c.inv.name === values.name);
+        if (!target) return { error: 'unknown-invariant', name: values.name, hint: `no adopted invariant named '${values.name}'` };
+
+        let reachSteps: number | undefined;
+        if (values['max-steps'] !== undefined) {
+          const n = Number(values['max-steps']);
+          if (!Number.isInteger(n) || n <= 0) return { error: 'invalid-arg', arg: 'max-steps' };
+          reachSteps = n;
+        }
+
+        // strengthenInvariant's `adopted` param is peer constraints only (mirrors classifyAdopted's
+        // contract for classifyInvariant): quint-expressible kinds only — candidateToQuint throws on
+        // template-adopted terminal/monotonic/leadsTo/refsResolve, which astToQuintClassify/astToQuint
+        // would hit immediately since strengthen internally only strips `guard` kind, not those — and
+        // excluding the target's own candidate (it is not its own peer).
+        const peers = expressibleAdopted('quint', adoptedConstraints(s)).filter(c => c !== target.inv.candidate);
+        const res = await strengthenInvariant(model(), target.inv, peers, deps, reachSteps ?? 6);
+        if (res.kind !== 'auto-adopt') return { strengthened: res };   // finding/survivors — non-blocking (Task 6: distinguish UX)
+
+        // auto-adopt: wrap the winning guard candidate in a CandidateInvariant and adopt it, mirroring
+        // the `s.candidates.push(...) + appendLedger('adopted', ...)` shape used by init/apply above.
+        // Guards are never authored/proposed, so there is no pre-existing id to reuse — mint a
+        // deterministic one from the site + shape (transition + predicate op), same spirit as the
+        // template-adopted ids elsewhere in this file (e.g. `template ${inv.id}` provenance strings).
+        const g = res.guard;
+        const shape = g.predicate.kind === 'cmp' ? g.predicate.op : g.predicate.kind;
+        const gInv: CandidateInvariant = {
+          id: `guard-${g.aggregate}-${g.transition}-${shape}`, name: `guard_${g.transition}_${shape}`,
+          prior: 1, source: 'regen', candidate: g,
+        };
+        s.candidates.push({ inv: gInv, status: 'adopted' });
+        appendLedger(dir, { kind: 'adopted', at: now(), invariant: gInv, provenance: `strengthen ${isoDay(now())}` });
+        return done({ strengthened: res });
       }
       case 'explain': {
         const ledger = readLedger(dir);

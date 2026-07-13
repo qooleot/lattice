@@ -68,7 +68,20 @@ function fieldLines(fields: Field[], indent: string, out: string[]): void {
     out.push(`${indent}${pad(f.name, w)}: ${typeStr(f)}${f.key ? ' key' : ''}${f.const ? ' const' : ''}${f.tags?.length ? ' @' + f.tags.join(' @') : ''}`);
 }
 
-function machineLines(mach: Machine, out: string[]): void {
+// Adopted `guard` candidates (§8.5-8.7 CTI-strengthening write-back) conjoin into their transition's
+// authored `requires` at emit time — guards are never authored directly (see candidateBodyText's
+// loud-exclusion for the kind), only ever adopted via `engine strengthen`. A transition with no
+// adopted guard renders EXACTLY as before (single-item combine returns the authored `requires`
+// object itself, so predToText sees the identical AST) — this keeps no-guard `.lat` output
+// byte-identical, a hard constraint for every model that predates guard adoption.
+function combineRequires(requires: Predicate | undefined, guards: Predicate[]): Predicate | undefined {
+  const all = requires ? [requires, ...guards] : guards;
+  if (all.length === 0) return undefined;
+  if (all.length === 1) return all[0];
+  return { kind: 'and', args: all };
+}
+
+function machineLines(agg: string, mach: Machine, guardsByTransition: Map<string, Predicate[]>, out: string[]): void {
   for (const r of mach.regions) {
     out.push(`    lifecycle ${r.name} {`);
     const states = r.states.map(s => {
@@ -76,8 +89,11 @@ function machineLines(mach: Machine, out: string[]): void {
       return s.name + (tags.length ? ' @' + tags.join(' @') : '');
     }).join(', ');
     out.push(`      states { ${states} }`);
-    for (const t of mach.transitions.filter(t => t.region === r.name))
-      out.push(`      transition ${t.name} { from ${t.from.join(', ')} to ${t.to}${t.when ? `; when ${t.when}` : ''}${t.requires ? `; requires ${predToText(t.requires)}` : ''}${t.emits ? `; emits ${t.emits}` : ''} }`);
+    for (const t of mach.transitions.filter(t => t.region === r.name)) {
+      const guards = guardsByTransition.get(`${agg}.${r.name}.${t.name}`) ?? [];
+      const effective = combineRequires(t.requires, guards);
+      out.push(`      transition ${t.name} { from ${t.from.join(', ')} to ${t.to}${t.when ? `; when ${t.when}` : ''}${effective ? `; requires ${predToText(effective)}` : ''}${t.emits ? `; emits ${t.emits}` : ''} }`);
+    }
     out.push('    }');
   }
 }
@@ -90,7 +106,17 @@ function invariantLines(inv: CandidateInvariant, indent: string, on: string | un
 }
 
 export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string {
-  const explicit = adopted.filter(i => !isImplied(i.candidate, m));   // spec §3.4: implied never printed
+  // spec §3.4: implied never printed; guards (§8.5-8.7) are never printed as standalone `invariant`
+  // blocks either — they render only via their transition's `requires` (guardsByTransition below).
+  const explicit = adopted.filter(i => i.candidate.kind !== 'guard' && !isImplied(i.candidate, m));
+  const guardsByTransition = new Map<string, Predicate[]>();
+  for (const i of adopted) {
+    if (i.candidate.kind !== 'guard') continue;
+    const g = i.candidate;
+    const key = `${g.aggregate}.${g.region}.${g.transition}`;
+    const list = guardsByTransition.get(key);
+    if (list) list.push(g.predicate); else guardsByTransition.set(key, [g.predicate]);
+  }
   const out: string[] = [];
   doc(m.doc, '', out);
   out.push(`context ${m.context} {`, '');
@@ -134,7 +160,7 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
       fieldLines(child.fields, '      ', out);
       out.push('    }');
     }
-    if (a.machine) { out.push(''); machineLines(a.machine, out); }
+    if (a.machine) { out.push(''); machineLines(a.name, a.machine, guardsByTransition, out); }
     for (const inv of explicit.filter(i => i.candidate.aggregate === a.name)) {
       out.push('');
       invariantLines(inv, '    ', undefined, out);
