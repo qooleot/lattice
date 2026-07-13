@@ -8,7 +8,7 @@ describe('astToQuintGuard', () => {
     expect(em.invariantName).toBe('q_not_stuck');
     expect(em.source).toContain('val stuck =');
     expect(em.source).toContain('settlement_state == "open"');
-    expect(em.source).toContain('val q_not_stuck = not stuck');
+    expect(em.source).toContain('val q_not_stuck = not(stuck)');
     // out-guard of `open` is settle's `amountPaid == totalDue`, negated inside `stuck`.
     expect(em.source).toMatch(/not\s*\(.*amountPaid.*==.*totalDue/);
     // reuses the base machine (abstract-evolution → evolve_ actions present) and real init.
@@ -20,6 +20,6 @@ describe('astToQuintGuard', () => {
     expect(em.invariantName).toBe('q_not_reach');
     expect(em.source).toContain('val reach =');
     expect(em.source).toContain('status_state == "active"');
-    expect(em.source).toContain('val q_not_reach = not reach');
+    expect(em.source).toContain('val q_not_reach = not(reach)');
   });
 });

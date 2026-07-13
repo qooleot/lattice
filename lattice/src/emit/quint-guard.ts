@@ -28,7 +28,7 @@ export function astToQuintGuard(m: DomainModel, site: GuardSite, kind: 'stuck' |
 
   let valLines: string; let invariantName: string;
   if (kind === 'reach') {
-    valLines = [`val reach = ${IDS}.exists(id => ${inState})`, `val q_not_reach = not reach`].map(l => '  ' + l).join('\n');
+    valLines = [`val reach = ${IDS}.exists(id => ${inState})`, `val q_not_reach = not(reach)`].map(l => '  ' + l).join('\n');
     invariantName = 'q_not_reach';
   } else {
     const outs = (o.machine?.transitions ?? []).filter(t => t.region === site.region && t.from.includes(site.state));
@@ -38,7 +38,7 @@ export function astToQuintGuard(m: DomainModel, site: GuardSite, kind: 'stuck' |
     // → the map has no conjuncts beyond inState (always stuck in S).
     const negGuards = outs.map(t => `not (${t.requires ? predToQuint(m, t.requires, `${v}.get(id)`, o.name) : 'true'})`);
     const stuckExpr = [inState, ...negGuards].join(' and ');
-    valLines = [`val stuck = ${IDS}.exists(id => ${stuckExpr})`, `val q_not_stuck = not stuck`].map(l => '  ' + l).join('\n');
+    valLines = [`val stuck = ${IDS}.exists(id => ${stuckExpr})`, `val q_not_stuck = not(stuck)`].map(l => '  ' + l).join('\n');
     invariantName = 'q_not_stuck';
   }
   const source = `${head}\n\n${valLines}\n}\n`;
