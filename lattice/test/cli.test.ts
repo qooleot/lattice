@@ -305,6 +305,22 @@ describe('engine CLI', () => {
     expect(st.guardFindings).toEqual({ stuck: 1, unreachable: 1 });
   });
 
+  it('status dedupes repeated guard-finding ledger entries for the same site, keeping only the latest', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+
+    // Same owner/region/state/finding appended twice (e.g. two `classify` runs on the same model)
+    // must count once, not twice — guard-finding entries are append-only like `classified` entries.
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'stuck',
+      owner: 'Subscription', region: 'Access', state: 'Active', boundedN: 6, provenance: 'test' });
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'stuck',
+      owner: 'Subscription', region: 'Access', state: 'Active', boundedN: 6, provenance: 'test' });
+
+    const st: any = await runCommand(['status', '--session', dir], fakeDeps);
+    expect(st.guardFindings).toEqual({ stuck: 1, unreachable: 0 });
+  });
+
   it('structure command appends a structure ledger entry and works pre-init', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cli-'));
     const r: any = await runCommand(['structure', '--session', dir, '--question', 'What are the aggregates?', '--answer', 'Subscription, Customer'], fakeDeps);

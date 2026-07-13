@@ -96,12 +96,21 @@ describe('engine classify CLI', () => {
     const r: any = await runCommand(['classify', '--session', dir, '--name', 'h1'], deps);
     expect(r.classified).toHaveLength(1);
     expect(r.classified[0].invariant).toBe('h1');
-    // `classify` also runs `analyzeGuards` unconditionally (Task 4) — its probes carry the
-    // `q_not_stuck`/`q_not_reach` invariant names, distinct from classifyAdopted's, so excluding
-    // them recovers the original intent: only h1's 2-probe pair ran through classifyAdopted, never
-    // h2's.
-    const classifyCalls = calls.filter(c => c.opts.invariant !== 'q_not_stuck' && c.opts.invariant !== 'q_not_reach');
-    expect(classifyCalls).toHaveLength(2);
+    // `--name` is the fast, scoped path (Fix 2): guard analysis is model-level, not invariant-scoped,
+    // so it must NOT run here — only h1's 2-probe pair ran through classifyAdopted, never h2's, and
+    // no guard probes (q_not_stuck/q_not_reach) are mixed in.
+    expect(calls).toHaveLength(2);
+  });
+
+  it('--name classify returns no guardFindings key and does not run guard analysis', async () => {
+    const dir = await setup();
+    const { deps, calls } = scriptedDeps([{ violated: false }, { violated: false }]);   // h1 -> entailed
+    const r: any = await runCommand(['classify', '--session', dir, '--name', 'h1'], deps);
+    expect(r.guardFindings).toBeUndefined();
+    expect(calls).toHaveLength(2);   // only h1's consecution+reachability probes, no guard probes
+
+    const persisted = readGuardFindings(dir);
+    expect(persisted).toHaveLength(0);
   });
 
   it('--max-steps threads through as the reachability bound (default 6)', async () => {

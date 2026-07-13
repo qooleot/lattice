@@ -370,7 +370,12 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           else if (e.verdict === 'not-inductive') classifications.notInductive++;
           else if (e.verdict === 'violated') classifications.violated++;
         }
-        const gf = readGuardFindings(dir);
+        // guard-finding entries are append-only (each `classify` run appends fresh ones) — later
+        // entries supersede earlier ones for the same (owner, region, state, finding) site; keep
+        // only the latest per key before counting, same pattern as `classified` entries above.
+        const latestGuardByKey = new Map<string, ReturnType<typeof readGuardFindings>[number]>();
+        for (const e of readGuardFindings(dir)) latestGuardByKey.set(`${e.owner}::${e.region}::${e.state}::${e.finding}`, e);
+        const gf = [...latestGuardByKey.values()];
         const guardFindings = { stuck: gf.filter(e => e.finding === 'stuck').length,
                                  unreachable: gf.filter(e => e.finding === 'unreachable').length };
         return { phase: s.phase, regenAttempts: s.regenAttempts, alternativeAttempts: s.alternativeAttempts,
@@ -527,15 +532,17 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // Method⊨transition entailment (design §5): flag every performs-method's requires vs its
         // guard. Surfaced here in `classify` (a solver command) as a `methodGuards` section.
         const methodGuards = await checkAllMethodGuards(model(), deps);
+        if (values.name) return { classified: results, methodGuards };
         // Guard analysis (design §7.3): structurally-filtered stuck/reachability sites, confirmed
-        // against the abstract-evolution machine. Surfaced here in `classify` (the solver-heavy
-        // command), persisted to the ledger for `status` to count and `explain`-adjacent tooling to
-        // read back later.
+        // against the abstract-evolution machine. Guard findings are model-level (not invariant-
+        // scoped), so this runs ONLY on bulk classify (no --name) — `--name` is the fast, scoped
+        // path and must not pay for a full-model solver sweep. Surfaced here in `classify` (the
+        // solver-heavy command), persisted to the ledger for `status` to count and `explain`-adjacent
+        // tooling to read back later.
         const guardFindings = await analyzeGuards(model(), deps, reachSteps);
         for (const f of guardFindings)
           appendLedger(dir, { kind: 'guard-finding', at: now(), finding: f.finding, owner: f.owner,
             region: f.region, state: f.state, witness: f.witness, boundedN: f.boundedN, provenance: `classify ${isoDay(now())}` });
-        if (values.name) return { classified: results, methodGuards, guardFindings };
         // Bulk classify (no --name): name the adopted invariants that were NOT classified, rather
         // than just dropping them — most real sessions carry template-adopted structural invariants
         // of unclassifiable kinds (see comment above), and a silent drop looks identical to "nothing
