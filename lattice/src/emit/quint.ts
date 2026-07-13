@@ -307,6 +307,13 @@ function shapeToQuint(m: DomainModel, facts: SalientFact[], cands: Candidate[], 
 }
 
 export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
+  // Design §8.3: an adopted `guard` candidate is a transition-enablement assumption, not an
+  // always-property — it feeds into its `trans_<Owner>_<transition>` action's enablement
+  // (alongside the authored `t.requires`) and must never reach candidateToQuint (which throws
+  // on `guard`), so it is filtered out of the `adopted<i>` always-property conjunction below.
+  const adoptedAll = q.adopted ?? [];
+  const adoptedGuards = adoptedAll.filter((c): c is Extract<Candidate, { kind: 'guard' }> => c.kind === 'guard');
+  const adoptedInvs = adoptedAll.filter(c => c.kind !== 'guard');
   const varTypes: Record<string, string> = {};
   const decls: string[] = ['var now: int'];
   const pools: string[] = [];
@@ -343,7 +350,12 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
       const declared = (machine!.transitions ?? []).filter(t => t.region === r.name);
       for (const t of declared) {
         const fromChk = `(${t.from.map(f => `${v}.get(id).${r.name}_state == "${f}"`).join(' or ')})`;
-        const guard = t.requires ? `, ${predToQuint(m, t.requires, `${v}.get(id)`, o.name)}` : '';
+        const gConds = [
+          ...(t.requires ? [predToQuint(m, t.requires, `${v}.get(id)`, o.name)] : []),
+          ...adoptedGuards.filter(g => g.aggregate === o.name && g.region === r.name && g.transition === t.name)
+            .map(g => predToQuint(m, g.predicate, `${v}.get(id)`, o.name)),
+        ];
+        const guard = gConds.length ? `, ${gConds.join(', ')}` : '';
         actions.push(
           `action trans_${o.name}_${t.name} = { nondet id = oneOf(${o.name.toUpperCase()}_IDS) all { ${fromChk}${guard}, ${v}' = ${v}.set(id, ${v}.get(id).with("${r.name}_state", "${t.to}")), ${frame([v]).join(', ')} } }`);
       }
@@ -397,7 +409,7 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
   const preds: string[] = [candidateToQuint(m, q.hi, 'Hi')];
   if (q.hj) preds.push(candidateToQuint(m, q.hj, 'Hj'));
   q.exclusions.forEach((facts, i) => preds.push(shapeToQuint(m, facts, [q.hi, ...(q.hj ? [q.hj] : [])], `shape${i}`)));
-  const adopted = q.adopted ?? [];
+  const adopted = adoptedInvs;
   adopted.forEach((c, i) => preds.push(candidateToQuint(m, c, `adopted${i}`)));
   const shapes = q.exclusions.map((_, i) => `shape${i}`);
   const bare = q.kind === 'distinguish' ? ['iff(Hi, Hj)', ...shapes].join(' or ')
