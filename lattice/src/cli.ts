@@ -12,7 +12,7 @@ import { nextQuestion, checkDistinct, adoptedConstraints, expressibleAdopted, ty
 import { classifyInvariant, type Classification } from './engine/classify.js';
 import { strengthenInvariant } from './engine/strengthen.js';
 import { conjunctsOf } from './engine/tier.js';
-import { checkMethodGuard } from './engine/method-guard.js';
+import { checkMethodGuard, type MethodGuardVerdict } from './engine/method-guard.js';
 import { analyzeGuards } from './engine/guard-analysis.js';
 import { renderWitnessTable } from './engine/salient.js';
 import { astToAlloy } from './emit/alloy.js';
@@ -143,8 +143,8 @@ async function classifyAdopted(
  *  the fast read-only `status` path. Each check is two real `quint verify` probes at --max-steps 0. */
 async function checkAllMethodGuards(
   m: DomainModel, deps: SolverDeps,
-): Promise<{ service: string; method: string; verdict: string; reachable?: boolean }[]> {
-  const out: { service: string; method: string; verdict: string; reachable?: boolean }[] = [];
+): Promise<{ service: string; method: string; verdict: MethodGuardVerdict; reachable?: boolean }[]> {
+  const out: { service: string; method: string; verdict: MethodGuardVerdict; reachable?: boolean }[] = [];
   for (const svc of m.services) {
     for (const mm of svc.methods) {
       if (!('performs' in mm.kind)) continue;
@@ -239,8 +239,10 @@ function conjunctTarget(inv: CandidateInvariant, conjunct?: string): CandidateIn
  *  masking a real violation as `no-transition` (confirmed on real quint: leaving the parent in
  *  `adopted` for the settle-guard-stripped `neverOverpaidAndPaidExact` conjunct 1 reports
  *  `no-transition`, filtering it out reports `auto-adopt`). */
-function peersExcludingParent(s: SessionState, inv: CandidateInvariant): Candidate[] {
-  return adoptedConstraints(s).filter(c => c !== inv.candidate);
+export function peersExcludingParent(s: SessionState, inv: CandidateInvariant): Candidate[] {
+  return s.candidates
+    .filter(c => c.status === 'adopted' && c.inv.id !== inv.id)
+    .map(c => c.inv.candidate);
 }
 
 /** Every adopted (non-guard) invariant name scoped to `aggregate` — the reclassify dependency set
@@ -263,8 +265,12 @@ function aggregateScopedNames(s: SessionState, aggregate: string): string[] {
  *  those, so a redundant warning there would just be noise. Transition add/remove counts as a guard
  *  change too (the missing side's `requires` is treated as absent, via `?? null`). Compares by
  *  `(aggregate.name, transition.name)`, not object identity — transitions can reorder across an edit
- *  without that being a "change". */
-function guardChangeWarnings(storedModel: DomainModel, newModel: DomainModel, adoptedAggregates: Set<string>): string[] {
+ *  without that being a "change". Compares `requires` via `canonicalCandidate` (key-order-insensitive
+ *  JSON, same helper `diff.ts`/`reconcile.ts` use as `cjson`) rather than raw `JSON.stringify`, so a
+ *  key-order difference between two structurally-identical parses of the same predicate can't fire a
+ *  spurious "guard changed" warning. This does NOT fix the transition-rename false-positive (a rename
+ *  looks like remove+add) — that needs transition-rename support in `diff.ts` and stays a follow-up. */
+export function guardChangeWarnings(storedModel: DomainModel, newModel: DomainModel, adoptedAggregates: Set<string>): string[] {
   const warnings: string[] = [];
   for (const a of newModel.aggregates) {
     if (adoptedAggregates.has(a.name)) continue;
@@ -272,8 +278,8 @@ function guardChangeWarnings(storedModel: DomainModel, newModel: DomainModel, ad
     const oldTs = new Map((oldAgg?.machine?.transitions ?? []).map(t => [t.name, t]));
     const newTs = new Map((a.machine?.transitions ?? []).map(t => [t.name, t]));
     for (const tName of new Set([...oldTs.keys(), ...newTs.keys()])) {
-      const oldReq = JSON.stringify(oldTs.get(tName)?.requires ?? null);
-      const newReq = JSON.stringify(newTs.get(tName)?.requires ?? null);
+      const oldReq = canonicalCandidate(oldTs.get(tName)?.requires ?? null);
+      const newReq = canonicalCandidate(newTs.get(tName)?.requires ?? null);
       if (oldReq !== newReq)
         warnings.push(`classifications may be stale: guard changed on ${a.name}.${tName} — run classify`);
     }

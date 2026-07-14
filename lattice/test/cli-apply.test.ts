@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { runCommand, realDeps } from '../src/cli.js';
+import { runCommand, realDeps, guardChangeWarnings } from '../src/cli.js';
+import type { DomainModel } from '../src/ast/domain.js';
 
 const SESSION_SRC = join(import.meta.dirname, '../../.lattice-session-subscriptions');
 
@@ -389,5 +390,34 @@ describe('engine apply: guard-change staleness warning (item 3a)', () => {
     const r2: any = await runCommand(['apply', '--session', sessionDir, '--lat', latPath, '--no-classify'], realDeps);
     expect(r2.ok, JSON.stringify(r2)).toBe(true);
     expect(r2.warnings.some((w: string) => w.includes('may be stale'))).toBe(false);
+  });
+
+  // Robustness follow-up: guardChangeWarnings must compare `requires` via a canonical (key-order-
+  // insensitive) JSON encoding, not raw JSON.stringify. Two independently-constructed predicate
+  // objects that are the SAME shape but built with keys in a different order would false-fire a
+  // "guard changed" warning under raw JSON.stringify (property insertion order differs), even though
+  // nothing semantically changed. Hand-build the models directly rather than round-tripping through
+  // the parser, since the parser always emits predicates with a fixed key order.
+  it('does not warn when requires is the same predicate with keys in a different order', () => {
+    const mkModel = (requires: unknown): DomainModel => ({
+      context: 'Mini', enums: [], values: [], entities: [], events: [], services: [],
+      aggregates: [{
+        kind: 'aggregate', name: 'Widget',
+        fields: [{ name: 'widgetId', type: { kind: 'prim', prim: 'Id' }, key: true },
+                 { name: 'units', type: { kind: 'prim', prim: 'Int' } }],
+        machine: {
+          regions: [{ name: 'status', initial: 'active',
+            states: [{ name: 'active', tags: ['active'] }, { name: 'closed', tags: ['terminal'] }] }],
+          transitions: [{ name: 'close', region: 'status', from: ['active'], to: 'closed',
+            requires: requires as any }],
+        },
+      }],
+    });
+    const requiresA = { kind: 'cmp', op: '>', left: { kind: 'field', owner: 'self', path: ['units'] }, right: { kind: 'int', value: 0 } };
+    // same predicate, keys inserted in a different order at every nesting level
+    const requiresB = { right: { value: 0, kind: 'int' }, op: '>', left: { path: ['units'], owner: 'self', kind: 'field' }, kind: 'cmp' };
+    const stored = mkModel(requiresA);
+    const fresh = mkModel(requiresB);
+    expect(guardChangeWarnings(stored, fresh, new Set())).toEqual([]);
   });
 });

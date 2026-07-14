@@ -2,10 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runCommand, realDeps } from '../src/cli.js';
+import { runCommand, realDeps, peersExcludingParent } from '../src/cli.js';
 import { subscriptionsModel, paidImpliesExactConjunct, amountPaidAtMostTotalConjunct, activePaidInFullCandidate } from './fixtures.js';
 import type { AggregateDef, DomainModel } from '../src/ast/domain.js';
-import type { Candidate } from '../src/ast/invariant.js';
+import type { Candidate, CandidateInvariant } from '../src/ast/invariant.js';
+import type { SessionState, TrackedCandidate } from '../src/engine/session.js';
 
 const inertDeps: any = { alloy: async () => ({ sat: false, instances: [], ms: 0 }), quint: async () => ({ violated: false, ms: 0 }) };
 
@@ -80,6 +81,34 @@ async function setup(): Promise<string> {
   writeFileSync(ledgerFile, JSON.stringify({ kind: 'adopted', at: new Date().toISOString(), invariant: c.inv, provenance: 'test' }) + '\n');
   return dir;
 }
+
+// Robustness follow-up: peersExcludingParent must exclude the parent invariant by ID, not by object
+// reference — a fast unit check independent of the real-quint multi-conjunct strengthen test below
+// (which proves the exclusion end-to-end but would not distinguish an id-based from a
+// reference-based implementation).
+describe('peersExcludingParent', () => {
+  it('excludes the parent invariant by id, keeps other adopted candidates', () => {
+    const mk = (id: string, aggregate: string): TrackedCandidate => ({
+      status: 'adopted',
+      inv: { id, name: id, prior: 1, source: 'seed',
+        candidate: { kind: 'statePredicate', aggregate, body: { kind: 'cmp', op: 'eq', left: { kind: 'int', value: 0 }, right: { kind: 'int', value: 0 } } } },
+    });
+    const parent = mk('parent', 'Widget');
+    const peer = mk('peer', 'Widget');
+    const notAdopted: TrackedCandidate = { ...mk('declined', 'Widget'), status: 'active' };
+    const s: SessionState = {
+      model: null, candidates: [parent, peer, notAdopted], phase: 'converged',
+      regenAttempts: 0, alternativeAttempts: 0, probesAsked: { forbid: false, permit: false },
+      pendingWitnesses: {}, witnessSeq: 0,
+    };
+    const peers = peersExcludingParent(s, parent.inv);
+    expect(peers).toEqual([peer.inv.candidate]);
+    // parent's candidate object, even if structurally re-cloned (e.g. a JSON round-trip mid-command),
+    // must never survive — the exclusion is by id, not by `===` on the candidate object.
+    const clonedParentInv: CandidateInvariant = JSON.parse(JSON.stringify(parent.inv));
+    expect(peersExcludingParent(s, clonedParentInv)).toEqual([peer.inv.candidate]);
+  });
+});
 
 describe('engine strengthen CLI', () => {
   it('missing --name is rejected before touching the model', async () => {
