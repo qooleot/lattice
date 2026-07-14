@@ -56,6 +56,31 @@ init` (still you, no solver — each recorded as structure Q&A):
    `creates`/read-only methods too; the user corrects the list. This is the first step to compress
    if the question budget strains.
 
+## Phase 0b — dry-run the model against the templates (you, no solver)
+Before the real `init`, draft the model and init it into a THROWAWAY session
+(`--session .lattice-scratch-<slug>/`), read what matched, then delete the directory. This exists to
+make YOUR questions better: never show the user the scratch session, its JSON, or the model file.
+
+Read the result twice. First the `adopted` list — those become constraints on every witness the
+solver later draws (`planner.ts` passes them into every `solve`) and never re-enter the loop, so one
+false template silently distorts every Phase 2 question you will ever ask. Second — and this has no
+other home in the process — list what conspicuously DID NOT match and turn each absence into a
+structure question. Phases 1/2 elicit invariants over a FIXED model; no verdict can tell you a field
+is missing. This is the only step that can. Absences that reliably mean a missing fact:
+- a `@total` with <2 `@balance` fields → conservation can't fire (a Bill with `total` and `amountDue`
+  but no `amountPaid` cannot relate the two at all — the b03 pattern, found by matching, not asking)
+- an aggregate that matched NOTHING, especially one whose `doc` asserts a relationship its fields
+  don't carry (balance is "the sum of its postings", but no ref reaches them)
+- money-shaped fields typed `Int` not `Money` → the free non-negativity template fires nowhere
+- a deadline with no `Duration` field → no grace-window seed; is the deadline really a cliff?
+- anything nested: `matchTemplates` walks top-level `aggregates`/`entities` only, so a nested entity
+  matches nothing, ever
+
+Fix the model and re-run the scratch init as often as needed — that is what a throwaway is for.
+`init` is NOT idempotent (a second one duplicates every adopted candidate) and structure Q&A shares
+`ledger.jsonl` with adopted entries, so this cannot be iterated in the real session without either
+corrupting it or destroying the structure trace.
+
 When stable: `engine init --model <file>`. Fix any diagnostics by asking, not guessing.
 Present the auto-adopted template invariants for objection — but NEVER as a bare list of template
 names. `SingleActive_Biller` is engine vocabulary; the user has no way to object to a name, so a
@@ -63,10 +88,10 @@ name-list makes the objection step theater. For each one, state what it FORBIDS,
 own domain nouns, as a concrete case: "at most one Biller may be onboarding/active/suspended at
 any time — a second one is illegal". If you cannot state what a template forbids without using
 its template name, you do not understand it yet: read `lattice/src/engine/templates.ts` and find
-out before presenting it. Templates fire on structural coincidence, not domain truth (e.g.
-`SingleActive` fires whenever an aggregate has no ref fields, which silently asserts singleton-
-ness on any refless multi-tenant aggregate) — so audit each one against the domain YOURSELF and
-lead with the ones you suspect are wrong, rather than asking the user to find them for you.
+out before presenting it. Templates fire on structural coincidence, not domain truth: a match means
+the model's SHAPE tripped a rule, never that the rule holds in this domain — the same match on the
+same shape is right in one domain and absurd in the next. So audit each one against the domain
+YOURSELF and lead with the ones you suspect are wrong, rather than asking the user to find them.
 
 This generalizes: whenever a concept the user has not seen enters the conversation — a template
 name, an engine phase, a grammar kind, a solver artifact — either anchor it to a specific entity,
