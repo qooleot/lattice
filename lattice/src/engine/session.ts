@@ -40,7 +40,13 @@ export type LedgerEntry =
   // appends exactly one `guard-sweep` per bulk run (regardless of finding count), so `status` can
   // always resolve the true latest `run` stamp from the sweep stream, then filter `guard-finding`s
   // to it. Absent on old ledgers (pre-item-3) — status falls back to plain latest-per-key dedup.
-  | { kind: 'guard-sweep'; at: string; run: string };
+  | { kind: 'guard-sweep'; at: string; run: string }
+  // Method⊨transition entailment persistence (item 4): `classify` computes checkAllMethodGuards
+  // results (design §5) but previously only surfaced them in the command's own output — nothing
+  // survived to the ledger for `status` to count or later tooling to read back. One entry per
+  // (service, method) result, append-only like `classified`/`guard-finding` — `status` dedups
+  // latest-per-`service::method` before counting.
+  | { kind: 'method-guard'; at: string; service: string; method: string; verdict: string; reachable?: boolean; provenance: string };
 
 /** Calendar day of an ISO timestamp — the human-facing date in provenance and refusal text. */
 export const isoDay = (at: string): string => at.slice(0, 10);
@@ -78,4 +84,7 @@ export function readGuardFindings(dir: string): Extract<LedgerEntry, { kind: 'gu
 }
 export function readGuardSweeps(dir: string): Extract<LedgerEntry, { kind: 'guard-sweep' }>[] {
   return readLedger(dir).filter((e): e is Extract<LedgerEntry, { kind: 'guard-sweep' }> => e.kind === 'guard-sweep');
+}
+export function readMethodGuards(dir: string): Extract<LedgerEntry, { kind: 'method-guard' }>[] {
+  return readLedger(dir).filter((e): e is Extract<LedgerEntry, { kind: 'method-guard' }> => e.kind === 'method-guard');
 }

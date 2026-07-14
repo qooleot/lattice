@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommand, inferRenameSpec } from '../src/cli.js';
 import { appendLedger } from '../src/engine/session.js';
-import { traceAModel, invoiceLinesModel, sumCandidate } from './fixtures.js';
+import { traceAModel, traceDModel, invoiceLinesModel, sumCandidate, someStatePredicateOnInvoice } from './fixtures.js';
 
 const dpsf = { entities: [
   { type: 'Customer', id: 'c1', fields: {} }, { type: 'Family', id: 'f1', fields: {} },
@@ -361,6 +361,63 @@ describe('engine CLI', () => {
 
     const st: any = await runCommand(['status', '--session', dir], fakeDeps);
     expect(st.guardFindings).toEqual({ stuck: 0, unreachable: 0 });
+  });
+
+  it('status counts method-guard verdicts from the ledger, by verdict', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+
+    appendLedger(dir, { kind: 'method-guard', at: new Date().toISOString(), service: 'Billing', method: 'settle',
+      verdict: 'consistent', provenance: 'test' });
+    appendLedger(dir, { kind: 'method-guard', at: new Date().toISOString(), service: 'Billing', method: 'finalize',
+      verdict: 'weaker-than-guard', provenance: 'test' });
+
+    const st: any = await runCommand(['status', '--session', dir], fakeDeps);
+    expect(st.methodGuards).toEqual({ consistent: 1, 'weaker-than-guard': 1 });
+  });
+
+  it('status dedupes repeated method-guard ledger entries for the same service::method, keeping only the latest', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+
+    // Same service::method appended twice (e.g. two `classify` runs on the same model) — the later
+    // (differing) verdict must supersede the earlier one, not add to its count.
+    appendLedger(dir, { kind: 'method-guard', at: new Date().toISOString(), service: 'Billing', method: 'settle',
+      verdict: 'consistent', provenance: 'test' });
+    appendLedger(dir, { kind: 'method-guard', at: new Date().toISOString(), service: 'Billing', method: 'settle',
+      verdict: 'stronger-than-guard', provenance: 'test' });
+
+    const st: any = await runCommand(['status', '--session', dir], fakeDeps);
+    expect(st.methodGuards).toEqual({ 'stronger-than-guard': 1 });
+  });
+
+  it('explain surfaces guard-findings scoped to the invariant\'s own aggregate, excluding findings on other aggregates', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceDModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+      { id: 'H1', name: 'nonNegativeTotal', prior: 0.5, source: 'seed', candidate: someStatePredicateOnInvoice }
+    ])], fakeDeps);
+
+    const stateFile = join(dir, 'state.json');
+    const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+    const h1 = st.candidates.find((c: any) => c.inv.id === 'H1');
+    h1.status = 'adopted';
+    writeFileSync(stateFile, JSON.stringify(st));
+    // explain's `current` resolution walks `adopted` ledger entries.
+    appendLedger(dir, { kind: 'adopted', at: new Date().toISOString(), invariant: h1.inv, provenance: 'test' });
+
+    // A finding on the Invoice aggregate this invariant is about — must be surfaced.
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'stuck',
+      owner: 'Invoice', region: 'settlement', state: 'open', boundedN: 6, provenance: 'test' });
+    // A finding on an unrelated (Subscription) aggregate — must NOT be surfaced.
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'unreachable',
+      owner: 'Subscription', region: 'Access', state: 'Ended', boundedN: 6, provenance: 'test' });
+
+    const r: any = await runCommand(['explain', '--session', dir, '--name', 'nonNegativeTotal'], fakeDeps);
+    expect(r.guardFindings).toEqual([{ region: 'settlement', state: 'open', finding: 'stuck' }]);
   });
 
   it('structure command appends a structure ledger entry and works pre-init', async () => {

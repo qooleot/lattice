@@ -3,8 +3,8 @@ import { mkdtempSync, appendFileSync, readFileSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommand } from '../src/cli.js';
-import { readGuardFindings } from '../src/engine/session.js';
-import { traceAModel } from './fixtures.js';
+import { readGuardFindings, readMethodGuards } from '../src/engine/session.js';
+import { traceAModel, traceDModel, someStatePredicateOnInvoice } from './fixtures.js';
 import type { DomainModel } from '../src/ast/domain.js';
 
 // Scripted quintVerify: returns queued results in CALL ORDER (mirrors classify.test.ts's fakeDeps
@@ -257,5 +257,38 @@ describe('engine classify CLI', () => {
     const persisted = readGuardFindings(dir);
     expect(persisted).toHaveLength(1);
     expect(persisted[0]).toMatchObject({ kind: 'guard-finding', finding: 'stuck', owner: 'W', region: 's', state: 'a', boundedN: 6 });
+  });
+
+  // traceDModel carries a `Billing` service with one `performs` method (`settle`, no `requires`) —
+  // checkAllMethodGuards (cli.ts) runs unconditionally before the `--name` early return, so a
+  // `--name` classify still produces method-guard results even though it skips guard analysis
+  // (item 4: those results must now survive to the ledger, not just the command's own output).
+  it('classify persists method-guard results to the ledger', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-classify-mg-'));
+    const modelFile = join(dir, 'm.json');
+    writeFileSync(modelFile, JSON.stringify(traceDModel));
+    await runCommand(['init', '--session', dir, '--model', modelFile], inertDeps);
+    await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+      { id: 'H1', name: 'nonNegativeTotal', prior: 0.5, source: 'seed', candidate: someStatePredicateOnInvoice }
+    ])], inertDeps);
+    const stateFile = join(dir, 'state.json');
+    const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+    const h1 = st.candidates.find((c: any) => c.inv.id === 'H1');
+    h1.status = 'adopted';
+    writeFileSync(stateFile, JSON.stringify(st));
+    appendFileSync(join(dir, 'ledger.jsonl'), JSON.stringify({ kind: 'adopted', at: new Date().toISOString(), invariant: h1.inv, provenance: 'test' }) + '\n');
+
+    // [h1-consecution, h1-reachability, methodGuard-probe1(method-implies-guard), methodGuard-probe2(guard-implies-method)]
+    const { deps } = scriptedDeps([
+      { violated: false }, { violated: false },
+      { violated: false }, { violated: false },
+    ]);
+    const r: any = await runCommand(['classify', '--session', dir, '--name', 'nonNegativeTotal'], deps);
+    expect(r.methodGuards).toEqual([{ service: 'Billing', method: 'settle', verdict: 'consistent', reachable: false }]);
+
+    const persisted = readMethodGuards(dir);
+    expect(persisted.length).toBeGreaterThan(0);
+    expect(persisted[0]).toMatchObject({ kind: 'method-guard', service: 'Billing', method: 'settle', verdict: 'consistent' });
+    expect(persisted[0]!.provenance).toContain('classify');
   });
 });

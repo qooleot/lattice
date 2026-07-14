@@ -5,7 +5,7 @@ import type { DomainModel } from './ast/domain.js';
 import { validateModel } from './ast/validate.js';
 import { validateCandidate } from './ast/grammar.js';
 import type { CandidateInvariant, Candidate } from './ast/invariant.js';
-import { loadState, saveState, appendLedger, readLedger, readClassifications, readGuardFindings, readGuardSweeps, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
+import { loadState, saveState, appendLedger, readLedger, readClassifications, readGuardFindings, readGuardSweeps, readMethodGuards, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
 import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
 import { nextQuestion, checkDistinct, adoptedConstraints, expressibleAdopted, type SolverDeps } from './engine/planner.js';
@@ -490,10 +490,17 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         const gf = [...latestGuardByKey.values()];
         const guardFindings = { stuck: gf.filter(e => e.finding === 'stuck').length,
                                  unreachable: gf.filter(e => e.finding === 'unreachable').length };
+        // method-guard entries are append-only (each `classify` run appends fresh ones per
+        // service::method) — dedup latest-per-key before counting by verdict, same treatment as
+        // `classified`/`guard-finding` above.
+        const latestMG = new Map<string, ReturnType<typeof readMethodGuards>[number]>();
+        for (const e of readMethodGuards(dir)) latestMG.set(`${e.service}::${e.method}`, e);
+        const methodGuards: Record<string, number> = {};
+        for (const e of latestMG.values()) methodGuards[e.verdict] = (methodGuards[e.verdict] ?? 0) + 1;
         return { phase: s.phase, regenAttempts: s.regenAttempts, alternativeAttempts: s.alternativeAttempts,
           candidates: s.candidates.map(c => ({ id: c.inv.id, name: c.inv.name, prior: c.inv.prior, status: c.status })),
           openDecisions: readLedger(dir).filter(e => e.kind === 'open-decision').length,
-          ledgerCount: readLedger(dir).length, classifications, guardFindings };
+          ledgerCount: readLedger(dir).length, classifications, guardFindings, methodGuards };
       }
       case 'witness-show': {
         const p = s.pendingWitnesses[values.witness!];
@@ -653,6 +660,13 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // Method⊨transition entailment (design §5): flag every performs-method's requires vs its
         // guard. Surfaced here in `classify` (a solver command) as a `methodGuards` section.
         const methodGuards = await checkAllMethodGuards(model(), deps);
+        // Persist (item 4): method-guard results previously only lived in this command's own
+        // output — nothing survived to the ledger for `status` to count or `explain`-adjacent
+        // tooling to read back. Runs unconditionally (both --name and bulk paths), mirroring where
+        // checkAllMethodGuards itself runs above (before the --name early return).
+        for (const mg of methodGuards)
+          appendLedger(dir, { kind: 'method-guard', at: now(), service: mg.service, method: mg.method,
+            verdict: mg.verdict, reachable: mg.reachable, provenance: `classify ${isoDay(now())}` });
         if (values.name) return { classified: results, methodGuards };
         // Guard analysis (design §7.3): structurally-filtered stuck/reachability sites, confirmed
         // against the abstract-evolution machine. Guard findings are model-level (not invariant-
@@ -816,6 +830,16 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           // Multi-conjunct: one classification per conjunct, tagged with its index.
           out.classifications = latestClass.map(e => ({ conjunct: e.conjunct, ...classView(e) }));
         }
+        // Guard-finding visibility (item 4): `guard-finding` entries are state-keyed (owner/region/
+        // state), not invariant-keyed, so they can't merge in by name like `classified` above.
+        // Instead, surface every finding on the SAME aggregate this invariant is about — the
+        // finding may not name this invariant, but a stuck/unreachable state on its aggregate is
+        // directly relevant context for reading the invariant. Latest-per-key dedup/run-filtering
+        // (as `status` does for its counts) is not reapplied here — this is a raw, append-only
+        // read-back for a single invariant's explain output, not an aggregate count.
+        out.guardFindings = readGuardFindings(dir)
+          .filter(f => f.owner === (inv.candidate as any).aggregate)
+          .map(f => ({ region: f.region, state: f.state, finding: f.finding }));
         return out;
       }
       default: return { error: 'unknown-command', cmd };
