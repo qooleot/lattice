@@ -85,3 +85,48 @@ describe('strengthenInvariant — ≥2 survivors resolve to distinguish with sep
     expect(res.witnesses[0]).toEqual(sepWitness);
   });
 });
+
+// E2E follow-up #3 (Task 7, design §10 spurious-CTI discipline): the two `strengthenInvariant`
+// 0-survivor paths mean different things and must NOT collapse onto the same `inconsistent` label.
+//   3a (no CONSISTENT variant) — a genuine contradiction: the needed guard contradicts the adopted
+//     spec. This stays `inconsistent`.
+//   3b (consistent variants exist, but NONE close the CTI) — no guard on the identified transition
+//     prevents the violation, so the CTI wasn't caused by that transition (typically an
+//     abstract-evolution accrual artifact). Reporting `inconsistent` here would falsely imply a spec
+//     contradiction; the honest label is `no-transition` ("confirm intended").
+describe('strengthenInvariant — 0-survivor paths are distinguished (3a inconsistent vs 3b no-transition)', () => {
+  const ctiWitness = { entities: [inv('paid', 3, 5)], trace: [[inv('open', 3, 5)]] };
+
+  it('3a: no consistent variant ⇒ inconsistent (genuine contradiction)', async () => {
+    const deps: any = {
+      alloy: async () => ({ sat: false, instances: [], ms: 0 }),
+      // every consistency probe (3a) comes back unsatisfiable ⇒ 0 consistent variants.
+      quint: async () => ({ violated: false, ms: 0 }),
+      quintVerify: async () => ({ violated: true, witness: ctiWitness, ms: 0 }), // step-1 reachability: CTI confirmed
+    };
+    const res = await strengthenInvariant(subscriptionsModel, paidExact, [paidExact.candidate], deps);
+    expect(res.kind).toBe('inconsistent');
+    if (res.kind !== 'inconsistent') throw new Error('expected inconsistent');
+    expect(res.note).toMatch(/consistent with the adopted spec/);
+  });
+
+  it('3b: variants consistent but none close the CTI ⇒ no-transition (accrual artifact, not a contradiction)', async () => {
+    let qvi = 0;
+    const quintVerifyResults = [
+      { violated: true, witness: ctiWitness }, // 1: reachability — CTI confirmed
+      { violated: true },                      // 2: closes-eq — still violated ⇒ does NOT close
+      { violated: true },                      // 3: closes-le — still violated ⇒ does NOT close
+      { violated: true },                      // 4: closes-ge — still violated ⇒ does NOT close
+    ];
+    const deps: any = {
+      alloy: async () => ({ sat: false, instances: [], ms: 0 }),
+      // every consistency probe (3a) comes back satisfiable ⇒ all 3 variants are consistent.
+      quint: async () => ({ violated: true, witness: { entities: [inv('paid', 4, 5)] }, ms: 0 }),
+      quintVerify: async () => ({ ...(quintVerifyResults[qvi++] ?? { violated: true }), ms: 0 }),
+    };
+    const res = await strengthenInvariant(subscriptionsModel, paidExact, [paidExact.candidate], deps);
+    expect(res.kind).toBe('no-transition');
+    if (res.kind !== 'no-transition') throw new Error('expected no-transition');
+    expect(res.note).toMatch(/closes this CTI|not prevented by guarding/);
+  });
+});

@@ -494,8 +494,11 @@ When C surfaces a CTI (or B a boundary), for the relevant transition:
    survivor over all reachable states.
 3. **Resolve:**
    - **1 survivor** → auto-adopt; ledger-note it as pinned (`pinnedBy`). *Zero questions.*
-   - **0 survivors** → surface a real inconsistency ("the needed guard contradicts invariant X") —
-     a finding, not a question.
+   - **0 survivors** → a finding, not a question — but *which* finding depends on *where* pruning
+     emptied the set (§8.5 Step 4): no consistent variant at all (a) → a real inconsistency ("the
+     needed guard contradicts invariant X"); consistent variants exist but none close the CTI (b) →
+     `no-transition` ("confirm intended", §10) — the violation isn't caused by this transition, so
+     reporting a contradiction would be dishonest.
    - **≥2 survivors** → one distinguish question **per genuinely-separating reachable witness**, and
      only those (the existing planner distinguish/probe loop).
 
@@ -561,9 +564,20 @@ variant conjoined into its transition (as an adopted-guard assumption) and run:
 - **(c) equivalence** — two survivors are equivalent if no reachable state separates them (a
   `distinguish` probe returns no witness); collapse equivalents to one representative.
 
-**Step 4 — Resolve** (§8.2): 1 survivor → `auto-adopt`; 0 → `inconsistent` (name the invariant whose
-consistency query killed the last candidate); ≥2 → `distinguish` (hand the survivors to the existing
-planner distinguish loop, which asks one question per genuinely-separating reachable witness).
+**Step 4 — Resolve** (§8.2): 1 survivor → `auto-adopt`; ≥2 → `distinguish` (hand the survivors to the
+existing planner distinguish loop, which asks one question per genuinely-separating reachable
+witness). The 0-survivor case is **not one outcome but two, and they must not collapse**:
+- **0 survivors at 3a (no CONSISTENT variant)** → `inconsistent` (name the invariant whose consistency
+  query killed the last candidate) — a genuine contradiction: the needed guard contradicts the adopted
+  spec.
+- **0 survivors at 3b (consistent variants exist, but none close the CTI)** → `no-transition`, not
+  `inconsistent`. If every consistent variant still leaves `¬I` reachable, no guard on the identified
+  transition prevents the violation — the CTI wasn't *caused* by that transition. This is typically an
+  abstract-evolution accrual artifact (the trace-diff in Step 1 found a region-change transition
+  preceding the violation, but the violation itself accrued afterward). Labeling it `inconsistent`
+  would falsely claim a spec contradiction; `no-transition` reports the honest ceiling — "the model
+  permits this; confirm intended" (spurious-CTI discipline, §10) — same as the Step-1 accrual-only-CTI
+  case.
 
 ### 8.6 Surface — `strengthen` command, write-back, and the interactive hook
 
@@ -661,6 +675,11 @@ documented in `docs/language/*.md`. Flagged, not silently assumed.
   only to the same reachability depth `N` and over the equal-records slice (§10 above). A CTI reachable
   only via abstract accrual (no declared transition in the trace step) yields `no-transition` — "the
   model permits this; confirm intended" — never a fabricated guard, per the spurious-CTI discipline.
+  The same discipline applies one step later: an accrual-caused CTI can still have `ctiTransition` map
+  to a *preceding* region-change transition (e.g. the last declared move before the accrual step) whose
+  guards are all consistent with the adopted spec but none of which close the CTI (Step 3b) — because
+  the violation wasn't caused by that transition. This is also reported `no-transition`, never
+  `inconsistent`: a fabricated contradiction is worse than an honest "confirm intended."
   Auto-adoption edits the author's transition on write-back; it is always ledger-noted (`pinnedBy`)
   and reversible like any adopted candidate, never silent.
 

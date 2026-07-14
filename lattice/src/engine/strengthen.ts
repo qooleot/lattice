@@ -122,7 +122,11 @@ export async function strengthenInvariant(
     if (!r.violated) closers.push(g);
   }
   dbg('closers', closers);
-  if (!closers.length) return { kind: 'inconsistent', note: `no consistent ${site.transition} guard variant closes the CTI` };
+  // Consistent variants exist, but NONE close the CTI ⇒ no guard on this transition prevents the
+  // violation — the CTI wasn't caused by this transition (typically an abstract-evolution accrual
+  // artifact, design §10 spurious-CTI discipline). This is NOT a spec contradiction (that's 3a, above);
+  // report the honest ceiling — "confirm intended" — rather than a fabricated inconsistency.
+  if (!closers.length) return { kind: 'no-transition', note: `no ${site.transition} guard (shape ==/<=/>=) closes this CTI — the violation is not prevented by guarding this transition (likely an abstract-evolution accrual artifact); confirm intended (design §10)` };
 
   // 3c. Equivalence: collapse variants that no reachable state separates. Keep a closer as a new
   //     survivor only if it separates from every survivor already kept.
