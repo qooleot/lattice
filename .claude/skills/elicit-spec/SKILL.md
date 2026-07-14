@@ -16,8 +16,18 @@ the doctor output is all-green. Fresh checkouts and git worktrees lack node_modu
 gitignored solver binaries; the script installs deps and links solvers from the main checkout
 (idempotent, seconds when already set up). If it fails, stop and show the user its output.
 
+## Phase 0a — orient (you, no solver)
+BEFORE proposing any structure, ask 1–2 OPEN questions and let the user answer in their own words:
+the domain as they would explain it to a new hire, and — critically — whether they already have
+names for the core business objects. Recognition beats recall for *judging* a structure, but only
+once something has been recalled; proposing first anchors the user to your ontology and leaves them
+only a veto, which is a weak instrument for "you carved this along the wrong axis." Record the
+answers as structure Q&A. If they name objects, reconcile them explicitly against your Phase 0
+proposal and surface every divergence — the divergences are the informative part, and they are cheap
+before `init` and expensive after. Budget 1–2 of the ~15 questions for this.
+
 ## Phase 0 — structure elicitation (you, no solver)
-From the user's domain description, PROPOSE a concrete structure and let them correct it:
+From the Phase 0a answers, PROPOSE a concrete structure and let them correct it:
 aggregates, entities, enums, lifecycle blocks/states (tag @active/@terminal), refs, field tags
 (@balance/@total/@monotonic on money-flow fields — these power auto-invariants). One question
 per message; multiple-choice when possible; the user judges, never authors. Budget ~15 questions.
