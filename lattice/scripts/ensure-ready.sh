@@ -32,4 +32,6 @@ fi
 
 [ -d src/parse/generated ] || { echo ">> generating langium parser"; npx langium generate; }
 
+bash scripts/cleanup-solvers.sh
+
 npx tsx src/solvers/doctor.ts
