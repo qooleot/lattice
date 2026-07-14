@@ -1,5 +1,5 @@
 import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
-import { ownedCollectionChild } from '../ast/domain.js';
+import { isQualifiedRef, ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, Cmp, Path, Predicate, Term } from '../ast/invariant.js';
 import type { SalientFact } from '../engine/session.js';
 import { OWNED_BOUND, childVarKey } from '../engine/owned.js';
@@ -62,7 +62,14 @@ function initValue(m: DomainModel, f: Field, nondets: string[], tag: string): st
     const vals = m.enums.find(e => e.name === (f.type as any).enum)!.values.map(v => `"${v}"`).join(', ');
     nondets.push(`nondet ${nd} = oneOf(Set(${vals}))`);
   } else if (f.type.kind === 'ref') {
-    nondets.push(`nondet ${nd} = oneOf(${(f.type as any).target.toUpperCase()}_IDS)`);
+    // A same-context ref draws from the target aggregate/entity's declared `<TARGET>_IDS` pool.
+    // A QUALIFIED (cross-context) ref (spec §4.2) has no in-model pool — the foreign type isn't an
+    // owner here — and is an opaque, never-traversed id (see the comment above; validateCandidate
+    // rejects paths through it). Draw it from an inline opaque string set so emission stays valid
+    // instead of referencing an undefined `CATALOG.PLAN_IDS`-style pool.
+    nondets.push(isQualifiedRef(f.type)
+      ? `nondet ${nd} = oneOf(Set("${f.name}_x", "${f.name}_y"))`
+      : `nondet ${nd} = oneOf(${(f.type as any).target.toUpperCase()}_IDS)`);
   } else if (f.type.kind === 'value') {
     // Per-subfield nondet draws (design §3.5): each sub-field gets its own `nondet` at the SAME
     // tag scope as a plain field (init/create/owned-slot — wherever initValue is itself called),
