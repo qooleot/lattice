@@ -211,6 +211,41 @@ Runtime monitors (target ③) and DST (④); quint/Apalache-generated adversaria
 a follow-up); multi-language targets; impl-event→spec-event renaming maps (impl emits spec event
 names this slice); growing the spec to cover superset features (a future elicitation pass).
 
+## 8.1 Recorded seams (named now, built later — per the generation design's "record the seam" rule)
+
+**Polyglot frontend seam (human question 2026-07-14: "what if the client is Ruby + Mongo behind a
+string ORM?").** The checker's input is defined as a **serializable observation log**
+`{events[], snapshots[]}` — data, not a live DB handle. Everything downstream (trace legality,
+`evaluateCandidate`, reporter, anchors) is target-neutral. The TS+SQLite binder of §4.1 is the
+*first frontend* producing that log, not the mechanism itself. Future frontends fork at this
+interface: (a) **document sampling** for schemaless stores — Mongo documents are self-describing,
+so convention binding validates against sampled live documents instead of DDL (and reads *below*
+the ORM on purpose: the ORM is hand-written code we refuse to trust); (b) an **in-runtime
+observer** (host-language package, e.g. a Ruby gem's teardown hook) for semantic state that is
+materialized only in code — overrides written in the host language, guarded by the language-neutral
+artifact checks (round-trip test, event↔state cross-validation) with the generated contract shipped
+as **JSON Schema**, turning the compile-time tripwire into a validation-time one (still loud).
+The residual-surface metric (§7.4) is the per-target instrument for how far a stack pushes fields
+out of auto-binding — the claim is never "zero adapter for any stack."
+
+**Event-source trust hierarchy (human question 2026-07-14: "log lines as semantic events?").**
+Event channels carry declared **reliability attributes**, and checker rules condition on them:
+- **outbox** (this slice): transactional-with-state, load-bearing — all checks sound, including
+  absence-based ones (skipped emit);
+- **message bus**: load-bearing but not atomic with state — presence checks sound, absence checks
+  weakened;
+- **structured logs**: best-effort (buffering, levels, sampling; inherently emit-outside-tx) —
+  presence-based checks only (wrong event, impossible ordering, terminal resurrection), violations
+  **advisory** rather than CI-gating, absence checks unsound (a missing log line is not a skipped
+  emit);
+- **parsed log lines**: additionally a stringly line→event mapping with no consumer contract — the
+  §11.5 rot mode; lowest tier, adoption-ramp only.
+
+Logs matter as the brownfield on-ramp (a target with no outbox still has logs), but a lossy channel
+is excluded from this slice: mixing it into the 13-experiment measurement would compromise the
+pre-registered zero-false-positive criterion. The state channel does not degrade with the event
+channel: "observed state has no legal explaining path" is caught from snapshots alone.
+
 ## 9. Constraints (inherited, non-negotiable)
 
 - Diagnostics cite spec elements AND ledger anchors; never claim coverage beyond what was checked.
