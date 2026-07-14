@@ -243,6 +243,15 @@ function peersExcludingParent(s: SessionState, inv: CandidateInvariant): Candida
   return adoptedConstraints(s).filter(c => c !== inv.candidate);
 }
 
+/** Every adopted (non-guard) invariant name scoped to `aggregate` — the reclassify dependency set
+ *  after adopting a guard on that aggregate (design §7.2 aggregate-scope, guard case). */
+function aggregateScopedNames(s: SessionState, aggregate: string): string[] {
+  return s.candidates.filter(c => c.status === 'adopted'
+    && (c.inv.candidate as any).aggregate === aggregate
+    && c.inv.candidate.kind !== 'guard')
+    .map(c => c.inv.name);
+}
+
 export function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
   const segs = path.split('.');
   const from = segs[segs.length - 1]!;
@@ -636,11 +645,16 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
             continue;
           }
           const gInv = adoptGuard(s, dir, res.guard, 'auto-strengthen');
-          // Masking reclassify (§8.4/§8.7): re-run the on-apply classifier over just this invariant now
-          // that the guard is adopted, appending a fresh `classified` entry (status/explain read the
-          // latest). Reuses classifyOnApply/classifyAdopted — no hand-rolled classification.
+          // Masking reclassify (§8.4/§8.7, broadened per §7.2 aggregate-scope, item 1): re-run the
+          // on-apply classifier over every adopted invariant scoped to the guard's aggregate — not
+          // just this invariant — now that the guard is adopted, appending fresh `classified` entries
+          // (status/explain read the latest). A guard can mask a SIBLING invariant on the same
+          // aggregate just as well as the one that triggered strengthening, so the reclassify scope
+          // must cover the whole aggregate. Reuses classifyOnApply/classifyAdopted — no hand-rolled
+          // classification.
+          const scope = [...new Set([r.invariant, ...aggregateScopedNames(s, res.guard.aggregate)])];
           const reclassified = gInv
-            ? await classifyOnApply(dir, model(), s.candidates.filter(c => c.status === 'adopted').map(c => c.inv), [r.invariant], deps)
+            ? await classifyOnApply(dir, model(), s.candidates.filter(c => c.status === 'adopted').map(c => c.inv), scope, deps)
             : [];
           autoStrengthened.push({ invariant: r.invariant, conjunct: r.conjunct, resolution: res, guard: gInv?.name,
             reclassified: reclassified.map(e => ({ invariant: e.invariant, verdict: e.verdict, pinnedBy: e.pinnedBy })) });

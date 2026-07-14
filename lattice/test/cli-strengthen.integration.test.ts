@@ -70,9 +70,17 @@ describe('engine classify interactive strengthening hook (bulk, REAL quint)', ()
     });
 
     // THE PROOF: the masking reclassify — run over REAL quint with the guard now in the machine —
-    // reports paidExact as `entailed`. Guard-blind (pre-fix), this comes back `violated`.
-    expect(r.autoStrengthened[0].reclassified).toEqual([
+    // reports paidExact as `entailed`. Guard-blind (pre-fix), this comes back `violated`. The
+    // broadened §7.2 aggregate scope (item 1) also sweeps in every other adopted invariant over
+    // Invoice — here the four NonNegative_Invoice_* templates matchTemplates auto-adopts for
+    // subscriptionsModel's four Money fields — which real quint confirms stay `entailed` too.
+    expect(r.autoStrengthened[0].reclassified).toContainEqual(
       expect.objectContaining({ invariant: 'paidExact', verdict: 'entailed' }),
+    );
+    expect(r.autoStrengthened[0].reclassified.every((e: any) => e.verdict === 'entailed')).toBe(true);
+    expect(r.autoStrengthened[0].reclassified.map((e: any) => e.invariant).sort()).toEqual([
+      'NonNegative_Invoice_amountPaid', 'NonNegative_Invoice_licenseFeeAmount',
+      'NonNegative_Invoice_totalDue', 'NonNegative_Invoice_usageAmount', 'paidExact',
     ]);
 
     // The guard is now adopted in the session with the same id the `strengthen` command mints.

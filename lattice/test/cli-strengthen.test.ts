@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommand, realDeps } from '../src/cli.js';
-import { subscriptionsModel, paidImpliesExactConjunct, amountPaidAtMostTotalConjunct } from './fixtures.js';
+import { subscriptionsModel, paidImpliesExactConjunct, amountPaidAtMostTotalConjunct, activePaidInFullCandidate } from './fixtures.js';
 import type { AggregateDef, DomainModel } from '../src/ast/domain.js';
 import type { Candidate } from '../src/ast/invariant.js';
 
@@ -218,11 +218,19 @@ describe('engine classify interactive strengthening hook (bulk, scripted wiring)
       invariant: 'paidExact', guard: 'guard_settle_eq',
       resolution: { kind: 'auto-adopt', guard: { transition: 'settle', predicate: { op: 'eq' } } },
     });
-    // Wiring assertion (scripted, NOT masking proof): the §7.2 reclassify pass re-ran for paidExact
-    // after the guard adoption and its (scripted) verdict is surfaced. Real masking proof: I-1 integ.
-    expect(r.autoStrengthened[0].reclassified).toEqual([
-      { invariant: 'paidExact', verdict: 'entailed', pinnedBy: expect.any(Array) },
+    // Wiring assertion (scripted, NOT masking proof): the broadened §7.2 reclassify pass (item 1)
+    // re-ran for every adopted invariant over Invoice (the guard's aggregate) — paidExact plus the
+    // four NonNegative_Invoice_* template invariants matchTemplates auto-adopts for
+    // subscriptionsModel's four Money fields (licenseFeeAmount/usageAmount/totalDue/amountPaid) —
+    // and their (scripted) verdicts are surfaced. Real masking proof: I-1 integ.
+    const reclassifiedNames = r.autoStrengthened[0].reclassified.map((e: any) => e.invariant).sort();
+    expect(reclassifiedNames).toEqual([
+      'NonNegative_Invoice_amountPaid', 'NonNegative_Invoice_licenseFeeAmount',
+      'NonNegative_Invoice_totalDue', 'NonNegative_Invoice_usageAmount', 'paidExact',
     ]);
+    expect(r.autoStrengthened[0].reclassified.every((e: any) => e.verdict === 'entailed')).toBe(true);
+    expect(r.autoStrengthened[0].reclassified.find((e: any) => e.invariant === 'paidExact').pinnedBy)
+      .toEqual(expect.any(Array));
 
     // The guard is now adopted in the session, with the same id the `strengthen` command mints.
     const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
@@ -243,6 +251,60 @@ describe('engine classify interactive strengthening hook (bulk, scripted wiring)
     expect(r.autoStrengthened).toBeUndefined();
     const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
     expect(st.candidates.some((c: any) => c.inv.candidate.kind === 'guard')).toBe(false);
+  });
+});
+
+// Task 2 (item 1): design §7.2 aggregate-scope broadening — a guard adopted while masking-reclassifying
+// one invariant can ALSO mask a SIBLING invariant over the SAME aggregate, whose verdict then goes
+// stale unless it's swept into the same reclassify pass. Extends `setup()`'s session with two more
+// adopted invariants: `amountPaidAtMostTotal` (Invoice — the SAME aggregate as paidExact's `settle`
+// guard, so it must reclassify too) and `activePaidInFull` (Subscription — a DIFFERENT aggregate,
+// which must NOT be swept in). `init`'s matchTemplates also auto-adopts 4 NonNegative_Invoice_* template
+// invariants (subscriptionsModel's four Money fields on Invoice) — harmless here (hookDeps' fingerprint
+// entails anything whose q_I body isn't paidExact's), so assertions below check inclusion, not an exact set.
+async function setupWithAggregateSibling(): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), 'cli-strengthen-siblings-'));
+  const modelFile = join(dir, 'm.json');
+  writeFileSync(modelFile, JSON.stringify(stripSettleGuard(subscriptionsModel)));
+  await runCommand(['init', '--session', dir, '--model', modelFile], inertDeps);
+  await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+    { id: 'pe', name: 'paidExact', prior: 1, source: 'seed', candidate: paidExactCandidate },
+    { id: 'apamt', name: 'amountPaidAtMostTotal', prior: 1, source: 'seed', candidate: amountPaidAtMostTotalConjunct },
+    { id: 'apif', name: 'activePaidInFull', prior: 1, source: 'seed', candidate: activePaidInFullCandidate },
+  ])], inertDeps);
+
+  const stateFile = join(dir, 'state.json');
+  const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+  const ledgerLines: string[] = [];
+  for (const id of ['pe', 'apamt', 'apif']) {
+    const c = st.candidates.find((c: any) => c.inv.id === id);
+    c.status = 'adopted';
+    ledgerLines.push(JSON.stringify({ kind: 'adopted', at: new Date().toISOString(), invariant: c.inv, provenance: 'test' }));
+  }
+  writeFileSync(stateFile, JSON.stringify(st));
+  writeFileSync(join(dir, 'ledger.jsonl'), ledgerLines.join('\n') + '\n');
+  return dir;
+}
+
+describe('engine classify interactive strengthening hook: aggregate-scoped reclassify (item 1, scripted wiring)', () => {
+  it("broadens the masking reclassify to every adopted invariant over the guard's aggregate, not just the strengthened one", async () => {
+    const dir = await setupWithAggregateSibling();
+    const { deps } = hookDeps();
+    const r: any = await runCommand(['classify', '--session', dir], deps);
+
+    expect(r.classified.find((c: any) => c.invariant === 'paidExact').verdict).toBe('violated');
+    expect(r.autoStrengthened).toHaveLength(1);
+    expect(r.autoStrengthened[0]).toMatchObject({ invariant: 'paidExact', guard: 'guard_settle_eq' });
+
+    // Broadened §7.2 scope (item 1): `amountPaidAtMostTotal` is ALSO over Invoice (the guard's
+    // aggregate) and must reclassify alongside the strengthened invariant — previously the hook
+    // passed only `[r.invariant]` (paidExact alone) to classifyOnApply, so the sibling's verdict
+    // went stale.
+    const reclassifiedNames = r.autoStrengthened[0].reclassified.map((e: any) => e.invariant);
+    expect(reclassifiedNames).toContain('paidExact');
+    expect(reclassifiedNames).toContain('amountPaidAtMostTotal');
+    // `activePaidInFull` is over Subscription, a DIFFERENT aggregate — must NOT be swept in.
+    expect(reclassifiedNames).not.toContain('activePaidInFull');
   });
 });
 
