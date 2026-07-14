@@ -31,6 +31,19 @@ describe('matchTemplates', () => {
     expect(adopt.some(a => a.candidate.kind === 'conservation' && a.candidate.aggregate === 'Obligation')).toBe(true));
   it('#2 non-negative for every Money field', () =>
     expect(adopt.filter(a => a.name.startsWith('NonNegative')).length).toBe(3));
+  it('#2 skips @signed Money fields — matches implied.ts and docs/language/tags.md', () => {
+    const signedModel: DomainModel = {
+      context: 'Ledger', ticksPerDay: 24, enums: [], values: [], aggregates: [],
+      entities: [{ kind: 'entity', name: 'Account', fields: [
+        { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'cleared', type: { kind: 'prim', prim: 'Money' } },
+        { name: 'adjustment', type: { kind: 'prim', prim: 'Money' }, tags: ['signed'] }] }],
+      events: [], services: []
+    };
+    const names = matchTemplates(signedModel).adopt.map(a => a.name);
+    expect(names).toContain('NonNegative_Account_cleared');
+    expect(names).not.toContain('NonNegative_Account_adjustment');
+  });
   it('#3 terminal for @terminal states', () =>
     expect(adopt.some(a => a.candidate.kind === 'terminal' && (a.candidate as any).state === 'Closed')).toBe(true));
   it('#7 cardinality single-active when the tagged aggregate has no refs', () =>
