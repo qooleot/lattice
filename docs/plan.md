@@ -1,7 +1,12 @@
 # A Verifiable, Domain-Driven Specification Language for the AI-Agent Era
 
 *Working name: **Lattice** (placeholder — rename freely).*
-*Status: design plan, synthesized from an extended design conversation. Not yet built.*
+*Status: parent design (timeless reference). Built and evolving as of 2026-07-14: elicitation
+engine + two solver adapters (slice 1), `.lat` parser with ledger reconciliation (slice 3),
+grammar & machine growth (slice 4), spec→implementation generation, inference/strengthening
+(§9.1 pillars), and mermaid docs are implemented — see `docs/superpowers/specs/` for per-slice
+designs and `README.md` for current capabilities. Conformance (§11.5–11.6, "slice 2") is NOT
+yet built.*
 
 ---
 

@@ -1,9 +1,7 @@
 # Lattice — Slice #3 Brief: The `.lat` Parser (Engineer Authoring)
 
 - **Date:** 2026-07-05
-- **Status:** Pre-design brief — NOT an approved design. The agent picking this up must run the
-  brainstorming flow with the human to resolve the open forks below, write the design spec, then
-  writing-plans, then implement. This document is the accumulated context so nothing is re-derived.
+- **Status:** SUPERSEDED — the approved design is [`2026-07-05-lattice-slice-3-lat-parser-design.md`](2026-07-05-lattice-slice-3-lat-parser-design.md); this brief remains as historical context only.
 - **Parent design:** [`docs/plan.md`](../../plan.md) — esp. §6 (projections & the authoring
   boundary), §5.5 (doc comments), §19 Risk 4 (round-trip).
 - **Prior slice:** [`2026-07-03-lattice-elicitation-slice-1-design.md`](2026-07-03-lattice-elicitation-slice-1-design.md)

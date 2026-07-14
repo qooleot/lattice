@@ -1,9 +1,7 @@
 # Lattice — Slice #4 Brief: Grammar & Machine Growth
 
 - **Date:** 2026-07-05
-- **Status:** Pre-design brief — NOT an approved design. The agent picking this up must run the
-  brainstorming flow with the human to resolve the open forks below, write the design spec, then
-  writing-plans, then implement. This document is the accumulated context and evidence.
+- **Status:** SUPERSEDED — the approved design is [`2026-07-07-lattice-slice-4-grammar-machine-growth-design.md`](2026-07-07-lattice-slice-4-grammar-machine-growth-design.md); this brief remains as historical context only.
 - **Parent design:** [`docs/plan.md`](../../plan.md) — §5.1 (`machine`/`transition` constructs),
   §9.1 (prefer encoding safety in the machine), §10.2 (template catalog), §15 (decidability
   discipline).

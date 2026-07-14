@@ -7,6 +7,16 @@ methods have an adoption cliff (humans quit before payoff). If the *agent* pays 
 tax and the human only ever *judges concrete cases*, a spec can be simultaneously readable by
 domain experts, precise enough for an agent to implement with confidence, and mechanically checkable.
 
+**Status (2026-07-14):** built and running — not a design doc anymore. Implemented: the elicitation
+engine (chat → judged spec, real Alloy 6 + Quint/Apalache solvers, 679 engine tests), the `.lat`
+language with parser/round-trip + ledger reconciliation (`.lat` is the spec's source of truth; the
+verdict ledger is the evidence's), grammar & machine growth (guards, services, value objects,
+sum-over-collection, `const`), spec→implementation generation (`lattice generate` → a running
+SQLite-backed TypeScript service with guards, outbox events, invariant enforcement — see
+`generated/subscriptions/`), inference (entailment classification + CTI-guided strengthening), and
+generated mermaid docs. Not yet built: conformance/anti-drift (plan §11.5–11.6) and the app/UI —
+briefs in `docs/superpowers/specs/`. A real elicited spec lives at `specs/subscriptions/spec.lat`.
+
 **The whole system reduces to three things:**
 
 1. **One language** — an AST with prose / code / diagram projections.

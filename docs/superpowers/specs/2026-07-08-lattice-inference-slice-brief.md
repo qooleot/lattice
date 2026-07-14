@@ -1,9 +1,7 @@
 # Lattice — Inference Slice Brief: Entailment, Guard Analysis & CTI
 
 - **Date:** 2026-07-08
-- **Status:** Pre-design brief — NOT an approved design. The agent picking this up must run the
-  brainstorming flow with the human to resolve the open forks below, write the design spec, then
-  writing-plans, then implement. This document is the accumulated context and evidence.
+- **Status:** SUPERSEDED — the approved design is [`2026-07-09-lattice-inference-slice-design.md`](2026-07-09-lattice-inference-slice-design.md); this brief remains as historical context only.
 - **Parent design:** [`docs/plan.md`](../../plan.md) — §9.1 (mypyvy-style inference, CTI, the
   entailment classifier), §14 (the race/crash analysis the machine's guards feed), §15
   (decidability discipline — bounded checking is the floor, induction is the reach).

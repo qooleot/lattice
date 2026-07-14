@@ -1,9 +1,7 @@
 # Lattice — Generation Slice Brief: Spec → Implementation
 
 - **Date:** 2026-07-05
-- **Status:** Pre-design brief — NOT an approved design. The agent picking this up must brainstorm
-  the forks with the human, write the design spec, get approval, then writing-plans. Do not build
-  first.
+- **Status:** SUPERSEDED — the approved design is [`2026-07-09-lattice-generation-slice-design.md`](2026-07-09-lattice-generation-slice-design.md); this brief remains as historical context only.
 - **Parent design:** [`docs/plan.md`](../../plan.md) — §5.3 (services are verified commands; RPC is
   a generated projection), §11.5 (the conformance adapter's generated-first architecture — several
   of its layers PRESUPPOSE this slice), §11.6 (the CI wedge this slice's generated tests feed),
