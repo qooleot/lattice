@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { strengthenInvariant } from '../../src/engine/strengthen.js';
+import { conjunctsOf } from '../../src/engine/tier.js';
 import { realDeps } from '../../src/cli.js';
-import { subscriptionsModel } from '../fixtures.js';
+import { subscriptionsModel, paidImpliesExactConjunct, amountPaidAtMostTotalConjunct } from '../fixtures.js';
 import type { AggregateDef, DomainModel } from '../../src/ast/domain.js';
 import type { CandidateInvariant, Candidate } from '../../src/ast/invariant.js';
 
@@ -77,5 +78,62 @@ describe('strengthenInvariant (integration, real quint)', () => {
     };
     const res = await strengthenInvariant(variant, paidExact, [neverOverpaid, settleGuard], realDeps, 6);
     expect(res.kind).toBe('no-transition');
+  }, 240_000);
+});
+
+// E2E finding #2: CTI-guided strengthening is per-INVARIANT (strengthenInvariant), but classification
+// is per-CONJUNCT (classifyAdopted/classifyInvariant, tier.ts's conjunctsOf). Handing the WHOLE
+// `and`-bodied invariant to strengthenInvariant makes invariantCmp (strengthen.ts) return null (an
+// `and` body is neither a bare cmp nor an implies-consequent), so guardVariants finds nothing and the
+// engine bails with `no-transition "no own-field cmp to shape a guard from"` — the headline
+// strengthening feature never fires on a realistic multi-conjunct invariant like the committed
+// Never_Overpaid_And_Paid_Exact. This proves the bug on real quint, then proves the fix: handing
+// strengthenInvariant the single VIOLATED conjunct (built via conjunctsOf) lets it see a clean
+// cmp/implies body and auto-adopt the guard.
+describe('strengthenInvariant on a multi-conjunct invariant (integration, real quint) — E2E #2', () => {
+  // Reassemble the committed Never_Overpaid_And_Paid_Exact as the `and` of its two committed conjunct
+  // fixtures (same reassembly as classify.integration.test.ts): amountPaid<=totalDue, and
+  // inState(paid) ⇒ amountPaid==totalDue.
+  const neverOverpaidAndPaidExact: Candidate = {
+    kind: 'statePredicate', aggregate: 'Invoice',
+    body: { kind: 'and', args: [
+      (amountPaidAtMostTotalConjunct as Extract<Candidate, { kind: 'statePredicate' }>).body,
+      (paidImpliesExactConjunct as Extract<Candidate, { kind: 'statePredicate' }>).body,
+    ] },
+  };
+  const inv: CandidateInvariant = {
+    id: 'never-overpaid', name: 'neverOverpaidAndPaidExact', prior: 1, source: 'template',
+    candidate: neverOverpaidAndPaidExact,
+  };
+
+  // On real quint the shortest CTI for the WHOLE `and` body is via conjunct 0 (amountPaid<=totalDue,
+  // violable by pure accrual alone, no transition needed) rather than via conjunct 1's settle-guarded
+  // violation — so step 1's site lookup fails first ("CTI reached via accrual with no declared
+  // transition") rather than reaching guardVariants' "no own-field cmp" rejection. Both notes are the
+  // SAME underlying bug: handing the whole `and` body to strengthenInvariant can never auto-adopt,
+  // because either (a) ctiTransition finds no site (this case), or (b) invariantCmp returns null on
+  // the `and` body once a site IS found (see strengthen.ts's invariantCmp / guardVariants). Assert the
+  // disjunction rather than a single guessed note string.
+  it('the WHOLE invariant never auto-adopts (no-transition, either accrual-masked or "no own-field cmp") — the bug', async () => {
+    const variant = stripSettleGuard(subscriptionsModel);
+    const res = await strengthenInvariant(variant, inv, [], realDeps, 6);
+    expect(res.kind).toBe('no-transition');
+    if (res.kind === 'no-transition') {
+      expect(res.note).toMatch(/no own-field cmp|CTI reached via accrual/);
+    }
+  }, 240_000);
+
+  it('the second conjunct (paid ⇒ ==) alone auto-adopts a settle==totalDue guard — the fix', async () => {
+    const variant = stripSettleGuard(subscriptionsModel);
+    const conjuncts = conjunctsOf(inv.candidate);
+    expect(conjuncts.length).toBe(2);
+    const secondConjunct: CandidateInvariant = { ...inv, candidate: conjuncts[1]!.candidate };
+    const res = await strengthenInvariant(variant, secondConjunct, [], realDeps, 6);
+    expect(res.kind).toBe('auto-adopt');
+    if (res.kind === 'auto-adopt') {
+      expect(res.guard.transition).toBe('settle');
+      expect(res.guard.predicate.kind).toBe('cmp');
+      if (res.guard.predicate.kind === 'cmp') expect(res.guard.predicate.op).toBe('eq');
+    }
   }, 240_000);
 });

@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runCommand } from '../src/cli.js';
-import { subscriptionsModel } from './fixtures.js';
+import { runCommand, realDeps } from '../src/cli.js';
+import { subscriptionsModel, paidImpliesExactConjunct, amountPaidAtMostTotalConjunct } from './fixtures.js';
 import type { AggregateDef, DomainModel } from '../src/ast/domain.js';
+import type { Candidate } from '../src/ast/invariant.js';
 
 const inertDeps: any = { alloy: async () => ({ sat: false, instances: [], ms: 0 }), quint: async () => ({ violated: false, ms: 0 }) };
 
@@ -243,4 +244,122 @@ describe('engine classify interactive strengthening hook (bulk, scripted wiring)
     const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
     expect(st.candidates.some((c: any) => c.inv.candidate.kind === 'guard')).toBe(false);
   });
+});
+
+// E2E finding #2: strengthening is per-CONJUNCT, not per-invariant. Reassemble the committed
+// Never_Overpaid_And_Paid_Exact as the `and` of its two committed conjunct fixtures (same
+// reassembly as classify.integration.test.ts / strengthen.integration.test.ts's E2E #2 block):
+// conjunct 0 = amountPaid<=totalDue (not guard-forced), conjunct 1 = paid ⇒ amountPaid==totalDue
+// (guard-forced by settle, stripped here so it's genuinely violated).
+const neverOverpaidAndPaidExact: Candidate = {
+  kind: 'statePredicate', aggregate: 'Invoice',
+  body: { kind: 'and', args: [
+    (amountPaidAtMostTotalConjunct as Extract<Candidate, { kind: 'statePredicate' }>).body,
+    (paidImpliesExactConjunct as Extract<Candidate, { kind: 'statePredicate' }>).body,
+  ] },
+};
+
+async function setupMulti(): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), 'cli-strengthen-multi-'));
+  const modelFile = join(dir, 'm.json');
+  writeFileSync(modelFile, JSON.stringify(stripSettleGuard(subscriptionsModel)));
+  await runCommand(['init', '--session', dir, '--model', modelFile], inertDeps);
+  await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+    { id: 'noape', name: 'neverOverpaidAndPaidExact', prior: 1, source: 'seed', candidate: neverOverpaidAndPaidExact },
+  ])], inertDeps);
+
+  const stateFile = join(dir, 'state.json');
+  const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+  const c = st.candidates.find((c: any) => c.inv.id === 'noape');
+  c.status = 'adopted';
+  writeFileSync(stateFile, JSON.stringify(st));
+  const ledgerFile = join(dir, 'ledger.jsonl');
+  writeFileSync(ledgerFile, JSON.stringify({ kind: 'adopted', at: new Date().toISOString(), invariant: c.inv, provenance: 'test' }) + '\n');
+  return dir;
+}
+
+// Scripts the bulk `classify` command's two PER-CONJUNCT probes so only conjunct 1 (paid ⇒ ==)
+// classifies violated, and strengthenInvariant's own probes (mirrors hookDeps' qInvScript) resolve
+// it to a single eq survivor. Fingerprints conjunct 1's `q_peersImpliesI`/`q_I` probe by the same
+// `x.amountPaid == x.totalDue` substring hookDeps uses for paidExact — conjunct 0's body is a bare
+// `<=` cmp and never contains that substring, and neither do the template NonNegative invariants
+// `init` auto-adopts (matchTemplates), so this can't false-positive on them.
+function multiHookDeps() {
+  let peersI = 0, qInv = 0;
+  const conjunct1Script = [{ violated: true, witness: ctiWitness }, { violated: false }];
+  const qInvScript = [{ violated: true, witness: ctiWitness }, { violated: false }, { violated: true }, { violated: true }];
+  const isConjunct1 = (src: string) =>
+    (src.split('\n').find(l => l.trimStart().startsWith('val q_I ')) ?? '').includes('x.amountPaid == x.totalDue');
+  const deps: any = {
+    alloy: async () => ({ sat: false, instances: [], ms: 0 }),
+    quint: async () => ({ violated: true, ms: 0 }),
+    quintVerify: async (em: any, opts: any) => {
+      if (opts.invariant === 'q_peersImpliesI') {
+        if (!isConjunct1(em.source)) return { violated: false, ms: 0 };   // conjunct 0 + template invariants ⇒ not violated
+        return { ...conjunct1Script[Math.min(peersI++, conjunct1Script.length - 1)]!, ms: 0 };
+      }
+      if (opts.invariant === 'q_inv') return { ...qInvScript[Math.min(qInv++, qInvScript.length - 1)]!, ms: 0 };
+      return { violated: false, ms: 0 };   // q_I consecution, q_methodGuard, q_not_stuck/q_not_reach
+    },
+  };
+  return { deps };
+}
+
+// WIRING-ONLY (scripted solver): proves the hook targets the VIOLATED CONJUNCT of a multi-conjunct
+// invariant, not the whole `and`-bodied invariant (which strengthenInvariant can never auto-adopt —
+// invariantCmp returns null on an `and` body; see strengthen.integration.test.ts's E2E #2 "the bug"
+// test). Real-quint proof that the fix actually auto-adopts (and that peersExcludingParent's parent-
+// candidate exclusion is load-bearing) is the real-quint test below.
+describe('engine classify interactive strengthening hook — multi-conjunct (bulk, scripted wiring, E2E #2)', () => {
+  it('strengthens only the violated conjunct, tagging autoStrengthened with its index', async () => {
+    const dir = await setupMulti();
+    const { deps } = multiHookDeps();
+    const r: any = await runCommand(['classify', '--session', dir], deps);
+
+    const classifiedForInv = r.classified.filter((c: any) => c.invariant === 'neverOverpaidAndPaidExact');
+    expect(classifiedForInv).toHaveLength(2);
+    expect(classifiedForInv.find((c: any) => c.conjunct === '0').verdict).not.toBe('violated');
+    expect(classifiedForInv.find((c: any) => c.conjunct === '1').verdict).toBe('violated');
+
+    // Only ONE strengthening attempt (for conjunct '1'), not one for the whole invariant.
+    expect(r.autoStrengthened).toHaveLength(1);
+    expect(r.autoStrengthened[0]).toMatchObject({
+      invariant: 'neverOverpaidAndPaidExact', conjunct: '1', guard: 'guard_settle_eq',
+      resolution: { kind: 'auto-adopt', guard: { transition: 'settle', predicate: { op: 'eq' } } },
+    });
+
+    const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
+    const guard = st.candidates.find((c: any) => c.inv.candidate.kind === 'guard');
+    expect(guard?.status).toBe('adopted');
+    expect(guard.inv.id).toBe('guard-Invoice-settle-eq');
+  });
+});
+
+// REAL QUINT (not scripted): proves the actual production path — `strengthen --name
+// neverOverpaidAndPaidExact --conjunct 1` through runCommand with realDeps — genuinely auto-adopts
+// the settle==totalDue guard. This is the test that catches the peer-exclusion pitfall found while
+// implementing E2E #2: `neverOverpaidAndPaidExact` stays ADOPTED (present in adoptedConstraints(s))
+// while strengthening conjunct 1 alone, and since the parent's `and` body tautologically implies its
+// own conjunct 1, leaving it in strengthenInvariant's peers makes the CTI probe vacuously
+// unviolated (confirmed: without peersExcludingParent's parent-candidate exclusion this reports
+// `no-transition` instead of `auto-adopt`). A scripted test can't catch this — the scripted
+// quintVerify above answers whatever the fingerprint dispatches to regardless of what peers actually
+// got emitted into the Quint source.
+describe('engine strengthen CLI — multi-conjunct (real quint, E2E #2)', () => {
+  it('strengthen --name neverOverpaidAndPaidExact --conjunct 1 auto-adopts settle==totalDue', async () => {
+    const dir = await setupMulti();
+    const r: any = await runCommand(
+      ['strengthen', '--session', dir, '--name', 'neverOverpaidAndPaidExact', '--conjunct', '1'], realDeps);
+
+    expect(r.conjunct).toBe('1');
+    expect(r.strengthened).toMatchObject({
+      kind: 'auto-adopt',
+      guard: { transition: 'settle', predicate: { op: 'eq' } },
+    });
+
+    const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
+    const guard = st.candidates.find((c: any) => c.inv.candidate.kind === 'guard');
+    expect(guard?.status).toBe('adopted');
+    expect(guard.inv.id).toBe('guard-Invoice-settle-eq');
+  }, 240_000);
 });

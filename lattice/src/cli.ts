@@ -217,6 +217,32 @@ function adoptGuard(s: SessionState, dir: string, g: GuardCandidate, provTag: st
   return gInv;
 }
 
+/** The single-conjunct CandidateInvariant for a violated per-conjunct classify result, so
+ *  strengthenInvariant sees a cmp/implies body (not an `and`) — E2E finding #2. `conjunct` is the
+ *  index string from the Classification; undefined ⇒ the invariant is single-conjunct (pass as-is). */
+function conjunctTarget(inv: CandidateInvariant, conjunct?: string): CandidateInvariant {
+  if (conjunct === undefined) return inv;
+  const parts = conjunctsOf(inv.candidate);
+  const part = parts.find(p => p.conjunct === conjunct) ?? parts[Number(conjunct)];
+  return part ? { ...inv, candidate: part.candidate } : inv;
+}
+
+/** Peers to hand strengthenInvariant when targeting one conjunct of `inv`: `adoptedConstraints(s)`
+ *  minus `inv`'s own (parent, possibly `and`-bodied) candidate. Required in addition to
+ *  conjunctTarget: `inv` stays ADOPTED (and thus present in `adoptedConstraints(s)`) while we probe a
+ *  single conjunct of it, and strengthenInvariant's own self-exclusion (`c !== violated.candidate`)
+ *  only catches the parent in the single-conjunct case, where the candidate passed as `violated` IS
+ *  the adopted one by reference. For a conjunct, `violated.candidate` is a FRESH sub-object
+ *  (conjunctTarget's `{ ...c, body: a }`), so the parent's full `and` body would otherwise survive the
+ *  filter as an unfiltered peer — and since the parent tautologically implies its own conjunct, that
+ *  peer makes strengthenInvariant's CTI probe (`adopted implies Hi`) vacuously unviolated, silently
+ *  masking a real violation as `no-transition` (confirmed on real quint: leaving the parent in
+ *  `adopted` for the settle-guard-stripped `neverOverpaidAndPaidExact` conjunct 1 reports
+ *  `no-transition`, filtering it out reports `auto-adopt`). */
+function peersExcludingParent(s: SessionState, inv: CandidateInvariant): Candidate[] {
+  return adoptedConstraints(s).filter(c => c !== inv.candidate);
+}
+
 export function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
   const segs = path.split('.');
   const from = segs[segs.length - 1]!;
@@ -256,7 +282,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       question: { type: 'string' }, answer: { type: 'string' },
       lat: { type: 'string' }, 'dry-run': { type: 'boolean' }, 'no-classify': { type: 'boolean' },
       rename: { type: 'string', multiple: true }, 'force-remove': { type: 'string', multiple: true },
-      name: { type: 'string' }, workspace: { type: 'string' }, 'max-steps': { type: 'string' }
+      name: { type: 'string' }, workspace: { type: 'string' }, 'max-steps': { type: 'string' }, conjunct: { type: 'string' }
     }});
 
     if (cmd !== 'docs' && !values.session) return { error: 'missing-arg', arg: 'session' };
@@ -588,20 +614,35 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // the planner is DEFERRED; see task-6 report). Each auto-adopt mutates `adoptedConstraints(s)`,
         // so a subsequent violated invariant's probe carries the guard just adopted (engine fix i).
         const autoStrengthened: object[] = [];
-        const violatedNames = [...new Set(results.filter(r => r.verdict === 'violated').map(r => r.invariant))];
-        for (const name of violatedNames) {
-          const target = targets.find(c => c.inv.name === name);
+        // Per-CONJUNCT, not per-invariant (E2E finding #2): classify's `results` are already split by
+        // conjunctsOf (classifyAdopted above), so a violated multi-conjunct invariant surfaces one
+        // `Classification` per violated conjunct here. Handing strengthenInvariant the WHOLE invariant
+        // (an `and` body) makes invariantCmp (strengthen.ts) return null — it never fires on realistic
+        // multi-conjunct invariants. conjunctTarget rebuilds the single-conjunct CandidateInvariant
+        // (cmp/implies body) that strengthenInvariant can actually shape a guard from. Dedupe on
+        // (invariant, conjunct) — `results` cannot repeat a key within one classify run, but this keeps
+        // the loop robust to future callers that might pass duplicate targets.
+        const seenKeys = new Set<string>();
+        for (const r of results.filter(x => x.verdict === 'violated')) {
+          const key = `${r.invariant}::${r.conjunct ?? ''}`;
+          if (seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          const target = targets.find(c => c.inv.name === r.invariant);
           if (!target) continue;
-          const res = await strengthenInvariant(model(), target.inv, adoptedConstraints(s), deps, reachSteps ?? 6);
-          if (res.kind !== 'auto-adopt') { autoStrengthened.push({ invariant: name, resolution: res }); continue; }
+          const vInv = conjunctTarget(target.inv, r.conjunct);
+          const res = await strengthenInvariant(model(), vInv, peersExcludingParent(s, target.inv), deps, reachSteps ?? 6);
+          if (res.kind !== 'auto-adopt') {
+            autoStrengthened.push({ invariant: r.invariant, conjunct: r.conjunct, resolution: res });
+            continue;
+          }
           const gInv = adoptGuard(s, dir, res.guard, 'auto-strengthen');
           // Masking reclassify (§8.4/§8.7): re-run the on-apply classifier over just this invariant now
           // that the guard is adopted, appending a fresh `classified` entry (status/explain read the
           // latest). Reuses classifyOnApply/classifyAdopted — no hand-rolled classification.
           const reclassified = gInv
-            ? await classifyOnApply(dir, model(), s.candidates.filter(c => c.status === 'adopted').map(c => c.inv), [name], deps)
+            ? await classifyOnApply(dir, model(), s.candidates.filter(c => c.status === 'adopted').map(c => c.inv), [r.invariant], deps)
             : [];
-          autoStrengthened.push({ invariant: name, resolution: res, guard: gInv?.name,
+          autoStrengthened.push({ invariant: r.invariant, conjunct: r.conjunct, resolution: res, guard: gInv?.name,
             reclassified: reclassified.map(e => ({ invariant: e.invariant, verdict: e.verdict, pinnedBy: e.pinnedBy })) });
         }
 
@@ -632,15 +673,28 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           reachSteps = n;
         }
 
+        // Per-CONJUNCT, not per-invariant (E2E finding #2): a multi-conjunct `and`-bodied invariant
+        // makes invariantCmp (strengthen.ts) return null, so strengthenInvariant can never auto-adopt
+        // on the whole invariant. `--name` alone (no `--conjunct`) has no per-conjunct classify result
+        // to key off, so it defaults to conjunct '0' when the invariant is multi-conjunct (documented
+        // in the returned `conjunct` field) — an explicit `--conjunct <idx>` targets a specific one.
+        const multiConjunct = conjunctsOf(target.inv.candidate).length > 1;
+        const conjunct = multiConjunct ? (values.conjunct ?? '0') : values.conjunct;
+        const vInv = conjunctTarget(target.inv, conjunct);
+
         // strengthenInvariant now filters its own peers (quint-expressible, self-excluded) and rides
-        // adopted guards into the machine (carried fix iii), so pass raw adoptedConstraints(s).
-        const res = await strengthenInvariant(model(), target.inv, adoptedConstraints(s), deps, reachSteps ?? 6);
-        if (res.kind !== 'auto-adopt') return { strengthened: res };   // finding/survivors — non-blocking (Task 6: distinguish UX)
+        // adopted guards into the machine (carried fix iii); peersExcludingParent additionally strips
+        // `target.inv`'s own (possibly `and`-bodied) candidate, which strengthenInvariant's self-
+        // exclusion can't catch once `vInv.candidate` is a split-out conjunct sub-object (see
+        // peersExcludingParent's doc comment) — for a single-conjunct invariant this is a no-op
+        // (vInv.candidate === target.inv.candidate, already excluded either way).
+        const res = await strengthenInvariant(model(), vInv, peersExcludingParent(s, target.inv), deps, reachSteps ?? 6);
+        if (res.kind !== 'auto-adopt') return { strengthened: res, conjunct };   // finding/survivors — non-blocking (Task 6: distinguish UX)
 
         // auto-adopt: adopt the winning guard idempotently via the shared minting/ledger helper (same
         // ids/names the interactive hook produces). A no-op (already adopted) still returns the res.
         adoptGuard(s, dir, res.guard, 'strengthen');
-        return done({ strengthened: res });
+        return done({ strengthened: res, conjunct });
       }
       case 'explain': {
         const ledger = readLedger(dir);
