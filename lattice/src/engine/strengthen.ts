@@ -60,7 +60,7 @@ export function guardVariants(site: GuardSiteRef, violated: CandidateInvariant):
 export type Resolution =
   | { kind: 'auto-adopt'; guard: Guard }
   | { kind: 'inconsistent'; note: string }
-  | { kind: 'distinguish'; survivors: Guard[] }
+  | { kind: 'distinguish'; survivors: Guard[]; witnesses: CaseState[] }
   | { kind: 'no-transition'; note: string };
 
 const DEBUG = process.env.STRENGTHEN_DEBUG === '1';
@@ -136,24 +136,43 @@ export async function strengthenInvariant(
 
   // 4. Resolve.
   if (survivors.length === 1) return { kind: 'auto-adopt', guard: survivors[0]! };
-  return { kind: 'distinguish', survivors };
+  // ≥2 survivors: hand the author the SEPARATING WITNESS between each adjacent survivor pair (item 2)
+  // — the concrete reachable state that tells the variants apart — so `strengthen --name X` can render
+  // the choice and `--choose <op>` can adopt one. Reuses the same both-directions probe the
+  // equivalence prune ran, so a distinguish always has at least one witness per collapsed pair.
+  const witnesses: CaseState[] = [];
+  for (let i = 0; i + 1 < survivors.length; i++) {
+    const w = await separatingWitness(m, survivors[i]!, survivors[i + 1]!, machineAdopted, deps, reachSteps);
+    if (w) witnesses.push(w);
+  }
+  return { kind: 'distinguish', survivors, witnesses };
 }
 
-// Two guards SEPARATE iff some reachable (adopted-consistent) state satisfies one guard-predicate but
-// not the other — probed in BOTH directions, because a one-direction `a∧¬b` check is unsound: e.g.
-// a=`eq`, b=`le` has `eq∧¬le` empty yet `le∧¬eq` (= amountPaid<totalDue) reachable, so they DO
-// separate. Each direction is a `probe-permit` for a state where P∧¬Q holds (`not(P ⇒ Q)`), conjoined
-// with the adopted spec; `violated:true` ⇒ a separating state exists.
-async function separates(
+// The SEPARATING WITNESS between two guards: a reachable (adopted-consistent) state that satisfies one
+// guard-predicate but not the other — probed in BOTH directions, because a one-direction `a∧¬b` check
+// is unsound: e.g. a=`eq`, b=`le` has `eq∧¬le` empty yet `le∧¬eq` (= amountPaid<totalDue) reachable,
+// so they DO separate. Each direction is a `probe-permit` for a state where P∧¬Q holds (`not(P ⇒ Q)`),
+// conjoined with the adopted spec; `violated:true` with a `witness` ⇒ that witness separates them.
+// Returns the first direction's witness, else the other's, else null (the guards are equivalent).
+async function separatingWitness(
   m: DomainModel, a: Guard, b: Guard, adopted: Candidate[], deps: SolverDeps, steps: number,
-): Promise<boolean> {
+): Promise<CaseState | null> {
   const andNot = (p: Guard, q: Guard): Candidate => ({
     kind: 'statePredicate', aggregate: p.aggregate,
     body: { kind: 'not', arg: { kind: 'implies', left: p.predicate, right: q.predicate } },
   });
-  const dir = async (p: Guard, q: Guard): Promise<boolean> => {
+  const dir = async (p: Guard, q: Guard): Promise<CaseState | null> => {
     const r = await deps.quint(m, { kind: 'probe-permit', hi: andNot(p, q), exclusions: [], adopted, maxSteps: steps, abstractEvolution: true });
-    return r.violated;
+    return r.violated && r.witness ? r.witness : null;
   };
-  return (await dir(a, b)) || (await dir(b, a));
+  return (await dir(a, b)) ?? (await dir(b, a));
+}
+
+// Two guards SEPARATE iff a separating witness exists — the equivalence prune keeps a closer only if
+// it separates from every survivor already kept. Delegates to `separatingWitness` (same both-direction
+// probes) so the prune behavior is identical whether or not the witness is later surfaced.
+async function separates(
+  m: DomainModel, a: Guard, b: Guard, adopted: Candidate[], deps: SolverDeps, steps: number,
+): Promise<boolean> {
+  return !!(await separatingWitness(m, a, b, adopted, deps, steps));
 }

@@ -320,7 +320,8 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       question: { type: 'string' }, answer: { type: 'string' },
       lat: { type: 'string' }, 'dry-run': { type: 'boolean' }, 'no-classify': { type: 'boolean' },
       rename: { type: 'string', multiple: true }, 'force-remove': { type: 'string', multiple: true },
-      name: { type: 'string' }, workspace: { type: 'string' }, 'max-steps': { type: 'string' }, conjunct: { type: 'string' }
+      name: { type: 'string' }, workspace: { type: 'string' }, 'max-steps': { type: 'string' }, conjunct: { type: 'string' },
+      choose: { type: 'string' }
     }});
 
     if (cmd !== 'docs' && !values.session) return { error: 'missing-arg', arg: 'session' };
@@ -782,7 +783,35 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // peersExcludingParent's doc comment) — for a single-conjunct invariant this is a no-op
         // (vInv.candidate === target.inv.candidate, already excluded either way).
         const res = await strengthenInvariant(model(), vInv, peersExcludingParent(s, target.inv), deps, reachSteps ?? 6);
-        if (res.kind !== 'auto-adopt') return { strengthened: res, conjunct };   // finding/survivors — non-blocking (Task 6: distinguish UX)
+
+        // Interactive ≥2-survivor guard CHOICE (item 2). `--choose <op>` adopts the surviving variant
+        // whose predicate op the author picked — re-running the engine on the SAME target/peers as the
+        // no-`--choose` render, so the survivor set is identical to what was shown. Guards are NOT
+        // routed through the planner's nextQuestion/routeCandidate (those throw on the guard kind by
+        // design); the author selects via `--choose` against the engine's own separating probe.
+        if (values.choose !== undefined) {
+          if (res.kind !== 'distinguish') return { strengthened: res };   // situation changed since the render
+          const chosen = res.survivors.find(g => g.predicate.kind === 'cmp' && g.predicate.op === values.choose);
+          if (!chosen) return { error: 'invalid-arg', arg: 'choose', hint: `no surviving guard with op '${values.choose}'` };
+          adoptGuard(s, dir, chosen, 'strengthen-chose');
+          // Masking reclassify (§7.2 aggregate-scope), same pass the auto-adopt hook runs: the chosen
+          // guard can mask siblings over its aggregate, so reclassify the whole aggregate scope.
+          await classifyOnApply(dir, model(), s.candidates.filter(c => c.status === 'adopted').map(c => c.inv),
+            [...new Set([target.inv.name, ...aggregateScopedNames(s, chosen.aggregate)])], deps);
+          return done({ strengthened: { kind: 'auto-adopt', guard: chosen }, chose: values.choose });
+        }
+
+        // ≥2 survivors with no `--choose`: render the choice — each survivor named as the guard the
+        // hook/command would mint (guard_<transition>_<op>), plus the separating witness tables so the
+        // author can tell them apart. Adopts nothing; the author replies with `--choose <op>`.
+        if (res.kind === 'distinguish') {
+          return { strengthened: { kind: 'distinguish',
+            survivors: res.survivors.map(g => ({ name: `guard_${g.transition}_${(g.predicate as { op: string }).op}`,
+              op: (g.predicate as { op: string }).op, transition: g.transition })),
+            witnesses: res.witnesses.map(w => ({ table: renderWitnessTable(w, model().ticksPerDay) })) } };
+        }
+
+        if (res.kind !== 'auto-adopt') return { strengthened: res, conjunct };   // inconsistent/no-transition — non-blocking finding
 
         // auto-adopt: adopt the winning guard idempotently via the shared minting/ledger helper (same
         // ids/names the interactive hook produces). A no-op (already adopted) still returns the res.

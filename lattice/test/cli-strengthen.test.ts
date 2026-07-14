@@ -122,6 +122,79 @@ describe('engine strengthen CLI', () => {
     expect(adoptedGuardEntries[0].provenance).toMatch(/^strengthen /);
   });
 
+  // Item 2 (Task 6): interactive ≥2-survivor guard CHOICE. Scripts the strengthen probes (by call
+  // order, like scriptedDeps above) so eq + le both close the CTI and separate ⇒ two survivors ⇒
+  // `distinguish`. `quint` always returns a witness so separatingWitness yields a CaseState.
+  //   quintVerify order: [reachability(CTI+witness), closes-eq(closes), closes-le(closes), closes-ge(open)]
+  // Extra quintVerify calls (from the `--choose` reclassify pass, which runs AFTER the strengthen
+  // probes) fall past the array ⇒ default {violated:false} ⇒ harmless (entailed) — this suite proves
+  // wiring, not reclassify verdicts.
+  function distinguishDeps() {
+    let qvi = 0;
+    const quintVerifyResults = [
+      { violated: true, witness: ctiWitness },   // reachability: CTI confirmed
+      { violated: false },                       // closes-eq: closes
+      { violated: false },                       // closes-le: closes
+      { violated: true },                        // closes-ge: does NOT close
+    ];
+    const deps: any = {
+      alloy: async () => ({ sat: false, instances: [], ms: 0 }),
+      quint: async () => ({ violated: true, witness: ctiWitness, ms: 0 }),
+      quintVerify: async () => ({ ...(quintVerifyResults[qvi++] ?? { violated: false }), ms: 0 }),
+    };
+    return { deps };
+  }
+
+  it('distinguish: ≥2 survivors render as named guard choices with separating witness tables', async () => {
+    const dir = await setup();
+    const { deps } = distinguishDeps();
+    const r: any = await runCommand(['strengthen', '--session', dir, '--name', 'paidExact'], deps);
+
+    expect(r.strengthened.kind).toBe('distinguish');
+    expect(r.strengthened.survivors).toEqual([
+      { name: 'guard_settle_eq', op: 'eq', transition: 'settle' },
+      { name: 'guard_settle_le', op: 'le', transition: 'settle' },
+    ]);
+    expect(r.strengthened.witnesses.length).toBeGreaterThanOrEqual(1);
+    expect(typeof r.strengthened.witnesses[0].table).toBe('string');
+    expect(r.strengthened.witnesses[0].table.length).toBeGreaterThan(0);
+
+    // A distinguish render must NOT adopt anything — the author still has to choose.
+    const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
+    expect(st.candidates.some((c: any) => c.inv.candidate.kind === 'guard')).toBe(false);
+  });
+
+  it('--choose adopts the named surviving variant and returns an auto-adopt with `chose`', async () => {
+    const dir = await setup();
+    const { deps } = distinguishDeps();
+    const r: any = await runCommand(['strengthen', '--session', dir, '--name', 'paidExact', '--choose', 'le'], deps);
+
+    expect(r.chose).toBe('le');
+    expect(r.strengthened).toMatchObject({ kind: 'auto-adopt', guard: { transition: 'settle', predicate: { op: 'le' } } });
+
+    const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
+    const guard = st.candidates.find((c: any) => c.inv.candidate.kind === 'guard');
+    expect(guard?.status).toBe('adopted');
+    expect(guard.inv.id).toBe('guard-Invoice-settle-le');
+    expect(guard.inv.name).toBe('guard_settle_le');
+
+    const ledger = readFileSync(join(dir, 'ledger.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const adoptedGuardEntries = ledger.filter((e: any) => e.kind === 'adopted' && e.invariant.candidate.kind === 'guard');
+    expect(adoptedGuardEntries).toHaveLength(1);
+    expect(adoptedGuardEntries[0].provenance).toMatch(/^strengthen-chose /);
+  });
+
+  it('--choose naming a non-surviving op returns invalid-arg without adopting', async () => {
+    const dir = await setup();
+    const { deps } = distinguishDeps();
+    // `ge` was pruned (did not close the CTI) ⇒ not a survivor.
+    const r: any = await runCommand(['strengthen', '--session', dir, '--name', 'paidExact', '--choose', 'ge'], deps);
+    expect(r).toMatchObject({ error: 'invalid-arg', arg: 'choose' });
+
+    const st = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
+    expect(st.candidates.some((c: any) => c.inv.candidate.kind === 'guard')).toBe(false);
+  });
+
   it('a non auto-adopt Resolution (e.g. no-transition) is surfaced without mutating adopted candidates', async () => {
     const dir = await setup();
     // A reachability probe that reports no violation ⇒ 'no-transition' (nothing to strengthen) —
