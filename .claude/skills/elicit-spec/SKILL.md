@@ -30,7 +30,9 @@ before `init` and expensive after. Budget 1–2 of the ~15 questions for this.
 From the Phase 0a answers, PROPOSE a concrete structure and let them correct it:
 aggregates, entities, enums, lifecycle blocks/states (tag @active/@terminal), refs, field tags
 (@balance/@total/@monotonic on money-flow fields — these power auto-invariants). One question
-per message; multiple-choice when possible; the user judges, never authors. Budget ~15 questions.
+per message; multiple-choice when possible; the user judges, never authors. Budget ~20 questions
+across 0a/0/0b — and spend it, don't grow it: a question Phase 0b earned (a field the templates
+proved missing) is worth more than one you guessed at, so let it displace a weaker one.
 Record each structure Q&A via `engine structure --question ... --answer ...` as you go, so the
 ledger keeps a durable trace of how the structure was decided.
 
