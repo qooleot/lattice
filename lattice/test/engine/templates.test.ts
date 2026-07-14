@@ -46,8 +46,27 @@ describe('matchTemplates', () => {
   });
   it('#3 terminal for @terminal states', () =>
     expect(adopt.some(a => a.candidate.kind === 'terminal' && (a.candidate as any).state === 'Closed')).toBe(true));
-  it('#7 cardinality single-active when the tagged aggregate has no refs', () =>
-    expect(adopt.some(a => a.candidate.kind === 'cardinality' && a.candidate.aggregate === 'AccountingPeriod' && (a.candidate as any).atMost === 1)).toBe(true));
+  // Catalog (docs/plan.md §10.2 row 7) defines #7 as `@active` on a CHILD COLLECTION -> the
+  // per-parent `unique` form. The old no-refs arm fired when that trigger FAILED, asserting a
+  // platform-wide singleton from a shape coincidence. "No refs" was a discriminator fitted to
+  // revrecMini's AccountingPeriod, never a singleton signal. See the 2026-07-14 design doc.
+  it('#7 adopts NO cardinality for a refless @active aggregate', () =>
+    expect(adopt.some(a => a.candidate.kind === 'cardinality')).toBe(false));
+
+  it('#7 adopts no SingleActive_* for a refless @active aggregate in a multi-tenant shape', () => {
+    const billerModel: DomainModel = {
+      context: 'BillPayments', ticksPerDay: 24, enums: [], values: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Biller', fields: [
+        { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'name', type: { kind: 'prim', prim: 'Text' } }],
+        machine: { regions: [{ name: 'Lifecycle', initial: 'Active', states: [
+          { name: 'Active', tags: ['active'] }, { name: 'Retired', tags: ['terminal'] }] }], transitions: [] } }],
+      events: [], services: []
+    };
+    const r = matchTemplates(billerModel);
+    expect(r.adopt.map(a => a.name)).not.toContain('SingleActive_Biller');
+    expect(r.adopt.some(a => a.candidate.kind === 'cardinality')).toBe(false);
+  });
   it('#8 monotonic from @monotonic tag', () =>
     expect(adopt.some(a => a.candidate.kind === 'monotonic')).toBe(true));
   it('#9 refsResolve for owners with refs', () =>
