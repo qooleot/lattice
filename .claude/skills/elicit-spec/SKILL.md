@@ -57,7 +57,21 @@ init` (still you, no solver — each recorded as structure Q&A):
    if the question budget strains.
 
 When stable: `engine init --model <file>`. Fix any diagnostics by asking, not guessing.
-Present the auto-adopted template invariants as a list ("these come free — object to any?").
+Present the auto-adopted template invariants for objection — but NEVER as a bare list of template
+names. `SingleActive_Biller` is engine vocabulary; the user has no way to object to a name, so a
+name-list makes the objection step theater. For each one, state what it FORBIDS, in the user's
+own domain nouns, as a concrete case: "at most one Biller may be onboarding/active/suspended at
+any time — a second one is illegal". If you cannot state what a template forbids without using
+its template name, you do not understand it yet: read `lattice/src/engine/templates.ts` and find
+out before presenting it. Templates fire on structural coincidence, not domain truth (e.g.
+`SingleActive` fires whenever an aggregate has no ref fields, which silently asserts singleton-
+ness on any refless multi-tenant aggregate) — so audit each one against the domain YOURSELF and
+lead with the ones you suspect are wrong, rather than asking the user to find them for you.
+
+This generalizes: whenever a concept the user has not seen enters the conversation — a template
+name, an engine phase, a grammar kind, a solver artifact — either anchor it to a specific entity,
+field, or state change in THEIR domain, or explain it in one plain sentence before it appears in
+a question. The user judges domain truth; they cannot judge our vocabulary.
 All declared names (context, aggregates, entities, enums, fields, states, events) are code
 identifiers: PascalCase/camelCase, no spaces or punctuation — `engine init` rejects violations
 with `invalid-name`. The human-readable description of the domain goes in the model's `doc`
