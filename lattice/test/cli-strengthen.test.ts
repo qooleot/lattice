@@ -164,6 +164,20 @@ describe('engine strengthen CLI', () => {
     expect(st.candidates.some((c: any) => c.inv.candidate.kind === 'guard')).toBe(false);
   });
 
+  // Fix: the distinguish render must echo which conjunct it targeted. Without this, a caller
+  // replying `--choose <op>` with no `--conjunct` silently re-defaults to conjunct '0' — for a
+  // multi-conjunct invariant that's a DIFFERENT survivor set than the one just shown. Passing an
+  // explicit `--conjunct` here (even on this single-conjunct fixture) proves the value flows
+  // through to the top-level `conjunct` field on the response.
+  it('distinguish render echoes the targeted conjunct so a --choose follow-up can re-pass it', async () => {
+    const dir = await setup();
+    const { deps } = distinguishDeps();
+    const r: any = await runCommand(['strengthen', '--session', dir, '--name', 'paidExact', '--conjunct', '0'], deps);
+
+    expect(r.strengthened.kind).toBe('distinguish');
+    expect(r.conjunct).toBe('0');
+  });
+
   it('--choose adopts the named surviving variant and returns an auto-adopt with `chose`', async () => {
     const dir = await setup();
     const { deps } = distinguishDeps();
