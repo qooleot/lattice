@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { getSubscription, cancelSubscription } from './subscription-service.js';
 import { amountPaid, getInvoice, recordPayment, writeOffInvoice } from './billing-service.js';
+import { refreshAccountSummary } from './read-model.js';
 
 function failedAttempts(db: Database.Database, invoiceId: string): number {
   return (db.prepare(`SELECT COUNT(*) c FROM dunning_attempts WHERE invoice_id = ? AND outcome = 'failed'`)
@@ -17,6 +18,7 @@ export function recordPaymentFailure(db: Database.Database, invoiceId: string, n
     if (sub.lifecycle_state === 'active') {
       db.prepare(`UPDATE subscriptions SET lifecycle_state = 'past_due' WHERE id = ?`).run(sub.id);
     }
+    refreshAccountSummary(db, inv.subscription_id, now);
   })();
 }
 

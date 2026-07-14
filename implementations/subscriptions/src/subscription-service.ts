@@ -3,6 +3,7 @@ import { appendEvent } from './outbox.js';
 import { SUBSCRIPTION_ACTIVATED, SUBSCRIPTION_CANCELED } from './events.js';
 import { finalizeInvoice, getInvoice, recordPayment } from './billing-service.js';
 import { recordPaymentFailure } from './dunning.js';
+import { refreshAccountSummary } from './read-model.js';
 
 export interface SubscriptionRow {
   id: string; plan_code: string; seats: number; period_start: number; period_end: number;
@@ -33,6 +34,7 @@ export function createSubscription(db: Database.Database, a: CreateSubscriptionA
     db.prepare(`INSERT INTO invoices (id, subscription_id, license_fee_amount) VALUES (?,?,?)`)
       .run(invoiceId, a.id, a.licenseFeeAmount);
     db.prepare('UPDATE subscriptions SET current_invoice_id = ? WHERE id = ?').run(invoiceId, a.id);
+    refreshAccountSummary(db, a.id, 0);
   })();
 }
 
@@ -43,6 +45,7 @@ export function activate(db: Database.Database, subId: string): void {
     if (sub.paid_invoice_count < 1) throw new Error(`activate: ${subId} has no paid invoice yet`);
     db.prepare(`UPDATE subscriptions SET lifecycle_state = 'active' WHERE id = ?`).run(subId);
     appendEvent(db, SUBSCRIPTION_ACTIVATED, subId, { subId });
+    refreshAccountSummary(db, subId, 0);
   })();
 }
 
@@ -60,6 +63,7 @@ export function cancelSubscription(db: Database.Database, subId: string): void {
       throw new Error(`cancel: ${subId} is ${sub.lifecycle_state}`);
     db.prepare(`UPDATE subscriptions SET lifecycle_state = 'canceled' WHERE id = ?`).run(subId);
     appendEvent(db, SUBSCRIPTION_CANCELED, subId, { subId });
+    refreshAccountSummary(db, subId, 0);
   })();
 }
 
@@ -99,6 +103,7 @@ export function rolloverPeriod(db: Database.Database, subId: string, a: Rollover
       if (a.charge(closingId, closing.total_due)) recordPayment(db, closingId, closing.total_due, a.now);
       else recordPaymentFailure(db, closingId, a.now);
     }
+    refreshAccountSummary(db, subId, a.now);
   })();
 }
 

@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { appendEvent } from './outbox.js';
 import { INVOICE_FINALIZED, INVOICE_PAID } from './events.js';
 import { getSubscription } from './subscription-service.js';
+import { refreshAccountSummary } from './read-model.js';
 
 export interface InvoiceRow {
   id: string; subscription_id: string; license_fee_amount: number;
@@ -50,6 +51,7 @@ function settle(db: Database.Database, inv: InvoiceRow): void {
     // payment restored the account — silent recovery, no event
     db.prepare(`UPDATE subscriptions SET lifecycle_state = 'active' WHERE id = ?`).run(sub.id);
   }
+  refreshAccountSummary(db, inv.subscription_id, 0);
 }
 
 export function voidInvoice(db: Database.Database, invoiceId: string): void {
