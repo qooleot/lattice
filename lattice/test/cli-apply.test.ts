@@ -319,3 +319,75 @@ describe('engine apply: reclassify-on-apply (Task 4)', () => {
     expect(readClassifiedEntries(sessionDir)).toHaveLength(1);   // still just the one from the first apply
   });
 });
+
+describe('engine apply: guard-change staleness warning (item 3a)', () => {
+  // A machine-bearing spec: `close`'s guard is a `requires` clause on the transition itself, wholly
+  // separate from `unitsSane` (an invariant on the aggregate's fields). Editing ONLY the guard, with
+  // the invariant body untouched, is exactly the case reconcile's own doc comment flags as producing
+  // "no structural note at all" — nothing else would ever surface this edit.
+  const GUARD_SPEC = (op: string) => `context Mini {
+  aggregate Widget {
+    widgetId : Id key
+    units    : Int
+    lifecycle status {
+      states { active @initial, closed }
+      transition close { from active to closed; requires units ${op} 0 }
+    }
+    invariant unitsSane { units >= 0 }
+  }
+}
+`;
+
+  it('a guard-only edit (no invariant body changed) warns that classifications may be stale', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'lat-apply-guardwarn-'));
+    const latPath = join(fresh, 'spec.lat');
+    writeFileSync(latPath, GUARD_SPEC('>='));
+    const sessionDir = join(fresh, 'session');
+
+    const r1: any = await runCommand(['apply', '--session', sessionDir, '--lat', latPath, '--no-classify'], realDeps);
+    expect(r1.ok, JSON.stringify(r1)).toBe(true);
+    expect(r1.warnings.some((w: string) => w.includes('may be stale'))).toBe(false);   // fresh apply: nothing stored yet to diff against
+
+    // edit ONLY the transition's guard predicate — unitsSane's body is untouched
+    writeFileSync(latPath, GUARD_SPEC('>'));
+    const r2: any = await runCommand(['apply', '--session', sessionDir, '--lat', latPath, '--no-classify'], realDeps);
+    expect(r2.ok, JSON.stringify(r2)).toBe(true);
+    const warning = r2.warnings.find((w: string) => w.includes('may be stale'));
+    expect(warning, JSON.stringify(r2.warnings)).toBeDefined();
+    expect(warning).toContain('Widget.close');
+    expect(warning).toContain('run classify');
+  });
+
+  it('a no-op re-apply (guard unchanged) never warns', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'lat-apply-guardwarn-noop-'));
+    const latPath = join(fresh, 'spec.lat');
+    writeFileSync(latPath, GUARD_SPEC('>='));
+    const sessionDir = join(fresh, 'session');
+
+    const r1: any = await runCommand(['apply', '--session', sessionDir, '--lat', latPath, '--no-classify'], realDeps);
+    expect(r1.ok, JSON.stringify(r1)).toBe(true);
+
+    const r2: any = await runCommand(['apply', '--session', sessionDir, '--lat', latPath, '--no-classify'], realDeps);
+    expect(r2.ok, JSON.stringify(r2)).toBe(true);
+    expect(r2.warnings.some((w: string) => w.includes('may be stale'))).toBe(false);
+  });
+
+  it('a guard edit alongside an invariant-body edit on the SAME aggregate does not double-warn', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'lat-apply-guardwarn-adopted-'));
+    const latPath = join(fresh, 'spec.lat');
+    writeFileSync(latPath, GUARD_SPEC('>='));
+    const sessionDir = join(fresh, 'session');
+
+    const r1: any = await runCommand(['apply', '--session', sessionDir, '--lat', latPath, '--no-classify'], realDeps);
+    expect(r1.ok, JSON.stringify(r1)).toBe(true);
+
+    // change BOTH the guard AND the invariant body on Widget — the invariant edit already re-adopts
+    // (and classifyOnApply already reclassifies) this aggregate, so the guard-change warning is
+    // redundant noise here and must be suppressed.
+    const text = GUARD_SPEC('>').replace('units >= 0 }', 'units >= 1 }');
+    writeFileSync(latPath, text);
+    const r2: any = await runCommand(['apply', '--session', sessionDir, '--lat', latPath, '--no-classify'], realDeps);
+    expect(r2.ok, JSON.stringify(r2)).toBe(true);
+    expect(r2.warnings.some((w: string) => w.includes('may be stale'))).toBe(false);
+  });
+});

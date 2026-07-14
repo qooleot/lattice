@@ -321,6 +321,48 @@ describe('engine CLI', () => {
     expect(st.guardFindings).toEqual({ stuck: 1, unreachable: 0 });
   });
 
+  it('status counts only guard findings from the LATEST classify run (item 3b — clearing)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+
+    // Run 1 (earlier stamp): two sites flagged stuck.
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'stuck',
+      owner: 'Subscription', region: 'Access', state: 'Active', boundedN: 6, provenance: 'test', run: '2026-01-01T00:00:00.000Z' });
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'stuck',
+      owner: 'Subscription', region: 'Access', state: 'Ended', boundedN: 6, provenance: 'test', run: '2026-01-01T00:00:00.000Z' });
+    appendLedger(dir, { kind: 'guard-sweep', at: new Date().toISOString(), run: '2026-01-01T00:00:00.000Z' });
+
+    // Run 2 (later stamp, e.g. after a model edit + re-classify): the Active site cleared (no
+    // longer flagged); the Ended site is still stuck.
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'stuck',
+      owner: 'Subscription', region: 'Access', state: 'Ended', boundedN: 6, provenance: 'test', run: '2026-02-01T00:00:00.000Z' });
+    appendLedger(dir, { kind: 'guard-sweep', at: new Date().toISOString(), run: '2026-02-01T00:00:00.000Z' });
+
+    const st: any = await runCommand(['status', '--session', dir], fakeDeps);
+    // Only the LATEST run's findings count: the cleared Active site is gone, the still-present
+    // Ended site is counted once.
+    expect(st.guardFindings).toEqual({ stuck: 1, unreachable: 0 });
+  });
+
+  it('status resolves the latest classify run purely from guard-sweep markers, even when that run found nothing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+
+    // Run 1: one stuck finding.
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'stuck',
+      owner: 'Subscription', region: 'Access', state: 'Active', boundedN: 6, provenance: 'test', run: '2026-01-01T00:00:00.000Z' });
+    appendLedger(dir, { kind: 'guard-sweep', at: new Date().toISOString(), run: '2026-01-01T00:00:00.000Z' });
+
+    // Run 2: a full clean sweep — no guard-finding entries at all, only the sweep marker. Without
+    // the sweep marker anchoring "latest run", status would keep counting run 1's stale finding.
+    appendLedger(dir, { kind: 'guard-sweep', at: new Date().toISOString(), run: '2026-02-01T00:00:00.000Z' });
+
+    const st: any = await runCommand(['status', '--session', dir], fakeDeps);
+    expect(st.guardFindings).toEqual({ stuck: 0, unreachable: 0 });
+  });
+
   it('structure command appends a structure ledger entry and works pre-init', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cli-'));
     const r: any = await runCommand(['structure', '--session', dir, '--question', 'What are the aggregates?', '--answer', 'Subscription, Customer'], fakeDeps);

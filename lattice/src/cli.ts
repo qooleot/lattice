@@ -5,7 +5,7 @@ import type { DomainModel } from './ast/domain.js';
 import { validateModel } from './ast/validate.js';
 import { validateCandidate } from './ast/grammar.js';
 import type { CandidateInvariant, Candidate } from './ast/invariant.js';
-import { loadState, saveState, appendLedger, readLedger, readClassifications, readGuardFindings, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
+import { loadState, saveState, appendLedger, readLedger, readClassifications, readGuardFindings, readGuardSweeps, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
 import { matchTemplates } from './engine/templates.js';
 import { registerCandidates, pruneOnVerdict, admit } from './engine/hypothesis.js';
 import { nextQuestion, checkDistinct, adoptedConstraints, expressibleAdopted, type SolverDeps } from './engine/planner.js';
@@ -252,6 +252,35 @@ function aggregateScopedNames(s: SessionState, aggregate: string): string[] {
     .map(c => c.inv.name);
 }
 
+/** Guard-change staleness detector (item 3, sub-fix a): a transition's `requires` guard can change
+ *  on a hand-edit apply WITHOUT any invariant BODY changing — reconcile's `ledgerAppends` only
+ *  record invariant adoptions (a pure guard-predicate edit on an existing transition produces no
+ *  structural note at all today, per classifyOnApply's doc comment above), so a bare guard edit
+ *  leaves classifications silently stale: the classify machine's masking channel (I-1) changed, but
+ *  nothing in the reconcile/reclassify path re-triggers a classify run. Flags every `(aggregate,
+ *  transition)` whose `requires` differs between `storedModel` and `newModel`, EXCLUDING aggregates
+ *  that already had an invariant (re)adopted this apply — `classifyOnApply` already reclassifies
+ *  those, so a redundant warning there would just be noise. Transition add/remove counts as a guard
+ *  change too (the missing side's `requires` is treated as absent, via `?? null`). Compares by
+ *  `(aggregate.name, transition.name)`, not object identity — transitions can reorder across an edit
+ *  without that being a "change". */
+function guardChangeWarnings(storedModel: DomainModel, newModel: DomainModel, adoptedAggregates: Set<string>): string[] {
+  const warnings: string[] = [];
+  for (const a of newModel.aggregates) {
+    if (adoptedAggregates.has(a.name)) continue;
+    const oldAgg = storedModel.aggregates.find(o => o.name === a.name);
+    const oldTs = new Map((oldAgg?.machine?.transitions ?? []).map(t => [t.name, t]));
+    const newTs = new Map((a.machine?.transitions ?? []).map(t => [t.name, t]));
+    for (const tName of new Set([...oldTs.keys(), ...newTs.keys()])) {
+      const oldReq = JSON.stringify(oldTs.get(tName)?.requires ?? null);
+      const newReq = JSON.stringify(newTs.get(tName)?.requires ?? null);
+      if (oldReq !== newReq)
+        warnings.push(`classifications may be stale: guard changed on ${a.name}.${tName} — run classify`);
+    }
+  }
+  return warnings;
+}
+
 export function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
   const segs = path.split('.');
   const from = segs[segs.length - 1]!;
@@ -438,11 +467,26 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           else if (e.verdict === 'not-inductive') classifications.notInductive++;
           else if (e.verdict === 'violated') classifications.violated++;
         }
-        // guard-finding entries are append-only (each `classify` run appends fresh ones) — later
-        // entries supersede earlier ones for the same (owner, region, state, finding) site; keep
-        // only the latest per key before counting, same pattern as `classified` entries above.
+        // guard-finding entries are append-only (each `classify` run appends fresh ones) and NEVER
+        // individually retracted: a site that stops being flagged after a model edit + re-classify
+        // simply has no entry in the newest run, but its old entry is still sitting in the ledger.
+        // Latest-per-key dedup alone (below) would keep counting that stale entry forever, because
+        // "latest for its key" and "latest run overall" are different things once a site clears.
+        // Fix (item 3b, run-stamp approach): every `guard-finding` a bulk `classify` run appends
+        // shares one `run` stamp (see the `classify` case), and each such run also appends exactly
+        // one `guard-sweep` marker — including runs that find nothing — so the true latest run is
+        // always resolvable even when it cleared every site. Resolve the latest run from the sweep
+        // stream (ledger is append-only/chronological, so the last sweep IS the latest run), filter
+        // findings to that run, THEN dedup latest-per-key as a secondary guard (defensive: a single
+        // run should never repeat a key, but this keeps the invariant honest either way). Ledgers
+        // with no `guard-sweep` entries at all (pre-item-3, never re-classified since) fall back to
+        // the old un-filtered behavior — there is no run concept to anchor to.
+        const sweeps = readGuardSweeps(dir);
+        const latestRun = sweeps.length ? sweeps[sweeps.length - 1]!.run : undefined;
+        const allFindings = readGuardFindings(dir);
+        const currentFindings = latestRun !== undefined ? allFindings.filter(e => e.run === latestRun) : allFindings;
         const latestGuardByKey = new Map<string, ReturnType<typeof readGuardFindings>[number]>();
-        for (const e of readGuardFindings(dir)) latestGuardByKey.set(`${e.owner}::${e.region}::${e.state}::${e.finding}`, e);
+        for (const e of currentFindings) latestGuardByKey.set(`${e.owner}::${e.region}::${e.state}::${e.finding}`, e);
         const gf = [...latestGuardByKey.values()];
         const guardFindings = { stuck: gf.filter(e => e.finding === 'stuck').length,
                                  unreachable: gf.filter(e => e.finding === 'unreachable').length };
@@ -535,6 +579,15 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           confirmedRenames: renames, forceRemove: values['force-remove'] ?? [], at });
         const warnings = [...outcomeBase.warnings, ...r.warnings];
         if (!r.ok) return { error: 'refused', refusals: r.refusals, warnings };
+        // Guard-change staleness (item 3a): computed against the SAME `r.ledgerAppends` used below
+        // for `changedNames` — an aggregate that just had an invariant (re)adopted is already going
+        // to be reclassified by classifyOnApply, so it's excluded here regardless of --dry-run/
+        // --no-classify (the warning is about staleness that would OTHERWISE go undetected).
+        const adoptedAggregates = new Set(
+          r.ledgerAppends
+            .filter((e): e is Extract<LedgerEntry, { kind: 'adopted' }> => e.kind === 'adopted')
+            .map(e => (e.invariant.candidate as any).aggregate));
+        warnings.push(...guardChangeWarnings(storedModel, r.model, adoptedAggregates));
         if (values['dry-run']) return { ok: true, dryRun: true, applied: r.applied, warnings };
 
         s.model = r.model;
@@ -608,9 +661,21 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // solver-heavy command), persisted to the ledger for `status` to count and `explain`-adjacent
         // tooling to read back later.
         const guardFindings = await analyzeGuards(model(), deps, reachSteps);
+        // Run-stamp (item 3b): every guard-finding appended by THIS bulk-classify run shares one
+        // `run` timestamp, captured once so `status` can isolate "the latest run's findings" even
+        // though `guard-finding` entries are otherwise append-only and never cleared. A site that
+        // stops being flagged after a model edit + re-classify simply has no entry carrying the new
+        // max `run` stamp, so it silently drops out of the count — no explicit "cleared" marker
+        // needed. ISO timestamps sort lexicographically, so `run` is trivially comparable as a string.
+        const guardRun = now();
         for (const f of guardFindings)
           appendLedger(dir, { kind: 'guard-finding', at: now(), finding: f.finding, owner: f.owner,
-            region: f.region, state: f.state, witness: f.witness, boundedN: f.boundedN, provenance: `classify ${isoDay(now())}` });
+            region: f.region, state: f.state, witness: f.witness, boundedN: f.boundedN,
+            provenance: `classify ${isoDay(now())}`, run: guardRun });
+        // Sweep marker (item 3b): appended UNCONDITIONALLY, even when guardFindings is empty — a run
+        // that clears every previously-flagged site must still register as "the latest run" so
+        // `status` stops counting the stale ones (see readGuardSweeps's doc comment in session.ts).
+        appendLedger(dir, { kind: 'guard-sweep', at: now(), run: guardRun });
 
         // Interactive-loop strengthening hook (design §8.5-8.7, Task 6), bulk-only (mirrors the
         // guard-analysis gating above): for each ADOPTED invariant that just classified `violated`,

@@ -32,7 +32,15 @@ export type LedgerEntry =
       witness?: CaseState; reachable?: boolean; pinnedBy?: string[]; provenance: string }
   | { kind: 'guard-finding'; at: string; finding: 'stuck' | 'unreachable';
       owner: string; region: string; state: string; witness?: CaseState;
-      boundedN: number; provenance: string };
+      boundedN: number; provenance: string; run?: string }
+  // Run-stamp marker for guard-analysis clearing (item 3b): `guard-finding` entries are append-only
+  // and a run that clears EVERY previously-flagged site appends zero `guard-finding` entries — with
+  // no independent record of "a run happened", `run`-filtering `guard-finding` alone would keep
+  // treating the last NON-EMPTY run as latest and re-count stale findings forever. `classify`
+  // appends exactly one `guard-sweep` per bulk run (regardless of finding count), so `status` can
+  // always resolve the true latest `run` stamp from the sweep stream, then filter `guard-finding`s
+  // to it. Absent on old ledgers (pre-item-3) — status falls back to plain latest-per-key dedup.
+  | { kind: 'guard-sweep'; at: string; run: string };
 
 /** Calendar day of an ISO timestamp — the human-facing date in provenance and refusal text. */
 export const isoDay = (at: string): string => at.slice(0, 10);
@@ -67,4 +75,7 @@ export function readClassifications(dir: string): Extract<LedgerEntry, { kind: '
 }
 export function readGuardFindings(dir: string): Extract<LedgerEntry, { kind: 'guard-finding' }>[] {
   return readLedger(dir).filter((e): e is Extract<LedgerEntry, { kind: 'guard-finding' }> => e.kind === 'guard-finding');
+}
+export function readGuardSweeps(dir: string): Extract<LedgerEntry, { kind: 'guard-sweep' }>[] {
+  return readLedger(dir).filter((e): e is Extract<LedgerEntry, { kind: 'guard-sweep' }> => e.kind === 'guard-sweep');
 }
