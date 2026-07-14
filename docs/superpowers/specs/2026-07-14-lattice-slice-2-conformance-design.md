@@ -20,6 +20,36 @@ code, hand-maintained from day one, with **no anchored invariant checks of its o
 falsified or confirmed by **13 pre-registered drift experiments** (real edits on branches) plus a
 **zero-false-positive negative control**.
 
+**How drift is caught, at a high level.** The harness does NOT parse or reverse-engineer the
+implementation's TypeScript — static analysis of hand-written code is exactly the brittle,
+per-refactor-rotting approach §11.5 rejects. Instead it observes the implementation's **runtime
+behavior** through two read-only channels, then checks those observations against the spec:
+
+1. **The outbox event stream.** The impl already writes domain events (`SubscriptionActivated`,
+   `InvoicePaid`, …) to its `outbox` table inside each command's transaction — not for the
+   harness's benefit, but because the outbox is the service's own integration mechanism (plan §13:
+   the outbox IS the public event interface). The harness merely reads that table after the fact.
+   Zero instrumentation is added to running code, and the events cannot lie about ordering or
+   about surviving a rollback, because they commit (or don't) atomically with the state they
+   describe.
+2. **Direct state reads via `observe()`.** Events alone are NOT verbose enough for the rich
+   problem: only 4 of the 11 spec transitions emit events, and no event carries full aggregate
+   state, so an event-only checker would be blind to silent transitions and to state-level
+   invariants (`amountPaid <= totalDue`, uniqueness, cross-aggregate agreement). The second
+   channel therefore reads the impl's SQLite database directly — at quiescence (test teardown),
+   never mid-flight — and projects it into spec-shaped state via an auto-derived, self-checking
+   mapping (§4.1–4.3).
+
+Drift is then detected by two checks over those observations: **trace legality** (does the
+observed event sequence, anchored by observed initial/final states, correspond to a path the spec
+machine allows? — catches skipped/wrong/reordered emits and impossible state histories) and
+**invariant evaluation** (do the adopted invariants hold over every observed state? — catches
+weakened guards and corrupted state regardless of which code path, spec-known or not, produced
+them). Both channels are passive readers of artifacts the impl produces anyway, so the harness
+cannot perturb the code under test; and because it checks *behavior* rather than source text, a
+refactor that preserves behavior passes untouched while any edit that changes spec-visible
+behavior — however it is expressed in code — surfaces as an illegal trace or a violated invariant.
+
 ## 1. Fork resolutions (all human-approved 2026-07-14)
 
 | # | Fork | Resolution |
