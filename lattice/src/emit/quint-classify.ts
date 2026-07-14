@@ -23,6 +23,15 @@ export interface ClassifyQuery {
   peers: Candidate[];      // expressibleAdopted peers (never I)
   probe: 'consecution' | 'entailment';
   maxSteps: number;        // 1 for consecution; the reachability bound (reachSteps, default 6) for entailment
+  // Adopted GUARD candidates (design §8.3, I-1 fix): a guard is a transition-enablement assumption,
+  // not an always-property peer — candidateToQuint THROWS on the guard kind, so it can never be a
+  // `peer`. Its only channel into the machine is astToQuint's `adopted` slot, which conjoins each
+  // guard into its `trans_<Owner>_<transition>` action's enablement (quint.ts adoptedGuards). Without
+  // this channel the classify machine is guard-blind: a freshly-adopted guard reaches it through
+  // NEITHER `peers` NOR `adopted`, so the §8.4 masking reclassify is semantically inert on real quint
+  // (a guard-fixed invariant still classifies `violated`). Optional / defaults to none → a classify
+  // with no adopted guards emits a byte-identical machine to before (golden-safe).
+  guards?: Candidate[];    // guard-kind candidates only; ride into trans_ actions, never rendered as vals
 }
 
 export function astToQuintClassify(m: DomainModel, cq: ClassifyQuery): QuintEmission {
@@ -36,7 +45,13 @@ export function astToQuintClassify(m: DomainModel, cq: ClassifyQuery): QuintEmis
   // tested via consecution instead of trivially holding under frozen data. This flag is set ONLY
   // here — method-guard.ts's astToQuint call stays unflagged (its transition-guard check has no
   // use for accrual, and golden traces must stay byte-identical).
-  const base = astToQuint(m, { kind: 'probe-permit', hi: cq.invariant, exclusions: [], maxSteps: cq.maxSteps, abstractEvolution: true });
+  // Adopted guards ride in through astToQuint's `adopted` channel exactly as in strengthenInvariant's
+  // machineAdopted (I-1 fix): quint.ts filters guard-kind candidates into their `trans_` actions and
+  // any non-guard into the always-property conjunction. We pass ONLY guards here (peers are rendered
+  // separately below as the `peerK` / q_peersImpliesI vals), so the always-property section astToQuint
+  // emits stays empty and is discarded with the rest of its predicate section anyway — only the
+  // guard-bearing `trans_` actions in the sliced head survive.
+  const base = astToQuint(m, { kind: 'probe-permit', hi: cq.invariant, exclusions: [], maxSteps: cq.maxSteps, abstractEvolution: true, adopted: cq.guards ?? [] });
   const stepIdx = base.source.indexOf('\n  action step = any {');
   if (stepIdx < 0) throw new Error('astToQuintClassify: could not locate the `step` action in the base emission');
   const head = base.source.slice(0, base.source.indexOf('\n', stepIdx + 1));   // module through the `step` line

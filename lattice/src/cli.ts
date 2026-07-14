@@ -116,6 +116,13 @@ async function classifyAdopted(
   m: DomainModel, allAdopted: CandidateInvariant[], targets: CandidateInvariant[], deps: SolverDeps, reachSteps?: number,
 ): Promise<Classification[]> {
   const results: Classification[] = [];
+  // Adopted GUARD candidates (I-1 fix): guards are machine assumptions, not always-property peers —
+  // expressibleAdopted filters them out of `peers` (candidateToQuint throws on the guard kind), so
+  // they must be collected SEPARATELY and threaded into classifyInvariant's `guards` channel (which
+  // rides them into the classify machine's `trans_` actions). Mirrors strengthenInvariant keeping
+  // `machineAdopted` guards apart from its filtered `peers`. Without this the classify machine is
+  // guard-blind and the §8.4 masking reclassify is inert on real quint.
+  const guards = allAdopted.filter(a => a.candidate.kind === 'guard').map(a => a.candidate);
   for (const inv of targets) {
     const peerInvs = allAdopted.filter(a => a.id !== inv.id);
     const peers = expressibleAdopted('quint', peerInvs.map(p => p.candidate));
@@ -124,7 +131,7 @@ async function classifyAdopted(
     // conjunct and classify each separately, so the tier + caveat land per conjunct. A single-
     // conjunct invariant yields exactly one result with `conjunct` undefined (shape unchanged).
     for (const conj of conjunctsOf(inv.candidate)) {
-      results.push(await classifyInvariant(m, inv, conj, peers, peerNames, deps, reachSteps));
+      results.push(await classifyInvariant(m, inv, conj, peers, peerNames, deps, reachSteps, guards));
     }
   }
   return results;
@@ -602,7 +609,11 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // than just dropping them — most real sessions carry template-adopted structural invariants
         // of unclassifiable kinds (see comment above), and a silent drop looks identical to "nothing
         // else was adopted".
-        const skipped = adoptedTracked.filter(c => !classifiable.includes(c))
+        // M-3: adopted GUARDS are machine assumptions, not invariants — they live in `adoptedTracked`
+        // (so their effect rides into every classify machine) but are never `classifiable` themselves.
+        // Exclude them from `skipped`, which names UNCLASSIFIED *invariants* (template-adopted
+        // terminal/monotonic/leadsTo/refsResolve); a guard listed alongside them is a category error.
+        const skipped = adoptedTracked.filter(c => !classifiable.includes(c) && c.inv.candidate.kind !== 'guard')
           .map(c => ({ name: c.inv.name, kind: c.inv.candidate.kind }));
         return done({ classified: results, skipped, methodGuards, guardFindings, autoStrengthened });
       }

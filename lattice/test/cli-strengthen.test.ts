@@ -196,8 +196,16 @@ function hookDeps() {
   return { deps };
 }
 
-describe('engine classify interactive strengthening hook (bulk)', () => {
-  it('auto-strengthens a violated invariant: silently adopts the guard, reclassifies (masking), and surfaces it', async () => {
+// WIRING-ONLY (scripted solver): this proves the hook PLUMBING — a `violated` invariant fires the
+// hook, the winning guard is adopted idempotently with the right id/provenance, the §7.2 reclassify
+// pass is invoked over that invariant, and its result is surfaced under `autoStrengthened`. It does
+// NOT prove that the adopted guard actually rides into the classify machine and flips the verdict:
+// the reclassify verdict here is SCRIPTED by call-order (hookDeps returns `entailed` on the second
+// paidExact reachability probe regardless of whether the guard reached the machine). The real-quint
+// proof of the §8.4 masking behavior — that the guard channel makes paidExact reclassify `entailed`
+// on Apalache — lives in cli-strengthen.integration.test.ts (I-1). Do not read this as masking proof.
+describe('engine classify interactive strengthening hook (bulk, scripted wiring)', () => {
+  it('auto-strengthens a violated invariant: adopts the guard, invokes the reclassify pass, surfaces it', async () => {
     const dir = await setup();
     const { deps } = hookDeps();
     const r: any = await runCommand(['classify', '--session', dir], deps);
@@ -209,8 +217,8 @@ describe('engine classify interactive strengthening hook (bulk)', () => {
       invariant: 'paidExact', guard: 'guard_settle_eq',
       resolution: { kind: 'auto-adopt', guard: { transition: 'settle', predicate: { op: 'eq' } } },
     });
-    // Masking coverage (§8.4/§8.7): the reclassify pass re-ran for paidExact after the guard adoption
-    // (scripted to `entailed`), proving the §7.2 machinery is invoked over the forced invariant.
+    // Wiring assertion (scripted, NOT masking proof): the §7.2 reclassify pass re-ran for paidExact
+    // after the guard adoption and its (scripted) verdict is surfaced. Real masking proof: I-1 integ.
     expect(r.autoStrengthened[0].reclassified).toEqual([
       { invariant: 'paidExact', verdict: 'entailed', pinnedBy: expect.any(Array) },
     ]);

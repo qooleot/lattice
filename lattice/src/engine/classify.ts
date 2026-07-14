@@ -30,17 +30,21 @@ export const OVER_APPROX_CAVEAT = 'abstract-evolution over-approximation: the ac
 // tier gate run on the conjunct's own candidate.
 export async function classifyInvariant(
   m: DomainModel, inv: CandidateInvariant, conj: { candidate: Candidate; conjunct?: string },
-  peers: Candidate[], peerNames: string[], deps: SolverDeps, reachSteps = 6,
+  peers: Candidate[], peerNames: string[], deps: SolverDeps, reachSteps = 6, guards: Candidate[] = [],
 ): Promise<Classification> {
   const tier = conjunctTier(m, conj.candidate);
   const base = { invariant: inv.name, conjunct: conj.conjunct, tier };
+  // Adopted guards (I-1 fix) must ride into BOTH probes' machines: a guard changes the reachable state
+  // space, so it affects the consecution machine's `trans_` actions AND the reachability-from-init
+  // path. Passed through the `guards` channel (astToQuintClassify → astToQuint `adopted`), never as
+  // peers (candidateToQuint throws on the guard kind).
   // Probe 1 — consecution (havoc indInit asserts peers ∧ I; one step): is I 1-step inductive?
-  const cEm = astToQuintClassify(m, { invariant: conj.candidate, peers, probe: 'consecution', maxSteps: 1 });
+  const cEm = astToQuintClassify(m, { invariant: conj.candidate, peers, probe: 'consecution', maxSteps: 1, guards });
   const consec = await deps.quintVerify(cEm, { init: 'indInit', invariant: cEm.invariantName, maxSteps: 1 });
   const inductive = !consec.violated;
   // Probe 2 — reachability from the REAL init (region states = @initial, so guards gate the path):
   // is a peer-consistent ¬I reachable within reachSteps? q_peersImpliesI from `init`.
-  const rEm = astToQuintClassify(m, { invariant: conj.candidate, peers, probe: 'entailment', maxSteps: reachSteps });
+  const rEm = astToQuintClassify(m, { invariant: conj.candidate, peers, probe: 'entailment', maxSteps: reachSteps, guards });
   const reach = await deps.quintVerify(rEm, { init: 'init', invariant: 'q_peersImpliesI', maxSteps: reachSteps });
   if (reach.violated) return { ...base, verdict: 'violated', witness: reach.witness, reachable: true,
     ...(tier === 'abstract' ? { caveat: OVER_APPROX_CAVEAT } : {}) };
