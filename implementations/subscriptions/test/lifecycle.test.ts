@@ -69,5 +69,8 @@ describe('lifecycle', () => {
     expect(getSubscription(db, 'sub-1').lifecycle_state).toBe('canceled');
     expect(getInvoice(db, 'sub-1-inv-2').settlement_state).toBe('uncollectible');
     expect(eventTypes(db)).toContain('SubscriptionCanceled');
+    const summary = db.prepare('SELECT * FROM account_summary WHERE subscription_id = ?').get('sub-1') as any;
+    expect(summary.status).toBe('canceled');
+    expect(summary.open_balance).toBe(0); // write-off happened BEFORE the cancel refresh
   });
 });

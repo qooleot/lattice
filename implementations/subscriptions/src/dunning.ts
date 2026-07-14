@@ -36,8 +36,8 @@ export function runDunning(
       const inv = getInvoice(db, id);
       const sub = getSubscription(db, inv.subscription_id);
       if (failedAttempts(db, id) >= sub.max_retries) {
-        cancelSubscription(db, sub.id);
         writeOffInvoice(db, id);
+        cancelSubscription(db, sub.id);
         exhausted++;
         return;
       }
