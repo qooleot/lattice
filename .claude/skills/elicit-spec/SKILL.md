@@ -72,6 +72,7 @@ This generalizes: whenever a concept the user has not seen enters the conversati
 name, an engine phase, a grammar kind, a solver artifact — either anchor it to a specific entity,
 field, or state change in THEIR domain, or explain it in one plain sentence before it appears in
 a question. The user judges domain truth; they cannot judge our vocabulary.
+
 All declared names (context, aggregates, entities, enums, fields, states, events) are code
 identifiers: PascalCase/camelCase, no spaces or punctuation — `engine init` rejects violations
 with `invalid-name`. The human-readable description of the domain goes in the model's `doc`
