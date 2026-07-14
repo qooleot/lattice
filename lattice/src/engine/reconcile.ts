@@ -28,6 +28,20 @@ export type ReconcileOutcome =
   | { ok: false; refusals: Refusal[]; warnings: string[] };
 
 const cjson = (v: unknown) => canonicalCandidate(v);   // key-order-insensitive (review follow-up)
+
+/** Rehydrates freshly-parsed invariants' stable identity (id/prior/source) from a stored set,
+ *  matched by current name — a parsed .lat carries no id of its own (fromLangium mints a fresh
+ *  `hand-<name>` placeholder), so anything keyed on the session's stable id (ledger provenance
+ *  lookup, chiefly) needs it restored. Shared with generate/load.ts's loadGenInputFromLat, which
+ *  performs the same by-name lookup against a session's stored adopted candidates. */
+export function rehydrateIds(parsed: CandidateInvariant[], stored: CandidateInvariant[]): CandidateInvariant[] {
+  const storedByName = new Map(stored.map(i => [i.name, i]));
+  return parsed.map(i => {
+    const prev = storedByName.get(i.name);
+    return prev ? { ...i, id: prev.id, prior: prev.prior, source: prev.source } : i;
+  });
+}
+
 /** explicit ∪ implied under DERIVED names: explicit entries whose candidate matches an implied
  *  rule are replaced by the derived-name version. Without this, the pre-migration session (whose
  *  state.json still lists the 13 template invariants under old names) would diff as 13 renames
@@ -144,11 +158,7 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
 
   // adoption records for added/changed invariants (spec §5.5)
   const wids = verdicts.map(v => v.witnessId).join(', ');
-  const storedByName = new Map(normExplicit.map(i => [i.name, i]));
-  const adopted = parsed.invariants.map(i => {
-    const prev = storedByName.get(i.name);
-    return prev ? { ...i, id: prev.id, prior: prev.prior, source: prev.source } : i;
-  });
+  const adopted = rehydrateIds(parsed.invariants, normExplicit);
   for (const inv of changedOrAdded) {
     const final = adopted.find(a => a.name === inv.name) ?? inv;
     // structure-implied additions (spec §3.4) are derived, not hand-authored — they get NO

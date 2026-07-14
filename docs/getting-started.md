@@ -113,11 +113,15 @@ evidence from silently diverging.
 
 ```sh
 cd lattice && npx tsx src/cli.ts generate --session <session-dir> --out ../generated/<slug>
+# or, .lat-canonical: read the spec file directly, with the session ledger for provenance
+cd lattice && npx tsx src/cli.ts generate --spec ../specs/<slug>/spec.lat --ledger <session-dir> --out ../generated/<slug>
 ```
 
-(Flags as of this writing: `--session` and `--out` only. Check `lattice/src/cli.ts`'s `generate`
-case for the current flag set — a `--spec`-based variant that reads directly from a `.lat` file
-instead of a session may exist by the time you read this.)
+`generate` takes either `--session <dir>` or `--spec <spec.lat> [--ledger <sessionDir>]` (both
+together is an error). The two paths generate byte-identical output when the session and the
+`.lat` are in sync (pinned by `lattice/src/generate/latEquivalence.test.ts`); without `--ledger`
+the generated provenance comments read `from .lat (no ledger)` since there is no ledger to anchor
+to.
 
 Then run and exercise the generated service:
 

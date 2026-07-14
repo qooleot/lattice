@@ -29,7 +29,7 @@ import type { RenameSpec, RenameScope } from './engine/renames.js';
 import { renameEntries, currentInvariantName } from './engine/renames.js';
 import { compileWorkspace } from './engine/workspace.js';
 import { remapValueKeys } from './engine/witness.js';
-import { loadGenInput } from './generate/load.js';
+import { loadGenInput, loadGenInputFromLat, LatParseFailure } from './generate/load.js';
 import { generateService } from './generate/generate.js';
 
 // Both solver adapters hand back CaseStates with underscore-flattened value-field keys (design
@@ -340,10 +340,12 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       lat: { type: 'string' }, 'dry-run': { type: 'boolean' }, 'no-classify': { type: 'boolean' },
       rename: { type: 'string', multiple: true }, 'force-remove': { type: 'string', multiple: true },
       name: { type: 'string' }, workspace: { type: 'string' }, 'max-steps': { type: 'string' }, conjunct: { type: 'string' },
-      choose: { type: 'string' }
+      choose: { type: 'string' }, spec: { type: 'string' }, ledger: { type: 'string' }
     }});
 
-    if (cmd !== 'docs' && !values.session) return { error: 'missing-arg', arg: 'session' };
+    // generate has its own source-of-input pair (--spec [--ledger], the .lat-canonical path) as
+    // an alternative to --session — validated in the generate block below, not here.
+    if (cmd !== 'docs' && cmd !== 'generate' && !values.session) return { error: 'missing-arg', arg: 'session' };
     const dir = values.session!;
 
     switch (cmd) {
@@ -356,7 +358,12 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         break;
       case 'witness-show': if (!values.witness) return { error: 'missing-arg', arg: 'witness' }; break;
       case 'emit': if (!values.out) return { error: 'missing-arg', arg: 'out' }; break;
-      case 'generate': if (!values.out) return { error: 'missing-arg', arg: 'out' }; break;
+      case 'generate':
+        if (!values.out) return { error: 'missing-arg', arg: 'out' };
+        if (values.session && (values.spec || values.ledger))
+          return { error: 'invalid-args', message: "generate takes either --session or --spec [--ledger], not both" };
+        if (!values.session && !values.spec) return { error: 'missing-arg', arg: 'session or spec' };
+        break;
       case 'explain': if (!values.name) return { error: 'missing-arg', arg: 'name' }; break;
       case 'strengthen': if (!values.name) return { error: 'missing-arg', arg: 'name' }; break;
       case 'structure':
@@ -379,6 +386,19 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       startSync({ lat: values.lat!, mapPath, session: dir, deps,
         onOutcome: o => console.log(JSON.stringify(o)) });
       await new Promise(() => {});   // run until SIGINT
+    }
+
+    if (cmd === 'generate') {
+      try {
+        const input = values.spec
+          ? loadGenInputFromLat(values.spec, values.ledger)
+          : loadGenInput(values.session!);
+        const written = generateService(input, values.out!);
+        return { written };
+      } catch (err) {
+        if (err instanceof LatParseFailure) return { error: 'parse-failed', diagnostics: err.diagnostics };
+        throw err;
+      }
     }
 
     const s = loadState(dir);
@@ -519,13 +539,6 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         mkdirSync(values.out!, { recursive: true });
         const latPath = join(values.out!, 'spec.lat');
         const written = writeProjections(latPath, model(), adopted, ledger);
-        return { written };
-      }
-      case 'generate': {
-        const sessionDir = (values.session as string) ?? dir;
-        const input = loadGenInput(sessionDir);
-        const outDir = values.out!;
-        const written = generateService(input, outDir);
         return { written };
       }
       case 'apply': {

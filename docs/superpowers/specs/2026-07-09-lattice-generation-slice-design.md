@@ -33,6 +33,21 @@ against the AST type; the seam absorbs the transition. If `spec.json` emission d
 adding it to `engine emit` is the authorized small prerequisite (the derived cache slice 3 already
 calls for).
 
+**Seam closed (2026-07-14).** `loadGenInputFromLat(specLatPath, ledgerDir?)`
+(`lattice/src/generate/load.ts`) is the `parse(spec.lat)` variant this section called for: it parses
+`spec.lat` through the slice-3 parser (`parse/parse.ts` + `parse/fromLangium.ts`) for the model and
+invariants, and — when a session `ledgerDir` is given — rehydrates each parsed invariant to that
+session's stable ledger id by name (`engine/reconcile.ts`'s `rehydrateIds`, the same lookup `apply`
+already uses to reattach identity after a hand edit) so `plan.ts`'s existing id-keyed provenance
+lookup resolves unchanged. Without a `ledgerDir` there is no ledger to anchor to, so provenance
+reads the honest `from .lat (no ledger)` instead of silently reporting `none`. `engine generate`
+now accepts either `--session <dir>` (the original path) or `--spec <spec.lat> [--ledger
+<sessionDir>]`; a committed-artifacts equivalence test
+(`lattice/src/generate/latEquivalence.test.ts`) pins that both paths generate byte-identical output
+for `specs/subscriptions/`, i.e. that `emit`/`apply` really do keep the session and `spec.lat` in
+sync. `spec.json` was never built — parsing `spec.lat` text directly turned out to need no derived
+cache.
+
 ## 2. Generator architecture — `lattice/src/generate/`
 
 New sibling directory beside the engine (the engine is **not** forked). A **two-stage pipeline**:
