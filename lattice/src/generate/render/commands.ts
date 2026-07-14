@@ -2,6 +2,7 @@ import type { GenPlan, PlanAggregate, PlanInvariant, PlanTransition } from '../p
 import type { Field } from '../../ast/domain.js';
 import type { Term } from '../../ast/invariant.js';
 import { predToTs } from '../invariantCheck.js';
+import { qid } from './sql.js';
 
 // The generated check function name for an invariant (row-kind or table-kind). This is the single
 // shared source of truth: the render/invariants.ts renderer imports this exact function so the
@@ -71,7 +72,7 @@ function renderFlattenHelper(a: PlanAggregate, plan: GenPlan): string | undefine
     if (!target) throw new Error(`aggregate ${a.name} field '${refFieldName}' targets unknown aggregate '${targetName}'`);
     const targetKey = keyField(target);
     lines.push(
-      `  flat.${refFieldName} = db.prepare('SELECT * FROM ${targetName} WHERE ${targetKey} = ?').get(row.${refFieldName});`
+      `  flat.${refFieldName} = db.prepare('SELECT * FROM ${qid(targetName)} WHERE ${qid(targetKey)} = ?').get(row.${refFieldName});`
     );
   }
   lines.push(`  return flat;`);
@@ -136,7 +137,7 @@ function transitionHandler(a: PlanAggregate, t: PlanTransition, hasFlatten: bool
   }
   for (const c of tableChecks) {
     const anchors = c.anchors.length ? c.anchors : ['seed:template'];
-    lines.push(`    const rows_${c.name} = db.prepare('SELECT * FROM ${a.name}').all();`);
+    lines.push(`    const rows_${c.name} = db.prepare('SELECT * FROM ${qid(a.name)}').all();`);
     lines.push(
       `    if (!(${checkFnName(c.name)}(rows_${c.name}))) ` +
       `throw { rejected: 'invariant ${c.name}', anchors: ${JSON.stringify(anchors)} };`

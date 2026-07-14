@@ -29,3 +29,23 @@ export function checkNeverOverpaidAndPaidExact(row: any): boolean {
 export function checkOneDraftInvoicePerSubscription(rows: any[]): boolean {
   return ((() => { const seen = new Set(); for (const r of rows) { if (!(['draft'].includes(r.settlement))) continue; const k = r.subscription; if (seen.has(k)) return false; seen.add(k); } return true; })());
 }
+
+// spec: invariant nonNegativeInvoiceLicenseFeeAmount  [provenance: none; judged witnesses exercising aggregate Invoice: w1, w2, w3, w4, w5]
+export function checkNonNegativeInvoiceLicenseFeeAmount(row: any): boolean {
+  return (row.licenseFeeAmount >= 0);
+}
+
+// spec: invariant nonNegativeInvoiceUsageAmount  [provenance: none; judged witnesses exercising aggregate Invoice: w1, w2, w3, w4, w5]
+export function checkNonNegativeInvoiceUsageAmount(row: any): boolean {
+  return (row.usageAmount >= 0);
+}
+
+// spec: invariant nonNegativeInvoiceTotalDue  [provenance: none; judged witnesses exercising aggregate Invoice: w1, w2, w3, w4, w5]
+export function checkNonNegativeInvoiceTotalDue(row: any): boolean {
+  return (row.totalDue >= 0);
+}
+
+// spec: invariant nonNegativeInvoiceAmountPaid  [provenance: none; judged witnesses exercising aggregate Invoice: w1, w2, w3, w4, w5]
+export function checkNonNegativeInvoiceAmountPaid(row: any): boolean {
+  return (row.amountPaid >= 0);
+}

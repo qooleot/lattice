@@ -7,10 +7,10 @@ import { tinyInput } from '../fixtures.js';
 describe('renderDdl', () => {
   const ddl = renderDdl(buildPlan(tinyInput));
   it('creates the aggregate table with a primary key and state column', () => {
-    expect(ddl).toMatch(/CREATE TABLE Account/);
-    expect(ddl).toMatch(/accountId TEXT PRIMARY KEY/);
-    expect(ddl).toMatch(/balance INTEGER/);
-    expect(ddl).toMatch(/status TEXT NOT NULL/);
+    expect(ddl).toMatch(/CREATE TABLE "Account"/);
+    expect(ddl).toMatch(/"accountId" TEXT PRIMARY KEY/);
+    expect(ddl).toMatch(/"balance" INTEGER/);
+    expect(ddl).toMatch(/"status" TEXT NOT NULL/);
   });
   it('produces DDL that a real sqlite engine accepts', () => {
     const db = new Database(':memory:');

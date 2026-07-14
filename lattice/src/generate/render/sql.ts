@@ -1,6 +1,12 @@
 import type { GenPlan, PlanAggregate } from '../plan.js';
 import type { Field, TypeRef } from '../../ast/domain.js';
 
+/** Quote an identifier for SQLite. Names are already validated as [A-Za-z_][A-Za-z0-9_]* by
+ *  validateModel (no quotes/injection possible); quoting exists so spec names that collide with
+ *  SQL reserved words (Order, Group, Transaction, ...) generate valid DDL/DML — found live by the
+ *  pipeline-from-scratch test's `Order` aggregate. */
+export const qid = (name: string): string => `"${name}"`;
+
 function sqlType(t: TypeRef): 'TEXT' | 'INTEGER' {
   switch (t.kind) {
     case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? 'TEXT' : 'INTEGER'; // Int/Money/Date/Duration → INTEGER (ticks)
@@ -31,9 +37,9 @@ function assertNoColumnNameCollision(a: PlanAggregate): void {
 
 function tableDdl(a: PlanAggregate): string {
   assertNoColumnNameCollision(a);
-  const cols = a.fields.map((f: Field) => `  ${f.name} ${sqlType(f.type)}${f.key ? ' PRIMARY KEY' : ''}`);
-  for (const r of a.regions) cols.push(`  ${r.name} TEXT NOT NULL`);
-  return `-- spec: aggregate ${a.name}\nCREATE TABLE ${a.name} (\n${cols.join(',\n')}\n);\n`;
+  const cols = a.fields.map((f: Field) => `  ${qid(f.name)} ${sqlType(f.type)}${f.key ? ' PRIMARY KEY' : ''}`);
+  for (const r of a.regions) cols.push(`  ${qid(r.name)} TEXT NOT NULL`);
+  return `-- spec: aggregate ${a.name}\nCREATE TABLE ${qid(a.name)} (\n${cols.join(',\n')}\n);\n`;
 }
 
 export function renderDdl(plan: GenPlan): string {

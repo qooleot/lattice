@@ -46,7 +46,7 @@ export function rehydrateIds(parsed: CandidateInvariant[], stored: CandidateInva
  *  rule are replaced by the derived-name version. Without this, the pre-migration session (whose
  *  state.json still lists the 13 template invariants under old names) would diff as 13 renames
  *  on every apply. Ledger adopted entries keep the old names — explain still finds them. */
-function canonicalSet(model: DomainModel, explicit: CandidateInvariant[]): CandidateInvariant[] {
+export function canonicalSet(model: DomainModel, explicit: CandidateInvariant[]): CandidateInvariant[] {
   const derived = impliedInvariants(model);
   const derivedShapes = new Set(derived.map(d => cjson(d.candidate)));
   return [...explicit.filter(i => !derivedShapes.has(cjson(i.candidate))), ...derived];

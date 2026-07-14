@@ -1,5 +1,6 @@
 import type { GenPlan, PlanAggregate } from '../plan.js';
 import type { Field } from '../../ast/domain.js';
+import { qid } from './sql.js';
 
 // The Account row's own-column names, in DDL/type order: fields, then region-state columns.
 function columns(a: PlanAggregate): string[] {
@@ -15,19 +16,19 @@ function keyField(a: PlanAggregate): string {
 function aggregateRepo(a: PlanAggregate): string {
   const key = keyField(a);
   const cols = columns(a);
-  const insertCols = cols.join(', ');
+  const insertCols = cols.map(qid).join(', ');
   const insertParams = cols.map(c => `@${c}`).join(', ');
-  const updateSet = cols.filter(c => c !== key).map(c => `${c}=@${c}`).join(', ');
+  const updateSet = cols.filter(c => c !== key).map(c => `${qid(c)}=@${c}`).join(', ');
   return (
     `// spec: aggregate ${a.name}\n` +
     `export function get${a.name}(db: Database.Database, id: string): ${a.name} | undefined {\n` +
-    `  return db.prepare('SELECT * FROM ${a.name} WHERE ${key} = ?').get(id) as ${a.name} | undefined;\n` +
+    `  return db.prepare('SELECT * FROM ${qid(a.name)} WHERE ${qid(key)} = ?').get(id) as ${a.name} | undefined;\n` +
     `}\n` +
     `export function insert${a.name}(db: Database.Database, row: ${a.name}): void {\n` +
-    `  db.prepare('INSERT INTO ${a.name} (${insertCols}) VALUES (${insertParams})').run(row);\n` +
+    `  db.prepare('INSERT INTO ${qid(a.name)} (${insertCols}) VALUES (${insertParams})').run(row);\n` +
     `}\n` +
     `export function update${a.name}(db: Database.Database, row: ${a.name}): void {\n` +
-    `  db.prepare('UPDATE ${a.name} SET ${updateSet} WHERE ${key}=@${key}').run(row);\n` +
+    `  db.prepare('UPDATE ${qid(a.name)} SET ${updateSet} WHERE ${qid(key)}=@${key}').run(row);\n` +
     `}\n`
   );
 }

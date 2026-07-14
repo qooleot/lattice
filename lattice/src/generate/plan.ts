@@ -2,6 +2,7 @@ import type { GenInput } from './types.js';
 import type { AggregateDef, EventDef, Field, Region, TransitionDef } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate } from '../ast/invariant.js';
 import type { LedgerEntry } from '../engine/session.js';
+import { canonicalSet } from '../engine/reconcile.js';
 
 export interface Anchors { specElement: string; provenance: string[]; witnessIds: string[]; }
 export interface PlanInvariant { name: string; doc?: string; candidate: Candidate; aggregate: string; anchors: Anchors; }
@@ -23,7 +24,20 @@ function invariantAnchors(name: string, id: string, ledger: LedgerEntry[]): Anch
 
 export function buildPlan(input: GenInput): GenPlan {
   const { model, adopted, ledger } = input;
-  const byAgg = (agg: string): CandidateInvariant[] => adopted.filter(i => i.candidate.aggregate === agg);
+  // explicit ∪ implied at the single generation gate: derived-class invariants (Money
+  // non-negativity, terminal, refsResolve, value laws) are implied by the model and never stored
+  // in post-migration sessions nor printed in .lat — without this union, generated services
+  // enforced NO derived invariant (found live by the pipeline-from-scratch test: a negative
+  // Money balance committed cleanly). Renderers still compile only the kinds they support
+  // (statePredicate rows, unique tables); implied entries of other kinds pass through harmlessly.
+  // Implied entries of kinds the v1 compiler doesn't support (terminal, refsResolve — the
+  // documented design-§5 boundary) are excluded here rather than failing compileInvariantCheck
+  // loud: they are auto-derived, not user-adopted, so silently-not-enforced is the recorded v1
+  // scope, while an EXPLICITLY adopted unsupported kind still fails loud downstream by design.
+  const GEN_COMPILABLE = new Set(['statePredicate', 'unique']);
+  const canonical = canonicalSet(model, adopted)
+    .filter(i => !i.id.startsWith('implied-') || GEN_COMPILABLE.has(i.candidate.kind));
+  const byAgg = (agg: string): CandidateInvariant[] => canonical.filter(i => i.candidate.aggregate === agg);
   const verdicts = ledger.filter((e): e is Extract<LedgerEntry, { kind: 'verdict' }> => e.kind === 'verdict');
 
   const aggregates: PlanAggregate[] = model.aggregates.map((a: AggregateDef) => {

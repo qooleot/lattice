@@ -3,11 +3,11 @@
 import type Database from 'better-sqlite3';
 import { getSubscription, updateSubscription, getInvoice, updateInvoice, appendOutbox } from './repo.js';
 export * from './repo.js';
-import { checkPositivePeriodNonNegativeUsage, checkActivePaidInFull, checkRetryCapWhilePastDue, checkTotalDueAtMostParts, checkNeverOverpaidAndPaidExact, checkOneDraftInvoicePerSubscription } from './invariants.js';
+import { checkPositivePeriodNonNegativeUsage, checkActivePaidInFull, checkRetryCapWhilePastDue, checkTotalDueAtMostParts, checkNeverOverpaidAndPaidExact, checkNonNegativeInvoiceLicenseFeeAmount, checkNonNegativeInvoiceUsageAmount, checkNonNegativeInvoiceTotalDue, checkNonNegativeInvoiceAmountPaid, checkOneDraftInvoicePerSubscription } from './invariants.js';
 
 export function flattenForChecks(db: Database.Database, row: any): any {
   const flat: any = { ...row };
-  flat.latestInvoice = db.prepare('SELECT * FROM Invoice WHERE invoiceId = ?').get(row.latestInvoice);
+  flat.latestInvoice = db.prepare('SELECT * FROM "Invoice" WHERE "invoiceId" = ?').get(row.latestInvoice);
   return flat;
 }
 
@@ -133,7 +133,11 @@ export function finalize(db: Database.Database, id: string): { ok: true; event?:
     updateInvoice(db, row);
     if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };
     if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
-    const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
+    if (!(checkNonNegativeInvoiceLicenseFeeAmount(row))) throw { rejected: 'invariant nonNegativeInvoiceLicenseFeeAmount', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceUsageAmount(row))) throw { rejected: 'invariant nonNegativeInvoiceUsageAmount', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceTotalDue(row))) throw { rejected: 'invariant nonNegativeInvoiceTotalDue', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceAmountPaid(row))) throw { rejected: 'invariant nonNegativeInvoiceAmountPaid', anchors: ["seed:template"] };
+    const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM "Invoice"').all();
     if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     appendOutbox(db, 'InvoiceFinalized', id, { invoiceId: row.invoiceId });
     return 'InvoiceFinalized';
@@ -153,7 +157,11 @@ export function settle(db: Database.Database, id: string): { ok: true; event?: s
     updateInvoice(db, row);
     if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };
     if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
-    const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
+    if (!(checkNonNegativeInvoiceLicenseFeeAmount(row))) throw { rejected: 'invariant nonNegativeInvoiceLicenseFeeAmount', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceUsageAmount(row))) throw { rejected: 'invariant nonNegativeInvoiceUsageAmount', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceTotalDue(row))) throw { rejected: 'invariant nonNegativeInvoiceTotalDue', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceAmountPaid(row))) throw { rejected: 'invariant nonNegativeInvoiceAmountPaid', anchors: ["seed:template"] };
+    const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM "Invoice"').all();
     if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     appendOutbox(db, 'InvoicePaid', id, { invoiceId: row.invoiceId });
     return 'InvoicePaid';
@@ -172,7 +180,11 @@ export function voidDraft(db: Database.Database, id: string): { ok: true; event?
     updateInvoice(db, row);
     if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };
     if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
-    const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
+    if (!(checkNonNegativeInvoiceLicenseFeeAmount(row))) throw { rejected: 'invariant nonNegativeInvoiceLicenseFeeAmount', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceUsageAmount(row))) throw { rejected: 'invariant nonNegativeInvoiceUsageAmount', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceTotalDue(row))) throw { rejected: 'invariant nonNegativeInvoiceTotalDue', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceAmountPaid(row))) throw { rejected: 'invariant nonNegativeInvoiceAmountPaid', anchors: ["seed:template"] };
+    const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM "Invoice"').all();
     if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     return undefined;
   });
@@ -190,7 +202,11 @@ export function voidOpen(db: Database.Database, id: string): { ok: true; event?:
     updateInvoice(db, row);
     if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };
     if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
-    const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
+    if (!(checkNonNegativeInvoiceLicenseFeeAmount(row))) throw { rejected: 'invariant nonNegativeInvoiceLicenseFeeAmount', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceUsageAmount(row))) throw { rejected: 'invariant nonNegativeInvoiceUsageAmount', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceTotalDue(row))) throw { rejected: 'invariant nonNegativeInvoiceTotalDue', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceAmountPaid(row))) throw { rejected: 'invariant nonNegativeInvoiceAmountPaid', anchors: ["seed:template"] };
+    const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM "Invoice"').all();
     if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     return undefined;
   });
@@ -208,7 +224,11 @@ export function writeOff(db: Database.Database, id: string): { ok: true; event?:
     updateInvoice(db, row);
     if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };
     if (!(checkNeverOverpaidAndPaidExact(row))) throw { rejected: 'invariant neverOverpaidAndPaidExact', anchors: ["elicited (w1, w2, w3)"] };
-    const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM Invoice').all();
+    if (!(checkNonNegativeInvoiceLicenseFeeAmount(row))) throw { rejected: 'invariant nonNegativeInvoiceLicenseFeeAmount', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceUsageAmount(row))) throw { rejected: 'invariant nonNegativeInvoiceUsageAmount', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceTotalDue(row))) throw { rejected: 'invariant nonNegativeInvoiceTotalDue', anchors: ["seed:template"] };
+    if (!(checkNonNegativeInvoiceAmountPaid(row))) throw { rejected: 'invariant nonNegativeInvoiceAmountPaid', anchors: ["seed:template"] };
+    const rows_oneDraftInvoicePerSubscription = db.prepare('SELECT * FROM "Invoice"').all();
     if (!(checkOneDraftInvoicePerSubscription(rows_oneDraftInvoicePerSubscription))) throw { rejected: 'invariant oneDraftInvoicePerSubscription', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
     return undefined;
   });

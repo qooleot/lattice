@@ -145,3 +145,6 @@ the whole transaction back. See `generated/subscriptions/demo.ts` for the real e
   at `docs/superpowers/specs/2026-07-05-lattice-slice-2-conformance-brief.md`. Also not built: an
   app/UI beyond the Claude Code skill + CLI — brief at
   `docs/superpowers/specs/2026-07-05-lattice-app-ui-brief.md`.
+
+The whole path you just walked is pinned by `lattice/test/pipeline-from-scratch.test.ts` — a
+single test that elicits, emits, round-trips, generates, and executes a service from scratch.
