@@ -8,12 +8,13 @@ function failedAttempts(db: Database.Database, invoiceId: string): number {
     .get(invoiceId) as { c: number }).c;
 }
 
+// An initial payment decline (e.g. on rollover) marks the subscription past_due but is
+// NOT itself a retry attempt: only dunning sweeps (see runDunning's failure branch) insert
+// dunning_attempts rows.
 export function recordPaymentFailure(db: Database.Database, invoiceId: string, now: number): void {
   db.transaction(() => {
     const inv = getInvoice(db, invoiceId);
     if (inv.settlement_state !== 'open') throw new Error(`payment failure on non-open invoice ${invoiceId}`);
-    db.prepare(`INSERT INTO dunning_attempts (invoice_id, attempted_at, outcome) VALUES (?,?,'failed')`)
-      .run(invoiceId, now);
     const sub = getSubscription(db, inv.subscription_id);
     if (sub.lifecycle_state === 'active') {
       db.prepare(`UPDATE subscriptions SET lifecycle_state = 'past_due' WHERE id = ?`).run(sub.id);

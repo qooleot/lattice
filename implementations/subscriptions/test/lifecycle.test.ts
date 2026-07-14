@@ -52,6 +52,7 @@ describe('lifecycle', () => {
                 VALUES ('sub-1-inv-2','sub-1',5000,0,5000,'open')`).run();
     recordPaymentFailure(db, 'sub-1-inv-2', 2_100);
     expect(getSubscription(db, 'sub-1').lifecycle_state).toBe('past_due');
+    expect((db.prepare('SELECT COUNT(*) c FROM dunning_attempts').get() as any).c).toBe(0); // initial decline != attempt
     const r = runDunning(db, 2_200, () => true);
     expect(r).toEqual({ attempted: 1, exhausted: 0 });
     expect(getSubscription(db, 'sub-1').lifecycle_state).toBe('active');
@@ -63,9 +64,10 @@ describe('lifecycle', () => {
     activate(db, 'sub-1');
     db.prepare(`INSERT INTO invoices (id, subscription_id, license_fee_amount, usage_amount, total_due, settlement_state)
                 VALUES ('sub-1-inv-2','sub-1',5000,0,5000,'open')`).run();
-    recordPaymentFailure(db, 'sub-1-inv-2', 2_100);       // attempt 1
-    expect(runDunning(db, 2_200, () => false)).toEqual({ attempted: 1, exhausted: 0 }); // attempt 2
-    expect(runDunning(db, 2_300, () => false)).toEqual({ attempted: 0, exhausted: 1 }); // cap reached
+    recordPaymentFailure(db, 'sub-1-inv-2', 2_100);       // initial decline: 0 attempts, not a retry
+    expect(runDunning(db, 2_200, () => false)).toEqual({ attempted: 1, exhausted: 0 }); // attempt 1
+    expect(runDunning(db, 2_300, () => false)).toEqual({ attempted: 1, exhausted: 0 }); // attempt 2
+    expect(runDunning(db, 2_400, () => false)).toEqual({ attempted: 0, exhausted: 1 }); // cap reached (2 >= maxRetries 2)
     expect(getSubscription(db, 'sub-1').lifecycle_state).toBe('canceled');
     expect(getInvoice(db, 'sub-1-inv-2').settlement_state).toBe('uncollectible');
     expect(eventTypes(db)).toContain('SubscriptionCanceled');

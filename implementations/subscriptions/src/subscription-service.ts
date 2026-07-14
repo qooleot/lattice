@@ -3,6 +3,7 @@ import { appendEvent } from './outbox.js';
 import { SUBSCRIPTION_ACTIVATED, SUBSCRIPTION_CANCELED } from './events.js';
 import { finalizeInvoice, getInvoice, recordPayment } from './billing-service.js';
 import { refreshAccountSummary } from './read-model.js';
+import { recordPaymentFailure } from './dunning.js';
 
 export interface SubscriptionRow {
   id: string; plan_code: string; seats: number; period_start: number; period_end: number;
@@ -100,10 +101,7 @@ export function rolloverPeriod(db: Database.Database, subId: string, a: Rollover
     if (needsBilling) {
       const closing = getInvoice(db, closingId);
       if (a.charge(closingId, closing.total_due)) recordPayment(db, closingId, closing.total_due, a.now);
-      else {
-        // Initial charge failure: mark past_due silently (no dunning_attempt record yet)
-        db.prepare(`UPDATE subscriptions SET lifecycle_state = 'past_due' WHERE id = ?`).run(subId);
-      }
+      else recordPaymentFailure(db, closingId, a.now);
     }
     refreshAccountSummary(db, subId, a.now);
   })();
