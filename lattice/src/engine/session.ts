@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { CandidateInvariant } from '../ast/invariant.js';
 import type { DomainModel } from '../ast/domain.js';
 import type { CaseState } from './evaluate.js';
+import type { MethodGuardVerdict } from './method-guard.js';
 
 export interface SalientFact { dim: string; value: string | number | boolean }
 export type CandidateStatus = 'active' | 'pruned' | 'merged' | 'refuted' | 'adopted' | 'parked';
@@ -46,7 +47,7 @@ export type LedgerEntry =
   // survived to the ledger for `status` to count or later tooling to read back. One entry per
   // (service, method) result, append-only like `classified`/`guard-finding` — `status` dedups
   // latest-per-`service::method` before counting.
-  | { kind: 'method-guard'; at: string; service: string; method: string; verdict: string; reachable?: boolean; provenance: string };
+  | { kind: 'method-guard'; at: string; service: string; method: string; verdict: MethodGuardVerdict; reachable?: boolean; provenance: string };
 
 /** Calendar day of an ISO timestamp — the human-facing date in provenance and refusal text. */
 export const isoDay = (at: string): string => at.slice(0, 10);

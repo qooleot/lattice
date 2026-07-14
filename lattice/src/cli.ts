@@ -12,7 +12,7 @@ import { nextQuestion, checkDistinct, adoptedConstraints, expressibleAdopted, ty
 import { classifyInvariant, type Classification } from './engine/classify.js';
 import { strengthenInvariant } from './engine/strengthen.js';
 import { conjunctsOf } from './engine/tier.js';
-import { checkMethodGuard } from './engine/method-guard.js';
+import { checkMethodGuard, type MethodGuardVerdict } from './engine/method-guard.js';
 import { analyzeGuards } from './engine/guard-analysis.js';
 import { renderWitnessTable } from './engine/salient.js';
 import { astToAlloy } from './emit/alloy.js';
@@ -143,8 +143,8 @@ async function classifyAdopted(
  *  the fast read-only `status` path. Each check is two real `quint verify` probes at --max-steps 0. */
 async function checkAllMethodGuards(
   m: DomainModel, deps: SolverDeps,
-): Promise<{ service: string; method: string; verdict: string; reachable?: boolean }[]> {
-  const out: { service: string; method: string; verdict: string; reachable?: boolean }[] = [];
+): Promise<{ service: string; method: string; verdict: MethodGuardVerdict; reachable?: boolean }[]> {
+  const out: { service: string; method: string; verdict: MethodGuardVerdict; reachable?: boolean }[] = [];
   for (const svc of m.services) {
     for (const mm of svc.methods) {
       if (!('performs' in mm.kind)) continue;
@@ -239,8 +239,10 @@ function conjunctTarget(inv: CandidateInvariant, conjunct?: string): CandidateIn
  *  masking a real violation as `no-transition` (confirmed on real quint: leaving the parent in
  *  `adopted` for the settle-guard-stripped `neverOverpaidAndPaidExact` conjunct 1 reports
  *  `no-transition`, filtering it out reports `auto-adopt`). */
-function peersExcludingParent(s: SessionState, inv: CandidateInvariant): Candidate[] {
-  return adoptedConstraints(s).filter(c => c !== inv.candidate);
+export function peersExcludingParent(s: SessionState, inv: CandidateInvariant): Candidate[] {
+  return s.candidates
+    .filter(c => c.status === 'adopted' && c.inv.id !== inv.id)
+    .map(c => c.inv.candidate);
 }
 
 /** Every adopted (non-guard) invariant name scoped to `aggregate` — the reclassify dependency set
@@ -263,8 +265,12 @@ function aggregateScopedNames(s: SessionState, aggregate: string): string[] {
  *  those, so a redundant warning there would just be noise. Transition add/remove counts as a guard
  *  change too (the missing side's `requires` is treated as absent, via `?? null`). Compares by
  *  `(aggregate.name, transition.name)`, not object identity — transitions can reorder across an edit
- *  without that being a "change". */
-function guardChangeWarnings(storedModel: DomainModel, newModel: DomainModel, adoptedAggregates: Set<string>): string[] {
+ *  without that being a "change". Compares `requires` via `canonicalCandidate` (key-order-insensitive
+ *  JSON, same helper `diff.ts`/`reconcile.ts` use as `cjson`) rather than raw `JSON.stringify`, so a
+ *  key-order difference between two structurally-identical parses of the same predicate can't fire a
+ *  spurious "guard changed" warning. This does NOT fix the transition-rename false-positive (a rename
+ *  looks like remove+add) — that needs transition-rename support in `diff.ts` and stays a follow-up. */
+export function guardChangeWarnings(storedModel: DomainModel, newModel: DomainModel, adoptedAggregates: Set<string>): string[] {
   const warnings: string[] = [];
   for (const a of newModel.aggregates) {
     if (adoptedAggregates.has(a.name)) continue;
@@ -272,13 +278,26 @@ function guardChangeWarnings(storedModel: DomainModel, newModel: DomainModel, ad
     const oldTs = new Map((oldAgg?.machine?.transitions ?? []).map(t => [t.name, t]));
     const newTs = new Map((a.machine?.transitions ?? []).map(t => [t.name, t]));
     for (const tName of new Set([...oldTs.keys(), ...newTs.keys()])) {
-      const oldReq = JSON.stringify(oldTs.get(tName)?.requires ?? null);
-      const newReq = JSON.stringify(newTs.get(tName)?.requires ?? null);
+      const oldReq = canonicalCandidate(oldTs.get(tName)?.requires ?? null);
+      const newReq = canonicalCandidate(newTs.get(tName)?.requires ?? null);
       if (oldReq !== newReq)
         warnings.push(`classifications may be stale: guard changed on ${a.name}.${tName} — run classify`);
     }
   }
   return warnings;
+}
+
+/** Guard-findings from the LATEST guard-analysis sweep only (item 3b) — a finding cleared by a
+ *  later re-classify stops appearing. Shared by `status` counts and `explain` detail so they agree. */
+function currentGuardFindings(dir: string): ReturnType<typeof readGuardFindings> {
+  const sweeps = readGuardSweeps(dir);
+  const latestRun = sweeps.length ? sweeps[sweeps.length - 1]!.run : undefined;
+  const all = readGuardFindings(dir);
+  const scoped = latestRun !== undefined ? all.filter(e => e.run === latestRun) : all;
+  // keep the per-key latest as a secondary dedup (mirrors status)
+  const latestByKey = new Map<string, typeof scoped[number]>();
+  for (const e of scoped) latestByKey.set(`${e.owner}::${e.region}::${e.state}::${e.finding}`, e);
+  return [...latestByKey.values()];
 }
 
 export function inferRenameSpec(path: string, to: string, m: DomainModel, invariantNames: Set<string>): RenameSpec | null {
@@ -471,24 +490,11 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // guard-finding entries are append-only (each `classify` run appends fresh ones) and NEVER
         // individually retracted: a site that stops being flagged after a model edit + re-classify
         // simply has no entry in the newest run, but its old entry is still sitting in the ledger.
-        // Latest-per-key dedup alone (below) would keep counting that stale entry forever, because
-        // "latest for its key" and "latest run overall" are different things once a site clears.
-        // Fix (item 3b, run-stamp approach): every `guard-finding` a bulk `classify` run appends
-        // shares one `run` stamp (see the `classify` case), and each such run also appends exactly
-        // one `guard-sweep` marker — including runs that find nothing — so the true latest run is
-        // always resolvable even when it cleared every site. Resolve the latest run from the sweep
-        // stream (ledger is append-only/chronological, so the last sweep IS the latest run), filter
-        // findings to that run, THEN dedup latest-per-key as a secondary guard (defensive: a single
-        // run should never repeat a key, but this keeps the invariant honest either way). Ledgers
-        // with no `guard-sweep` entries at all (pre-item-3, never re-classified since) fall back to
-        // the old un-filtered behavior — there is no run concept to anchor to.
-        const sweeps = readGuardSweeps(dir);
-        const latestRun = sweeps.length ? sweeps[sweeps.length - 1]!.run : undefined;
-        const allFindings = readGuardFindings(dir);
-        const currentFindings = latestRun !== undefined ? allFindings.filter(e => e.run === latestRun) : allFindings;
-        const latestGuardByKey = new Map<string, ReturnType<typeof readGuardFindings>[number]>();
-        for (const e of currentFindings) latestGuardByKey.set(`${e.owner}::${e.region}::${e.state}::${e.finding}`, e);
-        const gf = [...latestGuardByKey.values()];
+        // Latest-per-key dedup alone would keep counting that stale entry forever, because "latest
+        // for its key" and "latest run overall" are different things once a site clears. Fix (item
+        // 3b, run-stamp approach), extracted into `currentGuardFindings` so `status`'s counts and
+        // `explain`'s detail agree on what "current" means.
+        const gf = currentGuardFindings(dir);
         const guardFindings = { stuck: gf.filter(e => e.finding === 'stuck').length,
                                  unreachable: gf.filter(e => e.finding === 'unreachable').length };
         // method-guard entries are append-only (each `classify` run appends fresh ones per
@@ -805,10 +811,13 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // hook/command would mint (guard_<transition>_<op>), plus the separating witness tables so the
         // author can tell them apart. Adopts nothing; the author replies with `--choose <op>`.
         if (res.kind === 'distinguish') {
+          // Echo the conjunct that was targeted (fix: distinguish-render conjunct echo) — a
+          // multi-conjunct invariant's `--choose` follow-up must re-pass `--conjunct <idx>` or it
+          // silently re-defaults to '0' (a DIFFERENT survivor set than the one just shown here).
           return { strengthened: { kind: 'distinguish',
             survivors: res.survivors.map(g => ({ name: `guard_${g.transition}_${(g.predicate as { op: string }).op}`,
               op: (g.predicate as { op: string }).op, transition: g.transition })),
-            witnesses: res.witnesses.map(w => ({ table: renderWitnessTable(w, model().ticksPerDay) })) } };
+            witnesses: res.witnesses.map(w => ({ table: renderWitnessTable(w, model().ticksPerDay) })) }, conjunct };
         }
 
         if (res.kind !== 'auto-adopt') return { strengthened: res, conjunct };   // inconsistent/no-transition — non-blocking finding
@@ -863,10 +872,11 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // state), not invariant-keyed, so they can't merge in by name like `classified` above.
         // Instead, surface every finding on the SAME aggregate this invariant is about — the
         // finding may not name this invariant, but a stuck/unreachable state on its aggregate is
-        // directly relevant context for reading the invariant. Latest-per-key dedup/run-filtering
-        // (as `status` does for its counts) is not reapplied here — this is a raw, append-only
-        // read-back for a single invariant's explain output, not an aggregate count.
-        out.guardFindings = readGuardFindings(dir)
+        // directly relevant context for reading the invariant. Scoped to the LATEST guard-analysis
+        // run via the same `currentGuardFindings` helper `status` uses for its counts (item 3b) —
+        // a finding cleared by a later re-classify must not keep showing up here while `status`
+        // says it's gone.
+        out.guardFindings = currentGuardFindings(dir)
           .filter(f => f.owner === (inv.candidate as any).aggregate)
           .map(f => ({ region: f.region, state: f.state, finding: f.finding }));
         return out;

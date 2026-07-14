@@ -420,6 +420,38 @@ describe('engine CLI', () => {
     expect(r.guardFindings).toEqual([{ region: 'settlement', state: 'open', finding: 'stuck' }]);
   });
 
+  it('explain scopes guard-findings to the LATEST guard-analysis run, agreeing with status (item 3b)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceDModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+      { id: 'H1', name: 'nonNegativeTotal', prior: 0.5, source: 'seed', candidate: someStatePredicateOnInvoice }
+    ])], fakeDeps);
+
+    const stateFile = join(dir, 'state.json');
+    const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+    const h1 = st.candidates.find((c: any) => c.inv.id === 'H1');
+    h1.status = 'adopted';
+    writeFileSync(stateFile, JSON.stringify(st));
+    appendLedger(dir, { kind: 'adopted', at: new Date().toISOString(), invariant: h1.inv, provenance: 'test' });
+
+    // Run 1 (earlier stamp): Invoice.settlement.open flagged stuck.
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'stuck',
+      owner: 'Invoice', region: 'settlement', state: 'open', boundedN: 6, provenance: 'test', run: '2026-01-01T00:00:00.000Z' });
+    appendLedger(dir, { kind: 'guard-sweep', at: new Date().toISOString(), run: '2026-01-01T00:00:00.000Z' });
+
+    // Run 2 (later stamp, e.g. after a model edit + re-classify): the `open` site cleared (no
+    // guard-finding for it at all); a different site (`closed`) is flagged instead.
+    appendLedger(dir, { kind: 'guard-finding', at: new Date().toISOString(), finding: 'unreachable',
+      owner: 'Invoice', region: 'settlement', state: 'closed', boundedN: 6, provenance: 'test', run: '2026-02-01T00:00:00.000Z' });
+    appendLedger(dir, { kind: 'guard-sweep', at: new Date().toISOString(), run: '2026-02-01T00:00:00.000Z' });
+
+    const r: any = await runCommand(['explain', '--session', dir, '--name', 'nonNegativeTotal'], fakeDeps);
+    // The cleared run-1 finding (settlement.open, stuck) must NOT appear — agreeing with `status`,
+    // which counts only the latest run. The still-current run-2 finding must appear.
+    expect(r.guardFindings).toEqual([{ region: 'settlement', state: 'closed', finding: 'unreachable' }]);
+  });
+
   it('structure command appends a structure ledger entry and works pre-init', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cli-'));
     const r: any = await runCommand(['structure', '--session', dir, '--question', 'What are the aggregates?', '--answer', 'Subscription, Customer'], fakeDeps);
