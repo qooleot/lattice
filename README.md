@@ -17,6 +17,13 @@ SQLite-backed TypeScript service with guards, outbox events, invariant enforceme
 generated mermaid docs. Not yet built: conformance/anti-drift (plan §11.5–11.6) and the app/UI —
 briefs in `docs/superpowers/specs/`. A real elicited spec lives at `specs/subscriptions/spec.lat`.
 
+## Getting started
+
+Two commands: `cd lattice && bash scripts/ensure-ready.sh` to bootstrap (installs deps, fetches
+solvers), then open Claude Code at the repo root and say "Use the elicit-spec skill — I want to
+build a spec for `<your domain>`." Full walkthrough, from clone to a generated running service, in
+**[docs/getting-started.md](docs/getting-started.md)**.
+
 **The whole system reduces to three things:**
 
 1. **One language** — an AST with prose / code / diagram projections.
