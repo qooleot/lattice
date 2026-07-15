@@ -566,7 +566,46 @@ fixture in the corpus.
 
 ### c12 — out-of-spec feature corrupts covered state
 
-PENDING
+**Verdict: CAUGHT-VIOLATION**
+
+- Branch: `drift/c12-proration-total` (forked from work-branch tip `791b761`).
+- Edit: `changeSeats` in `implementations/subscriptions/src/subscription-service.ts` gains an
+  open-invoice path — replaced the draft-only guard with a three-way branch: `draft` keeps the
+  original usage-amount proration (with the negative-usage guard intact), `open` now does
+  `UPDATE invoices SET total_due = total_due + ? WHERE id = ?` directly, anything else throws.
+  Plus the engineer's happy test (pre-registered exercising fixture) added to
+  `implementations/subscriptions/test/growth.test.ts`: `activeSub()`, finalize `sub-1-inv-2` to
+  open (fee 4000, usage 0), `changeSeats(db, 'sub-1', 6, 1_000)` on the open path, asserting
+  `total_due` lands at 5000.
+- impl-exit=0 (`/tmp/drift-c12-impl.log`). 8 test files, 25/25 tests passed (24 pre-existing + the
+  drift's own happy test) — matches the pre-registration exactly ("none new beyond the drift's own
+  test passing").
+- conform-exit=0 (`--report`; violations>0 in output is the criterion). `/tmp/drift-c12-conform.log`:
+  ```
+  conform ../implementations/subscriptions
+  3 violations across 24 snapshots (10 invariants checked)
+  residual surface: auto-bound 14/18 fields (78%), 4 overridden
+  tier 2: 69 row-traces checked against the machine
+  crosschecks: account_summary
+  guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle
+  VIOLATION activePaidInFull (invariant activePaidInFull) — witnesses [sub-1] — violated by 1/1 Subscription row(s) — anchors [hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5; w1; w2; w3; w4; w5] — source mid-cycle seat change prorates an open invoice immediately (v2 flow)
+  VIOLATION totalDueAtMostParts (invariant totalDueAtMostParts) — witnesses [sub-1-inv-2] — violated by 1/2 Invoice row(s) — anchors [elicited (w1, w2); w1; w2; w3; w4; w5] — source mid-cycle seat change prorates an open invoice immediately (v2 flow)
+  VIOLATION crosscheck account_summary (crosscheck account_summary) — witnesses [sub-1] — open_balance 4000 != recomputed 5000 — anchors [target crosscheck (out-of-spec read model, design §6 class 13)] — source mid-cycle seat change prorates an open invoice immediately (v2 flow)
+  ```
+- Pre-registered signals confirmed: **both** fired on the pinned fixture. `totalDueAtMostParts`,
+  witness `sub-1-inv-2` (the drifted open invoice, `total_due` 5000 > `license_fee_amount` 4000 +
+  `usage_amount` 0) — the class-12 verdict-keying signal. `activePaidInFull`, witness `sub-1` (the
+  same fixture quiesces an ACTIVE sub with an open unpaid latest invoice) — pre-registered
+  collateral, recorded per protocol, not the pinned signal.
+- Unregistered bonus signal (recorded honestly, not part of the pre-registration): `crosscheck
+  account_summary` also fired, witness `sub-1`, `open_balance 4000 != recomputed 5000` — the
+  `total_due` mutation bypasses `refreshAccountSummary`, so the read model drifts from the ledger
+  too. This is a genuine third catch the brief did not call out; the class-12 verdict still keys
+  strictly on `totalDueAtMostParts` per protocol, but the extra signal is evidence the harness's
+  independent instruments overlap in coverage here.
+- Ledger evidence (`violationCount: 3`) committed on the drift branch
+  (`drift(c12): ledger evidence from conform --report run`).
+
 
 ### c13 — stale read model
 
