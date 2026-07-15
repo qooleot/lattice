@@ -3,19 +3,19 @@
 
 export interface SubscriptionSpecState {
   subId: string;
-  plan: string;
+  plan: string | null;
   seats: number;
   periodStart: number;
   periodEnd: number;
   accruedUnits: number;
   paidInvoiceCount: number;
   maxRetries: number;
-  latestInvoice: string;
+  latestInvoice: string | null;
   status: 'trialing' | 'active' | 'pastDue' | 'canceled' | 'expired';
 }
 export interface InvoiceSpecState {
   invoiceId: string;
-  subscription: string;
+  subscription: string | null;
   licenseFeeAmount: number;
   usageAmount: number;
   totalDue: number;

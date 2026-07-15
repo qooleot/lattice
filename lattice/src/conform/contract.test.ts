@@ -13,7 +13,7 @@ describe('renderContract', () => {
     expect(src).toContain('export interface SubscriptionSpecState');
     expect(src).toContain(`status: 'trialing' | 'active' | 'pastDue' | 'canceled' | 'expired';`);
     expect(src).toContain(`settlement: 'draft' | 'open' | 'paid' | 'void' | 'uncollectible';`);
-    expect(src).toContain('latestInvoice: string;');
+    expect(src).toContain('latestInvoice: string | null;');
     expect(src).toContain('amountPaid: number;');
   });
 

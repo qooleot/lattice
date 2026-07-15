@@ -423,7 +423,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         console.log(formatReport(report));
         process.exit(exitCode);
       } catch (err) {
-        console.log(err instanceof Error ? err.message : String(err));
+        console.error(err instanceof Error ? err.message : String(err));
         process.exit(2);
       }
     }
