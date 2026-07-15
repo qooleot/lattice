@@ -606,7 +606,41 @@ fixture in the corpus.
 - Ledger evidence (`violationCount: 3`) committed on the drift branch
   (`drift(c12): ledger evidence from conform --report run`).
 
-
 ### c13 — stale read model
 
-PENDING
+**Verdict: CAUGHT-VIOLATION**
+
+- Branch: `drift/c13-stale-read-model` (forked from work-branch tip `791b761`).
+- Edit: deleted the single line `refreshAccountSummary(db, inv.subscription_id, 0);` from
+  `settle()` in `implementations/subscriptions/src/billing-service.ts` (exactly the one-line
+  removal specified — no other change).
+- impl-exit=0 (`/tmp/drift-c13-impl.log`). 8 test files, 24/24 tests passed — **diverges from the
+  pre-registration's predicted failure mode** ("read-model tests (lifetime_paid assertions)").
+  Recorded honestly, not re-scoped: `refreshAccountSummary` fully recomputes `open_balance`/
+  `lifetime_paid` from scratch on every call (not incrementally), so any subsequent
+  refresh-triggering call (`activate`, another `recordPayment`, `rolloverPeriod`, `expireTrials`,
+  etc.) after a `settle()` self-heals the summary before a test's final assertion runs — every
+  `read-model.test.ts` fixture happens to call one of those afterward. The staleness is real but
+  transient in most fixtures and only persists into the DB state that conform's afterEach snapshot
+  captures when `settle()` is the terminal write of a test with no follow-up call — which is the
+  case for two fixtures in `billing-service.test.ts`, neither of which asserts on
+  `account_summary` directly (that test file only checks invoice/subscription fields), so the impl
+  suite stays green while the persisted read model is genuinely wrong.
+- conform-exit=0 (`--report`; violations>0 in output is the criterion). `/tmp/drift-c13-conform.log`:
+  ```
+  conform ../implementations/subscriptions
+  2 violations across 23 snapshots (10 invariants checked)
+  residual surface: auto-bound 14/18 fields (78%), 4 overridden
+  tier 2: 66 row-traces checked against the machine
+  crosschecks: account_summary
+  guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle
+  VIOLATION crosscheck account_summary (crosscheck account_summary) — witnesses [sub-1] — status 'past_due' != lifecycle_state 'active'; open_balance 5000 != recomputed 0; lifetime_paid 5000 != recomputed 10000 — anchors [target crosscheck (out-of-spec read model, design §6 class 13)] — source payment failure marks past_due; successful retry recovers silently
+  VIOLATION crosscheck account_summary (crosscheck account_summary) — witnesses [sub-1] — open_balance 3000 != recomputed 0; lifetime_paid 2000 != recomputed 5000 — anchors [target crosscheck (out-of-spec read model, design §6 class 13)] — source partial payments accrue; exact-full payment settles, emits InvoicePaid, bumps paid_invoice_count
+  ```
+- Pre-registered signal confirmed: both VIOLATION lines contain `crosscheck account_summary` with
+  detail matching both `lifetime_paid` and `open_balance` mismatches — the class-13 instrument
+  catches the stale row in both snapshots where `settle()` was the terminal write, exactly the
+  fixture the brief anticipated ("any settle path"), even though the impl suite itself did not
+  fail on it.
+- Ledger evidence (`violationCount: 2`) committed on the drift branch
+  (`drift(c13): ledger evidence from conform --report run`).
