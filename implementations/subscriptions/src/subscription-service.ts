@@ -50,10 +50,16 @@ export function activate(db: Database.Database, subId: string): void {
 }
 
 export function expireTrials(db: Database.Database, now: number): number {
-  return db.transaction(() =>
+  return db.transaction(() => {
+    const ids = (db.prepare(`SELECT id FROM subscriptions
+                WHERE lifecycle_state = 'trialing' AND period_end < ?`).all(now) as { id: string }[])
+      .map(r => r.id);
+    if (ids.length === 0) return 0;
     db.prepare(`UPDATE subscriptions SET lifecycle_state = 'expired'
-                WHERE lifecycle_state = 'trialing' AND period_end < ?`).run(now).changes
-  )();
+                WHERE lifecycle_state = 'trialing' AND period_end < ?`).run(now);
+    for (const id of ids) refreshAccountSummary(db, id, now);
+    return ids.length;
+  })();
 }
 
 export function cancelSubscription(db: Database.Database, subId: string): void {

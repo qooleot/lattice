@@ -27,6 +27,7 @@ export function finalizeInvoice(db: Database.Database, invoiceId: string): void 
     const total = inv.license_fee_amount + inv.usage_amount;
     db.prepare(`UPDATE invoices SET total_due = ?, settlement_state = 'open' WHERE id = ?`).run(total, invoiceId);
     appendEvent(db, INVOICE_FINALIZED, invoiceId, { invoiceId });
+    refreshAccountSummary(db, inv.subscription_id, 0);
   })();
 }
 
@@ -60,6 +61,7 @@ export function voidInvoice(db: Database.Database, invoiceId: string): void {
     if (inv.settlement_state !== 'draft' && inv.settlement_state !== 'open')
       throw new Error(`void: ${invoiceId} is ${inv.settlement_state}`);
     db.prepare(`UPDATE invoices SET settlement_state = 'void' WHERE id = ?`).run(invoiceId);
+    refreshAccountSummary(db, inv.subscription_id, 0);
   })();
 }
 
@@ -68,5 +70,6 @@ export function writeOffInvoice(db: Database.Database, invoiceId: string): void 
     const inv = getInvoice(db, invoiceId);
     if (inv.settlement_state !== 'open') throw new Error(`write-off: ${invoiceId} is ${inv.settlement_state}`);
     db.prepare(`UPDATE invoices SET settlement_state = 'uncollectible' WHERE id = ?`).run(invoiceId);
+    refreshAccountSummary(db, inv.subscription_id, 0);
   })();
 }
