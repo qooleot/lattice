@@ -29,8 +29,11 @@ describe('matchTemplates', () => {
 
   it('#1 conservation from @balance/@total tags', () =>
     expect(adopt.some(a => a.candidate.kind === 'conservation' && a.candidate.aggregate === 'Obligation')).toBe(true));
-  it('#2 non-negative is delegated to implied.ts (camelCase, implied- ids)', () =>
-    expect(adopt.filter(a => a.name.startsWith('nonNegative')).length).toBe(3));
+  it('#2 non-negative is delegated to implied.ts (camelCase, implied- ids)', () => {
+    const nonNegative = adopt.filter(a => a.name.startsWith('nonNegative'));
+    expect(nonNegative.length).toBe(3);
+    expect(nonNegative.every(a => a.id.startsWith('implied-'))).toBe(true);
+  });
   // @signed suppression is covered by the dedicated describe block below, which also pins the
   // stronger property: that this derivation and implied.ts agree.
   it('#3 terminal for @terminal states', () =>
