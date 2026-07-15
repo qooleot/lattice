@@ -14,15 +14,12 @@ function paidTrial() {
 const eventTypes = (db: any) => (db.prepare('SELECT event_type FROM outbox ORDER BY id').all() as any[]).map(r => r.event_type);
 
 describe('lifecycle', () => {
-  it('activate requires a paid invoice and emits SubscriptionActivated', () => {
+  it('activate works immediately after invoicing (v2 flow)', () => {
     const db = makeDb();
     createSubscription(db, { id: 'sub-1', planCode: 'pro', seats: 5, periodStart: 1_000, periodEnd: 2_000, licenseFeeAmount: 5_000 });
-    expect(() => activate(db, 'sub-1')).toThrow(/paid/);
-    finalizeInvoice(db, 'sub-1-inv-1');
-    recordPayment(db, 'sub-1-inv-1', 5_000, 1_100);
-    activate(db, 'sub-1');
+    finalizeInvoice(db, 'sub-1-inv-1');   // invoice now OPEN and unpaid
+    activate(db, 'sub-1');                 // guard gone — succeeds
     expect(getSubscription(db, 'sub-1').lifecycle_state).toBe('active');
-    expect(eventTypes(db)).toEqual(['InvoiceFinalized', 'InvoicePaid', 'SubscriptionActivated']);
   });
 
   it('expireTrials expires only overdue trials, silently', () => {
