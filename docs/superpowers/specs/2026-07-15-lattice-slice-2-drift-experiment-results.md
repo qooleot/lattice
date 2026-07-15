@@ -327,7 +327,45 @@ fixture in the corpus.
 
 ### c06 — state-name drift
 
-PENDING
+**Verdict: CAUGHT-LOUD**
+
+- Branch: `drift/c06-state-rename` (forked from work-branch tip `26a5be7`).
+- Edit: renamed the past-due lifecycle value `'past_due'` → `'delinquent'` in CODE only —
+  `implementations/subscriptions/src/schema.sql` (comment on `lifecycle_state`), and all
+  `src/*.ts` occurrences: `src/billing-service.ts` (`settle`'s recovery condition),
+  `src/subscription-service.ts` (`cancelSubscription`'s legal-states check),
+  `src/dunning.ts` (comment, `recordPaymentFailure`'s UPDATE, `runDunning`'s target-selection
+  WHERE clause). `conform/overrides.ts` STATE_MAP left untouched (still maps `past_due: 'pastDue'`,
+  no `delinquent` key) — that is the drift, per the brief.
+- impl-exit=1 (`/tmp/drift-c06-impl.log`) — 4 failed / 20 passed of 24 total. Test files were NOT
+  edited per the brief (drift is code-only), so tests that literal-compare
+  `lifecycle_state`/`status` against `'past_due'` now fail against the actual stored value
+  `'delinquent'`:
+  - `test/lifecycle.test.ts > lifecycle > payment failure marks past_due; successful retry recovers silently`
+  - `test/growth.test.ts > growth features (superset) > failed rollover charge leaves the sub past_due with the old invoice open`
+  - `test/journey.test.ts > full customer journey > trial → activate → usage/rollover → failed charge → dunning exhaustion`
+  - `test/read-model.test.ts > account summary read model > tracks status and balances through the lifecycle`
+    (`toMatchObject({ status: 'past_due', ... })` vs actual `status: 'delinquent'`).
+  This differs from the pre-registration's "none (internally consistent rename)" — the rename IS
+  internally consistent within `src/`, but the untouched test literals are not part of `src/`, so
+  they surface as impl failures. Recorded verbatim, not re-scoped (brief's own fallback: "record
+  any that appear").
+- conform-exit=2 (loud failure — no `--report` summary line is ever printed).
+  `/tmp/drift-c06-conform.log`:
+  ```
+  conform observe: Subscription.status is null/undefined for row sub-1 — projection must be total or the field overridden
+  ```
+- Pre-registered signal confirmed: stderr matches `Subscription.status is null/undefined for row`
+  verbatim — `STATE_MAP[row.lifecycle_state]` has no `delinquent` key, so `overrides.ts`'s
+  `status` projection returns `undefined` for the first row it observes with that state, and the
+  harness fails hard rather than mapping garbage (design §4.3's loud-never-wrong guarantee).
+  Exit code 2 as pre-registered.
+- No ledger delta on the drift branch: the harness aborts before ever writing a `--report` ledger
+  entry (loud failure happens inside `conform observe`, upstream of report/ledger assembly), so
+  there is nothing to commit beyond the drift edit itself — consistent with the CAUGHT-LOUD design
+  (loud, never wrong, and never silently recorded as a passing run).
+
+
 
 ### c07 — partial write on settle
 
