@@ -42,7 +42,11 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
   const cfg = readConfig(targetDir);
   const input = loadGenInput(resolve(targetDir, cfg.session));
   const plan = buildPlan(input);
-  const ovModule = await import(resolve(targetDir, 'conform', 'overrides.ts')) as { overrides: OverridesModule };
+  const overridesPath = resolve(targetDir, 'conform', 'overrides.ts');
+  const ovModule = await import(overridesPath) as { overrides: OverridesModule };
+  if (!ovModule || typeof ovModule.overrides !== 'object' || ovModule.overrides === null) {
+    throw new Error(`conform: ${overridesPath} must export 'overrides' (an aggregate→field→fn map)`);
+  }
   const snapDir = resolve(targetDir, cfg.snapshots);
   if (!existsSync(snapDir)) throw new Error(`conform: no snapshots at ${snapDir} — run the target's test suite first`);
   const snaps = readdirSync(snapDir).filter(f => f.endsWith('.sqlite')).sort();

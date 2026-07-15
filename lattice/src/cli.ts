@@ -371,12 +371,12 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
     if (cmd === 'conform') {
       const { runConform, formatReport, writeContract } = await import('./conform/report.js');
       const target = values.target!;
-      if (values.contract) {
-        const path = await writeContract(target);
-        console.log(path);
-        process.exit(0);
-      }
       try {
+        if (values.contract) {
+          const path = await writeContract(target);
+          console.log(path);
+          process.exit(0);
+        }
         const { report, exitCode } = await runConform(target, values.enforce ? 'enforce' : 'report');
         console.log(formatReport(report));
         process.exit(exitCode);
