@@ -4,6 +4,7 @@ import { join, dirname } from 'node:path';
 import type { DomainModel } from './ast/domain.js';
 import { validateModel } from './ast/validate.js';
 import { validateCandidate } from './ast/grammar.js';
+import { toCamelName } from './ast/naming.js';
 import type { CandidateInvariant, Candidate } from './ast/invariant.js';
 import { loadState, saveState, appendLedger, readLedger, readClassifications, readGuardFindings, readGuardSweeps, readMethodGuards, isoDay, type SessionState, type LedgerEntry } from './engine/session.js';
 import { matchTemplates } from './engine/templates.js';
@@ -425,13 +426,33 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       case 'propose': {
         const invs = readJson(values.candidates!);
         if (isBadJson(invs)) return { error: 'bad-json-or-path', detail: invs[BAD_JSON] };
-        const typedInvs: CandidateInvariant[] = invs;
-        const badKinds = typedInvs.map(i => i.candidate.kind).filter(k => UNELICITABLE_KINDS.has(k));
+        const rawInvs: CandidateInvariant[] = invs;
+        const badKinds = rawInvs.map(i => i.candidate.kind).filter(k => UNELICITABLE_KINDS.has(k));
         if (badKinds.length) return notElicitable(badKinds);
-        const diags = typedInvs.flatMap(i => validateCandidate(i.candidate, model()).map(d => ({ ...d, candidate: i.id })));
+        const diags = rawInvs.flatMap(i => validateCandidate(i.candidate, model()).map(d => ({ ...d, candidate: i.id })));
         if (diags.length) return { error: 'out-of-grammar', diagnostics: diags };
+
+        // Fold names onto the camelCase convention here, at the boundary where the agent authors
+        // them and nothing yet references them. Left alone, a Pascal_Snake_Case name reaches the
+        // ledger, gets adopted, and can only be corrected through apply's `--rename`
+        // confirmation ceremony — the fix is mechanical, so it should never cost a round-trip.
+        const typedInvs = rawInvs.map(i => ({ ...i, name: toCamelName(i.name) }));
+        const normalized = rawInvs.flatMap((i, n) =>
+          i.name === typedInvs[n]!.name ? [] : [{ id: i.id, from: i.name, to: typedInvs[n]!.name }]);
+
+        // Collision is judgment, not style: two distinct rules folding onto one name is a real
+        // ambiguity no normalizer can settle. Within-batch only — a later round legitimately
+        // re-proposes an earlier name under a new id to restate a rule more precisely.
+        const byName = new Map<string, { id: string; name: string }[]>();
+        rawInvs.forEach((i, n) => {
+          const key = typedInvs[n]!.name;
+          byName.set(key, [...(byName.get(key) ?? []), { id: i.id, name: i.name }]);
+        });
+        const collisions = [...byName].filter(([, cs]) => cs.length > 1).map(([name, candidates]) => ({ name, candidates }));
+        if (collisions.length) return { error: 'name-collision', collisions };
+
         registerCandidates(s, typedInvs);
-        return done({ registered: typedInvs.length });
+        return done({ registered: typedInvs.length, ...(normalized.length ? { normalized } : {}) });
       }
       case 'next-question': {
         const out = await nextQuestion(s, readLedger(dir), model(), deps);

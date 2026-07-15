@@ -124,6 +124,12 @@ are template-adopted only — `engine propose`/`regenerate` reject them with `no
 `engine propose`.
 If rejected: fix to the diagnostics, don't argue.
 
+Name each candidate in camelCase (`totalDueAtMostParts`), per `docs/language/naming-conventions.md`
+— the same convention the whole language uses, not a separate one for candidates. `propose`
+normalizes the name if you don't and echoes the change under `normalized`; that is a backstop, not
+a licence to ignore the convention. A `name-collision` refusal means two of your candidates fold
+onto one name: they are different rules, so give them names that say how they differ.
+
 ## Phase 2 — the loop
 Repeat `engine next-question`:
 - `question` → present the engine's `table` VERBATIM (it is ground truth), then add one plain-English

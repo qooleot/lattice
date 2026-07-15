@@ -45,6 +45,33 @@ Every row in the table above is enforced as the `naming-convention` diagnostic �
 flags the style deviation. This is deliberate: case style is a readability convention the team can
 choose to enforce strictly (e.g. in review) without it blocking the parser or the solvers.
 
+## Agent-authored names are normalized, not warned
+
+The warning above governs `.lat` text, which a human wrote. Candidate invariants arrive by a
+different road: `engine propose` reads them as JSON, and JSON never reaches the parser — so no
+`naming-convention` warning could ever fire on them. Left unchecked, a name like
+`TotalDue_At_Most_Parts` reaches the ledger, gets adopted, and can then only be corrected through
+apply's `--rename` confirmation ceremony.
+
+So `propose` folds candidate names onto the convention on the way in
+([`toCamelName`](../../lattice/src/ast/naming.ts)), reporting each change under `normalized`:
+
+```
+$ engine propose --session s --candidates round1.json
+{ "registered": 4,
+  "normalized": [{ "id": "r1-discounts", "from": "TotalDue_At_Most_Parts", "to": "totalDueAtMostParts" }] }
+```
+
+The split is about authorship, not construct kind. In `.lat` the identifier is the author's and the
+convention stays advisory — rewriting their file would overstep. A candidate name is agent-authored
+with nothing referencing it yet, and camelCase is a pure function of the words, so there is no
+judgment to defer to anyone and no reason to spend a round-trip asking.
+
+Two candidates in one batch folding onto the same name is the one case that *is* judgment — an
+ambiguity no normalizer can settle — and `propose` refuses the batch with `name-collision`. The
+check is within-batch only: a later round legitimately re-proposes an earlier name under a new id
+to restate the same rule more precisely.
+
 ## Reserved words are a hard error
 
 Separately, a fixed set of `.lat` keywords can never be used as an identifier, regardless of case
