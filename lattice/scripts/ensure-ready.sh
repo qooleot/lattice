@@ -6,7 +6,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."   # lattice/
 
-[ -d node_modules ] || { echo ">> installing node deps"; npm ci --silent; }
+# Install node deps when missing OR stale (lockfile changed since the last install here).
+LOCK_STAMP=node_modules/.ensure-ready.lock-hash
+LOCK_HASH=$(git hash-object package-lock.json)
+if [ ! -d node_modules ] || [ "$(cat "$LOCK_STAMP" 2>/dev/null)" != "$LOCK_HASH" ]; then
+  echo ">> installing node deps"
+  npm ci --silent
+  echo "$LOCK_HASH" > "$LOCK_STAMP"
+fi
 
 # Locate the main checkout's lattice/vendor via the shared git dir.
 COMMON=$(git rev-parse --path-format=absolute --git-common-dir)
@@ -30,7 +37,12 @@ if [ ! -e vendor/alloy.jar ] || [ ! -e vendor/jdk ]; then
   bash scripts/fetch-solvers.sh
 fi
 
-[ -d src/parse/generated ] || { echo ">> generating langium parser"; npx langium generate; }
+# Regenerate the langium parser when missing OR stale (grammar/config newer than output).
+if [ ! -f src/parse/generated/module.ts ] \
+   || [ src/parse/lat.langium -nt src/parse/generated/module.ts ] \
+   || [ langium-config.json -nt src/parse/generated/module.ts ]; then
+  echo ">> generating langium parser"; npx langium generate
+fi
 
 bash scripts/cleanup-solvers.sh
 
