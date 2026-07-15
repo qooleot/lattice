@@ -1,4 +1,4 @@
-import type { AggregateDef, DomainModel, EntityDef, ValueDef } from '../ast/domain.js';
+import type { AggregateDef, DomainModel, EntityDef, Field, ValueDef } from '../ast/domain.js';
 import { isQualifiedRef } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Path, Predicate, Term } from '../ast/invariant.js';
 
@@ -56,19 +56,29 @@ export function valueLawInstances(m: DomainModel): { owner: AggregateDef | Entit
 }
 
 /**
+ * The Money ⇒ non-negative derivation, opted out of by @signed (spec P9). Shared with
+ * templates.ts's matchTemplates.adopt exactly as valueLawInstances is — ONE source of truth,
+ * because a divergence between the two is silent and severe: adopted candidates constrain every
+ * witness the solver draws (planner.ts), while astToCode prints any adopted candidate that
+ * isImplied — i.e. this module — does not recognize (code.ts). A rule the two disagree about is
+ * therefore both enforced and emitted into spec.lat, contradicting the very tag it ignored, and
+ * the round-trip cannot flag it redundant precisely because it is not implied.
+ */
+export const nonNegativeMoneyFields = (o: AggregateDef | EntityDef): Field[] =>
+  o.fields.filter(f => f.type.kind === 'prim' && f.type.prim === 'Money' && !f.tags?.includes('signed'));
+
+/**
  * Structure-implied invariants (spec P9): @terminal ⇒ stays-terminal, ref ⇒ refs-resolve,
  * Money (unless @signed) ⇒ non-negative. Derived at load, never printed (spec §3.4).
- * The elicitation flow (templates.ts) is untouched — golden traces must not shift.
  */
 export function impliedInvariants(m: DomainModel): CandidateInvariant[] {
   const out: CandidateInvariant[] = [];
   const owners: (AggregateDef | EntityDef)[] = [...m.aggregates, ...m.entities];
   for (const o of owners) {
-    for (const f of o.fields)
-      if (f.type.kind === 'prim' && f.type.prim === 'Money' && !f.tags?.includes('signed'))
-        out.push(mk(`nonNegative${cap(o.name)}${cap(f.name)}`, { kind: 'statePredicate', aggregate: o.name,
-          body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [f.name] },
-            right: { kind: 'int', value: 0 } } }));
+    for (const f of nonNegativeMoneyFields(o))
+      out.push(mk(`nonNegative${cap(o.name)}${cap(f.name)}`, { kind: 'statePredicate', aggregate: o.name,
+        body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [f.name] },
+          right: { kind: 'int', value: 0 } } }));
     const sameContextRefFields = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type)).map(f => f.name);
     if (sameContextRefFields.length > 0)
       out.push(mk(`refsResolve${cap(o.name)}`, { kind: 'refsResolve', aggregate: o.name, fields: sameContextRefFields }));

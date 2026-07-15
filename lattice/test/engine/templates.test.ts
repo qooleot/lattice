@@ -82,6 +82,43 @@ describe('matchTemplates — type-carried value laws', () => {
   });
 });
 
+// #2 non-negativity is derived in two places for two purposes (adopt-for-enforcement here,
+// dedup-for-printing in implied.ts). They drifted once: templates.ts ignored @signed, so a
+// `balance : Money @signed` was adopted as `balance >= 0` — constraining every witness the solver
+// drew, AND (since isImplied consults implied.ts, which honoured @signed) printed by astToCode as
+// an explicit invariant contradicting the tag three lines above it. Both callers now share
+// nonNegativeMoneyFields; these tests pin the agreement rather than either implementation.
+describe('matchTemplates — #2 non-negativity honours @signed (no drift with implied.ts)', () => {
+  const signedModel: DomainModel = {
+    context: 'Ledger', ticksPerDay: 24, enums: [], values: [], entities: [],
+    aggregates: [{ kind: 'aggregate', name: 'Account', fields: [
+      { name: 'accountId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'balance', type: { kind: 'prim', prim: 'Money' }, tags: ['signed'] },
+      { name: 'lifetimeFees', type: { kind: 'prim', prim: 'Money' } }] }],
+    events: [], services: []
+  };
+  const { adopt } = matchTemplates(signedModel);
+
+  it('adopts no non-negative rule for a @signed Money field', () =>
+    expect(adopt.some(a => a.name === 'NonNegative_Account_balance')).toBe(false));
+
+  it('still adopts one for an unsigned Money field alongside it', () =>
+    expect(adopt.some(a => a.name === 'NonNegative_Account_lifetimeFees')).toBe(true));
+
+  // The drift guard proper: anything astToCode would print (adopted ∧ ¬isImplied) is a rule the
+  // two modules disagree about. This is the assertion that fails if either derivation moves alone.
+  it('every adopted non-negative candidate is recognized as implied', () => {
+    const nonNeg = adopt.filter(a => a.name.startsWith('NonNegative'));
+    expect(nonNeg.length).toBeGreaterThan(0);
+    expect(nonNeg.filter(a => !isImplied(a.candidate, signedModel))).toEqual([]);
+  });
+
+  it('holds for the richer revrec fixture too', () => {
+    const nonNeg = matchTemplates(revrecMini).adopt.filter(a => a.name.startsWith('NonNegative'));
+    expect(nonNeg.filter(a => !isImplied(a.candidate, revrecMini))).toEqual([]);
+  });
+});
+
 describe('matchTemplates — qualified-ref exclusion (spec §4.2)', () => {
   // Local fixture (tests don't import across test files): an Order aggregate whose only ref
   // field is a qualified cross-context ref.
