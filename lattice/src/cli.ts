@@ -341,12 +341,15 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       lat: { type: 'string' }, 'dry-run': { type: 'boolean' }, 'no-classify': { type: 'boolean' },
       rename: { type: 'string', multiple: true }, 'force-remove': { type: 'string', multiple: true },
       name: { type: 'string' }, workspace: { type: 'string' }, 'max-steps': { type: 'string' }, conjunct: { type: 'string' },
-      choose: { type: 'string' }, spec: { type: 'string' }, ledger: { type: 'string' }
+      choose: { type: 'string' }, spec: { type: 'string' }, ledger: { type: 'string' },
+      target: { type: 'string' }, enforce: { type: 'boolean' }, report: { type: 'boolean' },
+      contract: { type: 'boolean' },
     }});
 
     // generate has its own source-of-input pair (--spec [--ledger], the .lat-canonical path) as
-    // an alternative to --session — validated in the generate block below, not here.
-    if (cmd !== 'docs' && cmd !== 'generate' && !values.session) return { error: 'missing-arg', arg: 'session' };
+    // an alternative to --session — validated in the generate block below, not here. conform is
+    // session-less too: it reads its session pointer from the target's conform.config.json.
+    if (cmd !== 'docs' && cmd !== 'generate' && cmd !== 'conform' && !values.session) return { error: 'missing-arg', arg: 'session' };
     const dir = values.session!;
 
     switch (cmd) {
@@ -374,6 +377,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       case 'apply': if (!values.lat) return { error: 'missing-arg', arg: 'lat' }; break;
       case 'sync': if (!values.lat) return { error: 'missing-arg', arg: 'lat' }; break;
       case 'docs': if (!values.workspace) return { error: 'missing-arg', arg: 'workspace' }; break;
+      case 'conform': if (!values.target) return { error: 'missing-arg', arg: 'target' }; break;
     }
 
     if (cmd === 'docs') {
@@ -399,6 +403,28 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       } catch (err) {
         if (err instanceof LatParseFailure) return { error: 'parse-failed', diagnostics: err.diagnostics };
         throw err;
+      }
+    }
+
+    // `conform` is session-less (it reads its own session pointer out of the target's
+    // conform.config.json) and speaks plain text + process exit codes, not the JSON-object +
+    // inferred-exitCode convention every other verb uses below — so it's handled here, before
+    // loadState(dir) (dir is undefined for this command), and terminates the process itself.
+    if (cmd === 'conform') {
+      const { runConform, formatReport, writeContract } = await import('./conform/report.js');
+      const target = values.target!;
+      try {
+        if (values.contract) {
+          const path = await writeContract(target);
+          console.log(path);
+          process.exit(0);
+        }
+        const { report, exitCode } = await runConform(target, values.enforce ? 'enforce' : 'report');
+        console.log(formatReport(report));
+        process.exit(exitCode);
+      } catch (err) {
+        console.log(err instanceof Error ? err.message : String(err));
+        process.exit(2);
       }
     }
 
