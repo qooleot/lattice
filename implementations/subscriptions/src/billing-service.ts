@@ -38,9 +38,11 @@ export function recordPayment(db: Database.Database, invoiceId: string, amount: 
     if (amount <= 0) throw new Error('payment amount must be positive');
     const paid = amountPaid(db, invoiceId);
     if (paid + amount > inv.total_due) throw new Error(`overpayment rejected: ${paid} + ${amount} > ${inv.total_due}`);
-    db.prepare('INSERT INTO invoice_payments (invoice_id, amount, paid_at) VALUES (?,?,?)').run(invoiceId, amount, now);
     if (paid + amount === inv.total_due) settle(db, inv);
-    else refreshAccountSummary(db, inv.subscription_id, now);
+    else {
+      db.prepare('INSERT INTO invoice_payments (invoice_id, amount, paid_at) VALUES (?,?,?)').run(invoiceId, amount, now);
+      refreshAccountSummary(db, inv.subscription_id, now);
+    }
   })();
 }
 
