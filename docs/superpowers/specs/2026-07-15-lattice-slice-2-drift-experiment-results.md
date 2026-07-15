@@ -532,7 +532,37 @@ fixture in the corpus.
 
 ### c11 — stale override
 
-PENDING
+**Verdict: CAUGHT-LOUD**
+
+- Branch: `drift/c11-stale-override` (forked from work-branch tip `f8439d7`).
+- Edit: renamed `invoice_payments.amount` → `amount_cents`, consistent within `src/` only —
+  `src/schema.sql` column definition; `src/billing-service.ts`'s `amountPaid` (`SUM(amount_cents)`)
+  and `recordPayment`'s `INSERT INTO invoice_payments (invoice_id, amount_cents, paid_at)`;
+  `src/read-model.ts`'s two `SUM(p.amount_cents)` sites (`refreshAccountSummary`'s open-balance and
+  lifetime-paid subqueries). Deliberately NOT touched: `conform/overrides.ts` (`Invoice.amountPaid`
+  override still does `SELECT COALESCE(SUM(amount),0) ... FROM invoice_payments`) and
+  `conform/crosschecks.ts` (`account_summary`'s independent recomputation still does
+  `SUM(p.amount)` in two places) — both are conformance-side artifacts referencing the old column
+  name; forgetting them alongside an otherwise-consistent src rename is exactly the stale-adapter
+  rot this class is pre-registered to catch.
+- `npx tsc --noEmit`: clean, no errors.
+- impl-exit=0 (`/tmp/drift-c11-impl.log`). 24/24 tests passed, 8 test files, no stragglers needed —
+  the rename is self-consistent within `src/` and no test reads the raw `amount` column name
+  directly. Matches the pre-registration ("expected impl failures: none").
+- conform-exit=2 (`/tmp/drift-c11-conform.log`):
+  ```
+  no such column: amount
+  ```
+- Pre-registered signal confirmed: stderr contains `no such column: amount` — the stale override's
+  SQL fails hard at first evaluation (`conform/overrides.ts`'s `Invoice.amountPaid` querying the
+  now-nonexistent `amount` column), exit 2, never a silently-wrong `amountPaid` value. The failure
+  surfaces before `crosschecks.ts`'s parallel staleness is separately exercised — the binder/override
+  layer aborts the whole run first, so only one of the two forgotten sites shows up in this log
+  (recorded verbatim; both are stale, but the override fails first and the run stops there).
+- Ledger evidence: none, same as c10 — the abort happens before any snapshot is checked or a
+  conformance run is recorded, so a CAUGHT-LOUD exit-2 outcome produces no ledger delta by design.
+  `.lattice-session-subscriptions/ledger.jsonl` is unchanged (`git status --short` after the run
+  showed nothing); this absence is the expected evidence for this class.
 
 ### c12 — out-of-spec feature corrupts covered state
 
