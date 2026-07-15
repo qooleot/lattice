@@ -138,6 +138,11 @@ export function changePlan(db: Database.Database, subId: string, a: ChangePlanAr
       periodStart: a.now, periodEnd: a.periodEnd,
       licenseFeeAmount: a.licenseFeeAmount, maxRetries: sub.max_retries,
     });
+    if (sub.lifecycle_state === 'active' || sub.lifecycle_state === 'past_due') {
+      finalizeInvoice(db, `${a.newId}-inv-1`);
+      db.prepare(`UPDATE subscriptions SET lifecycle_state = 'active' WHERE id = ?`).run(a.newId);
+      appendEvent(db, SUBSCRIPTION_ACTIVATED, a.newId, { subId: a.newId });
+    }
     db.prepare('UPDATE subscriptions SET superseded_by = ? WHERE id = ?').run(a.newId, subId);
   })();
 }
