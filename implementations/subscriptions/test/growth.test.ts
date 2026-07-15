@@ -56,6 +56,13 @@ describe('growth features (superset)', () => {
     expect(() => changeSeats(db, 'sub-1', 2, -9_999)).toThrow(/negative/);
   });
 
+  it('mid-cycle seat change prorates an open invoice immediately (v2 flow)', () => {
+    const db = activeSub();
+    finalizeInvoice(db, 'sub-1-inv-2');        // current draft → open (fee 4000, usage 0)
+    changeSeats(db, 'sub-1', 6, 1_000);        // drifted open-path: total_due += 1000
+    expect(getInvoice(db, 'sub-1-inv-2').total_due).toBe(5_000);
+  });
+
   it('changePlan supersedes: cancels old (event), creates new on the new plan, never mutates plan_code', () => {
     const db = activeSub();
     changePlan(db, 'sub-1', { newId: 'sub-2', planCode: 'pro', licenseFeeAmount: 9_000, now: 2_500, periodEnd: 3_500 });

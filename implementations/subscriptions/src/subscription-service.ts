@@ -120,9 +120,12 @@ export function changeSeats(db: Database.Database, subId: string, newSeats: numb
     if (!['trialing', 'active'].includes(sub.lifecycle_state)) throw new Error(`changeSeats: ${subId} is ${sub.lifecycle_state}`);
     if (!sub.current_invoice_id) throw new Error(`changeSeats: ${subId} has no current invoice`);
     const inv = getInvoice(db, sub.current_invoice_id);
-    if (inv.settlement_state !== 'draft') throw new Error('seat changes only while the current invoice is draft');
-    if (inv.usage_amount + prorationAmount < 0) throw new Error('proration would drive usage negative');
-    db.prepare('UPDATE invoices SET usage_amount = usage_amount + ? WHERE id = ?').run(prorationAmount, inv.id);
+    if (inv.settlement_state === 'draft') {
+      if (inv.usage_amount + prorationAmount < 0) throw new Error('proration would drive usage negative');
+      db.prepare('UPDATE invoices SET usage_amount = usage_amount + ? WHERE id = ?').run(prorationAmount, inv.id);
+    } else if (inv.settlement_state === 'open') {
+      db.prepare('UPDATE invoices SET total_due = total_due + ? WHERE id = ?').run(prorationAmount, inv.id);
+    } else throw new Error('seat changes only on draft or open invoices');
     db.prepare('UPDATE subscriptions SET seats = ? WHERE id = ?').run(newSeats, subId);
   })();
 }
