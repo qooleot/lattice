@@ -2,6 +2,7 @@ import type { AggregateDef, DomainModel, EntityDef } from '../ast/domain.js';
 import { isQualifiedRef } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant } from '../ast/invariant.js';
 import { impliedInvariants } from './implied.js';
+import { toCamelName } from '../ast/naming.js';
 
 const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
 const mk = (id: string, name: string, candidate: Candidate, prior = 0.9): CandidateInvariant =>
@@ -41,7 +42,7 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
       const actives = r.states.filter(s => s.tags?.includes('active')).map(s => s.name);
       if (actives.length > 0)
         for (const f of refs)
-          seeds.push(mk(`tpl-7-${o.name}-${f.name}`, `UniquePer_${f.name}`,
+          seeds.push(mk(`tpl-7-${o.name}-${f.name}`, `UniquePer_${o.name}_${f.name}`,
             { kind: 'unique', aggregate: o.name, whileStates: { region: r.name, states: actives }, by: [[f.name]] }, 0.4));
 
       // #6+#11 grace-window shell: @active states + a Duration field + a (possibly one-hop) Date path
@@ -56,7 +57,13 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
                 right: { kind: 'plus', left: { kind: 'field', owner: 'self', path: datePath }, right: { kind: 'field', owner: 'self', path: [duration.name] } } } } }, 0.5));
     }
   }
-  return { adopt, seeds };
+  // Fold names onto the convention here, at the boundary where THIS module authors them, exactly
+  // as cli.ts's `propose` does for agent-authored names (docs/language/naming-conventions.md): a
+  // machine-authored name is normalized, a hand-written one only warned. Folding at the return
+  // keeps the literals above readable as `NonNegative_${o.name}_${f.name}` while nothing outside
+  // ever sees the un-folded form.
+  const fold = (i: CandidateInvariant): CandidateInvariant => ({ ...i, name: toCamelName(i.name) });
+  return { adopt: adopt.map(fold), seeds: seeds.map(fold) };
 }
 
 function findDatePath(m: DomainModel, o: AggregateDef | EntityDef): string[] | null {

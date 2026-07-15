@@ -3,6 +3,8 @@ import { matchTemplates } from '../../src/engine/templates.js';
 import { impliedInvariants, isImplied } from '../../src/engine/implied.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 import { periodModel } from '../fixtures.js';
+import { astToCode } from '../../src/emit/code.js';
+import { loadLatText } from '../../src/parse/fromLangium.js';
 
 const revrecMini: DomainModel = {
   context: 'RevRec', ticksPerDay: 24,
@@ -199,5 +201,60 @@ describe('matchTemplates — qualified-ref exclusion (spec §4.2)', () => {
     const { adopt } = matchTemplates(m);
     const c = adopt.find(a => a.candidate.kind === 'refsResolve')!.candidate;
     expect(c).toEqual({ kind: 'refsResolve', aggregate: 'Order', fields: ['who'] });
+  });
+});
+
+// 18 of 30 renames in the real subscriptions session were a human hand-fixing these names to
+// camelCase, and every emitted spec warned on reload. These two guards pin both halves: the
+// ledger-visible name (which `apply` reconciles by, printed or not) and the emitted file.
+describe('matchTemplates — invariant names follow the camelCase convention (spec P8)', () => {
+  const CAMEL = /^[a-z][A-Za-z0-9]*$/;
+
+  // revrecMini is NOT usable for the emit guard: its region `Lifecycle`, states `Open`/`Closed` and
+  // enum values `Recognition`/`Correction` are PascalCase and produce 5 naming warnings of their
+  // own. This model is convention-clean everywhere EXCEPT what matchTemplates names, so a warning
+  // here can only be an invariant name.
+  const cleanModel: DomainModel = {
+    context: 'Billing', ticksPerDay: 24, enums: [], values: [],
+    entities: [{ kind: 'entity', name: 'Biller', fields: [{ name: 'billerId', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Bill', fields: [
+      { name: 'billId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'biller', type: { kind: 'ref', target: 'Biller' } },
+      { name: 'amountPaid', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+      { name: 'amountDue', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+      { name: 'total', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] }],
+      machine: { regions: [{ name: 'settlement', initial: 'draft', states: [
+        { name: 'draft' }, { name: 'issued', tags: ['active'] }, { name: 'void', tags: ['terminal'] }] }],
+        transitions: [] } }],
+    events: [], services: []
+  };
+
+  it('every adopted and seeded name is camelCase', () => {
+    const { adopt, seeds } = matchTemplates(revrecMini);
+    expect([...adopt, ...seeds].filter(a => !CAMEL.test(a.name)).map(a => a.name)).toEqual([]);
+  });
+
+  it('an emitted spec reloads with zero naming-convention warnings', async () => {
+    const { adopt } = matchTemplates(cleanModel);
+    const r = await loadLatText(astToCode(cleanModel, adopt));
+    expect(r.ok).toBe(true);
+    expect(r.warnings.filter(w => w.code === 'naming-convention')).toEqual([]);
+  });
+
+  it('uniquePer seeds are distinct per owner (not just per ref field)', () => {
+    // two aggregates with a same-named ref field and an @active state must not collide
+    const m: DomainModel = {
+      context: 'Coll', ticksPerDay: 24, enums: [], values: [],
+      entities: [{ kind: 'entity', name: 'Biller', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
+      aggregates: (['Bill', 'Fee'] as const).map(n => ({
+        kind: 'aggregate' as const, name: n,
+        fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+                 { name: 'biller', type: { kind: 'ref' as const, target: 'Biller' } }],
+        machine: { regions: [{ name: 'standing', initial: 'open', states: [{ name: 'open', tags: ['active' as const] }] }], transitions: [] }
+      })),
+      events: [], services: []
+    };
+    const names = matchTemplates(m).seeds.map(s => s.name);
+    expect(new Set(names).size).toBe(names.length);
   });
 });
