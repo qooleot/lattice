@@ -47,7 +47,7 @@
 - Modify: `lattice/src/engine/templates.ts`
 - Modify: `lattice/src/engine/implied.ts`
 - Modify: `lattice/test/engine/templates.test.ts`
-- Modify: `lattice/golden/trace-c.test.ts:52`, `lattice/test/cli-strengthen.test.ts:344`, `lattice/test/cli-strengthen.integration.test.ts:82`, `lattice/test/pipeline-from-scratch.test.ts:90`, `lattice/test/golden-trace-d.test.ts:22-23`
+- Modify (six files pinning pre-delegation names): `lattice/golden/trace-c.test.ts:52`, `lattice/test/cli-strengthen.test.ts:344`, `lattice/test/cli-strengthen.integration.test.ts:82`, `lattice/test/pipeline-from-scratch.test.ts:90`, `lattice/test/golden-trace-d.test.ts:22-23`, `lattice/test/cli-classify.test.ts:185-208`
 
 **Interfaces:**
 - Consumes: `impliedInvariants(m: DomainModel): CandidateInvariant[]` from `./implied.js`.
@@ -187,7 +187,7 @@ That block's header comment (the "Task 11" paragraph above it) claims both calle
 
 Update the `@signed` block's header comment too: it currently explains that both callers "now share `nonNegativeMoneyFields`". After this task there is one caller and nothing is shared — say instead that the tests pin @signed suppression surviving the delegation, and that agreement is now structural rather than asserted.
 
-- [ ] **Step 6: Migrate the five test files that hard-code names/ids**
+- [ ] **Step 6: Migrate the six test files that hard-code names/ids**
 
 `lattice/golden/trace-c.test.ts:52` — `tpl-3-*` and `tpl-9-*` become `implied-*`; `tpl-1`/`tpl-8` stay:
 
@@ -203,6 +203,16 @@ Update the `@signed` block's header comment too: it currently explains that both
 `lattice/test/pipeline-from-scratch.test.ts:90` — `'NonNegative_Order_balance'` → `'nonNegativeOrderBalance'`.
 
 `lattice/test/golden-trace-d.test.ts:22-23` — `'NonNegative_Invoice_totalDue'` → `'nonNegativeInvoiceTotalDue'`; `'ValueLaw_Invoice_period_wellOrdered'` → `'valPeriodInvoicePeriodWellOrdered'`.
+
+`lattice/test/cli-classify.test.ts` (~lines 185-208) — it drives a real `matchTemplates` over `traceAModel`, so it sees the renames. Replace `'NoOrphan_Subscription'` → `'refsResolveSubscription'` (3 occurrences incl. a comment), `'NoOrphan_Plan'` → `'refsResolvePlan'`, and `'Terminal_Subscription_Ended'` → **`'terminalSubscriptionAccessEnded'`**. Note that last one is not a mechanical fold: `implied.ts` names terminals `terminal<Owner><Region><State>`, and `traceAModel`'s region is `Access`, which the old name omitted entirely. Do not hand-derive these — they were computed by running `impliedInvariants(traceAModel)`.
+
+**This list of six is what a full survey found; my earlier one said five because I capped the grep output.** Before relying on it, re-run the survey yourself with no `head`/`limit`:
+
+```bash
+grep -rlE "NonNegative_|NoOrphan_|Terminal_[A-Z]|Conservation_|UniquePer_|ValueLaw_|Monotonic_|tpl-[0-9]" lattice/golden lattice/test | sort
+```
+
+Files that match the pattern but are genuinely unaffected — verified passing — are those that fabricate candidates rather than call `matchTemplates`: `test/ast/naming.test.ts`, `test/cli-explain.test.ts`, `test/cli.test.ts`, `test/emit/code-print.test.ts`. A hit is only a problem if the file drives a real `matchTemplates`/`init` over a real model.
 
 Comments in those files referencing the old names (e.g. `cli-strengthen.test.ts:339`, `:378`, `pipeline-from-scratch.test.ts:220`) must be updated too — a comment naming a symbol that no longer exists is a defect.
 
