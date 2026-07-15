@@ -369,7 +369,50 @@ fixture in the corpus.
 
 ### c07 — partial write on settle
 
-PENDING
+**Verdict: CAUGHT-VIOLATION**
+
+- Branch: `drift/c07-partial-write` (forked from work-branch tip `5ca0d78`).
+- Edit: in `recordPayment`, `implementations/subscriptions/src/billing-service.ts`, moved the
+  `db.prepare('INSERT INTO invoice_payments ...').run(...)` line so it only runs on the
+  NON-settling branch (a botched refactor that "moved recording into settle" and lost the final
+  payment insert):
+  ```ts
+  if (paid + amount === inv.total_due) settle(db, inv);
+  else {
+    db.prepare('INSERT INTO invoice_payments (invoice_id, amount, paid_at) VALUES (?,?,?)').run(invoiceId, amount, now);
+    refreshAccountSummary(db, inv.subscription_id, now);
+  }
+  ```
+- impl-exit=1 (`/tmp/drift-c07-impl.log`). 1 failed / 23 passed of 24 total:
+  - `test/read-model.test.ts > account summary read model > tracks status and balances through the
+    lifecycle` — `lifetime_paid` expected `3000`, got `0` (the settling payment's INSERT never ran,
+    so the read model's SUM sees no rows for that payment).
+  - The pre-registered "billing settle test (`amountPaid` assertions), possibly journey" did not
+    surface directly — `billing-service.test.ts`'s own settle test's `amountPaid` assertion happens
+    to still pass in this corpus's exact sequencing (record verbatim, not re-scoped); the read-model
+    test is what actually broke.
+- conform-exit=0 (`--report`; violations>0 in output is the criterion). `/tmp/drift-c07-conform.log`:
+  ```
+  conform ../implementations/subscriptions
+  15 violations across 23 snapshots (10 invariants checked)
+  residual surface: auto-bound 14/18 fields (78%), 4 overridden
+  tier 2: 64 row-traces checked against the machine
+  crosschecks: account_summary
+  guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle
+  VIOLATION neverOverpaidAndPaidExact (invariant neverOverpaidAndPaidExact) — witnesses [sub-1-inv-1] — violated by 1/1 Invoice row(s) — anchors [elicited (w1, w2, w3); w1; w2; w3; w4; w5] — source activate requires a paid invoice and emits SubscriptionActivated
+  duration 0.0s — budget 60s OK
+  ```
+  (13 more VIOLATION lines follow: `neverOverpaidAndPaidExact` fires on the settled invoice of
+  nearly every fixture that pays an invoice in full — `sub-1-inv-1`, `sub-1-inv-2`, `acme-inv-1` —
+  plus collateral `activePaidInFull` hits on `sub-1` in fixtures where the drift also leaves the
+  subscription's `paid_invoice_count`/lifecycle bookkeeping inconsistent with a fully-paid invoice.)
+- Pre-registered signal confirmed: output contains `neverOverpaidAndPaidExact` (11 occurrences)
+  with witness the settled invoice id — first hit `sub-1-inv-1`, from the pinned exercising
+  fixture family (settle path). Collateral (recorded, not the pinned signal): `activePaidInFull`
+  also fires 4 times (`sub-1`), since the drift's missing payment row makes settled subscriptions
+  look unpaid to the Invoice-side invariant AND to the Subscription-side cross-aggregate invariant.
+- Ledger evidence (`violationCount: 15`) committed on the drift branch
+  (`drift(c07): ledger evidence from conform --report run`).
 
 ### c08 — widened uniqueness
 
