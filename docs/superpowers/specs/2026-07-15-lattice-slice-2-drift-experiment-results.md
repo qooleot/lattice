@@ -154,7 +154,38 @@ including process startup ~1.2–1.5s).
 
 ### c02 — wrong event type
 
-PENDING
+**Verdict: CAUGHT-VIOLATION**
+
+- Branch: `drift/c02-wrong-event` (forked from work-branch tip after the c01 doc commit,
+  `f5f762f`).
+- Edit: in `cancelSubscription`, `implementations/subscriptions/src/subscription-service.ts`,
+  changed `appendEvent(db, SUBSCRIPTION_CANCELED, subId, { subId });` to
+  `appendEvent(db, SUBSCRIPTION_ACTIVATED, subId, { subId });` (copy-paste error).
+- impl-exit=1 (`/tmp/drift-c02-impl.log`). Failing tests:
+  - `test/lifecycle.test.ts > lifecycle > cancel is legal from trialing/active/past_due only`
+    (`eventTypes` no longer contains `SubscriptionCanceled`).
+  - `test/lifecycle.test.ts > lifecycle > exhaustion after max_retries cancels the subscription and writes off the invoice`
+    (same contains-Canceled assertion).
+  - `test/journey.test.ts > full customer journey > ...` (`eventLog` — trailing
+    `SubscriptionCanceled:acme` replaced by `SubscriptionActivated:acme`).
+  - 3 failed / 21 passed of 24 total.
+- conform-exit=0 (`--report`; violations>0 in output is the criterion). `/tmp/drift-c02-conform.log`:
+  ```
+  conform ../implementations/subscriptions
+  4 violations across 23 snapshots (10 invariants checked)
+  residual surface: auto-bound 14/18 fields (78%), 4 overridden
+  tier 2: 66 row-traces checked against the machine
+  crosschecks: account_summary
+  guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle
+  VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [sub-1] — no legal path: Subscription 'sub-1' region 'status' — stuck at event #2 (SubscriptionActivated, outbox seq 4) from state(s) {active, pastDue, canceled}; events=[SubscriptionActivated, SubscriptionActivated] — anchors [transition activate] — source cancel is legal from trialing/active/past_due only
+  ```
+  (3 more VIOLATION lines follow: `sub-1` again via the exhaustion fixture, `acme` via the journey
+  fixture, and `sub-1` via `changePlan` — all `stuck at event #2 (SubscriptionActivated`.)
+- Pre-registered signal confirmed: detail matches `stuck at event #2 (SubscriptionActivated` with
+  witness `sub-1` (first VIOLATION line, witness `[sub-1]`, from the pinned cancel-after-activate
+  lifecycle test — exact fixture pre-registered in the brief).
+- Ledger evidence (`violationCount: 4`) committed on the drift branch
+  (`drift(c02): ledger evidence from conform --report run`).
 
 ### c03 — emit outside the transaction
 
