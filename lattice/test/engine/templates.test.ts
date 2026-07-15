@@ -237,7 +237,9 @@ describe('matchTemplates — invariant names follow the camelCase convention (sp
   it('an emitted spec reloads with zero naming-convention warnings', async () => {
     const { adopt } = matchTemplates(cleanModel);
     const r = await loadLatText(astToCode(cleanModel, adopt));
-    expect(r.ok).toBe(true);
+    // Narrow the LoadResult union with control flow (not `expect`) so the
+    // compiler, not just the runtime assertion, knows `r.warnings` exists.
+    if (!r.ok) throw new Error(`expected emitted spec to parse cleanly: ${JSON.stringify(r.diagnostics)}`);
     expect(r.warnings.filter(w => w.code === 'naming-convention')).toEqual([]);
   });
 
