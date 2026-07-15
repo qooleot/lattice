@@ -6,7 +6,11 @@ import type { CaseState } from './evaluate.js';
 import type { MethodGuardVerdict } from './method-guard.js';
 
 export interface SalientFact { dim: string; value: string | number | boolean }
-export type CandidateStatus = 'active' | 'pruned' | 'merged' | 'refuted' | 'adopted' | 'parked';
+/** Refutation by verdict is 'pruned' (hypothesis.ts) — there is deliberately no 'refuted'. A
+ *  status for a human *declining* an invariant belongs with the retract command that would set it
+ *  (plan.md §10.2: "Decline → recorded in the ledger with a reason"); naming it before then only
+ *  advertised a workflow that did not exist. Every status here is written somewhere. */
+export type CandidateStatus = 'active' | 'pruned' | 'merged' | 'adopted' | 'parked';
 export type Phase = 'structure' | 'distinguish' | 'probe-forbid' | 'probe-permit' | 'alternatives' | 'regenerate' | 'converged';
 export interface TrackedCandidate { inv: CandidateInvariant; status: CandidateStatus; mergedInto?: string }
 export interface PendingWitness { witness: CaseState; purpose: 'distinguish' | 'probe-forbid' | 'probe-permit'; pair?: [string, string]; salient: SalientFact[] }

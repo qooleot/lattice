@@ -381,7 +381,7 @@ Add a temporary `console.log(judgments)` after the loop and re-run to get the re
 2. whether the extra questions are *legitimate* — i.e. the loop now asks about states that the false `SingleActive_AccountingPeriod` had previously made unreachable. **This is the expected and correct direction:** the bug was suppressing real questions, and getting them back is the fix working. It also means the trace's original 8 was measured under a false assumption.
 3. a recommendation: raise the budget to the measured value, or treat it as a genuine regression.
 
-**Do not silently raise the number.** `docs/plan.md` §2.4 treats trace C's budget as a kill criterion; moving it is a project-level decision that needs a human. Remove the temporary `console.log` before committing.
+**Do not silently raise the number.** `docs/superpowers/specs/2026-07-03-lattice-elicitation-slice-1-design.md` §2.4 ("Cross-cutting budgets and kill criteria") pre-registers it: convergence needing "> 8 judgments total for the residual on trace C" is a kill criterion, set at 2× the expected 4. Moving it is a project-level decision that needs a human. Remove the temporary `console.log` before committing.
 
 - [ ] **Step 5: Run the full suite**
 
