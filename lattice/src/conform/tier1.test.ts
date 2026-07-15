@@ -93,4 +93,54 @@ describe('checkInvariants', () => {
     // if it were evaluated as an always-property. Tier 1 must skip it and report nothing.
     expect(checkInvariants([acct('a1', 42)], guardPlan, [], 'test:guard')).toEqual([]);
   });
+
+  it('pins cross-aggregate ref-hop violations by retaining other-aggregate entities during slicing', () => {
+    // Cross-aggregate setup: Account invariant reads through wallet ref to Wallet aggregate.
+    // This exercises tier1.ts's `[s, ...others]` slicing which must retain Wallet entities
+    // so that evaluateCandidate's ref-hop (evaluate.ts line 22) can resolve wallet→w1.
+    const crossAggregatePlan: GenPlan = {
+      context: 'Test', events: [],
+      aggregates: [
+        {
+          name: 'Account', fields: [], regions: [], transitions: [],
+          invariants: [{
+            name: 'walletBalanceNonNegative', aggregate: 'Account',
+            candidate: {
+              kind: 'statePredicate', aggregate: 'Account',
+              body: {
+                kind: 'cmp', op: 'ge',
+                left: { kind: 'field', owner: 'self', path: ['wallet', 'balance'] },
+                right: { kind: 'int', value: 0 },
+              },
+            },
+            anchors: { specElement: 'invariant walletBalanceNonNegative', provenance: ['cross-agg'], witnessIds: [] },
+          }],
+        },
+        {
+          name: 'Wallet', fields: [], regions: [], transitions: [],
+          invariants: [],
+        },
+      ],
+    };
+
+    const acctWithWallet = (id: string, walletId: string): CaseEntity => ({
+      type: 'Account', id, fields: { accountId: id, wallet: walletId },
+    });
+    const wallet = (id: string, balance: number): CaseEntity => ({
+      type: 'Wallet', id, fields: { walletId: id, balance },
+    });
+
+    // a1 → w1 (balance -7, violates), a2 → w2 (balance 3, ok)
+    const entities: CaseEntity[] = [
+      acctWithWallet('a1', 'w1'),
+      acctWithWallet('a2', 'w2'),
+      wallet('w1', -7),
+      wallet('w2', 3),
+    ];
+
+    const v = checkInvariants(entities, crossAggregatePlan, [], 'test:cross-agg');
+    expect(v).toHaveLength(1);
+    expect(v[0]!.invariant).toBe('walletBalanceNonNegative');
+    expect(v[0]!.witnessIds).toEqual(['a1']);
+  });
 });
