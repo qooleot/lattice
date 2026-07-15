@@ -31,19 +31,8 @@ describe('matchTemplates', () => {
     expect(adopt.some(a => a.candidate.kind === 'conservation' && a.candidate.aggregate === 'Obligation')).toBe(true));
   it('#2 non-negative for every Money field', () =>
     expect(adopt.filter(a => a.name.startsWith('NonNegative')).length).toBe(3));
-  it('#2 skips @signed Money fields — matches implied.ts and docs/language/tags.md', () => {
-    const signedModel: DomainModel = {
-      context: 'Ledger', ticksPerDay: 24, enums: [], values: [], aggregates: [],
-      entities: [{ kind: 'entity', name: 'Account', fields: [
-        { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
-        { name: 'cleared', type: { kind: 'prim', prim: 'Money' } },
-        { name: 'adjustment', type: { kind: 'prim', prim: 'Money' }, tags: ['signed'] }] }],
-      events: [], services: []
-    };
-    const names = matchTemplates(signedModel).adopt.map(a => a.name);
-    expect(names).toContain('NonNegative_Account_cleared');
-    expect(names).not.toContain('NonNegative_Account_adjustment');
-  });
+  // @signed suppression is covered by the dedicated describe block below, which also pins the
+  // stronger property: that this derivation and implied.ts agree.
   it('#3 terminal for @terminal states', () =>
     expect(adopt.some(a => a.candidate.kind === 'terminal' && (a.candidate as any).state === 'Closed')).toBe(true));
   // Catalog (docs/plan.md §10.2 row 7) defines #7 as `@active` on a CHILD COLLECTION -> the
@@ -111,6 +100,43 @@ describe('matchTemplates — type-carried value laws', () => {
   it('all adopted value laws have template source + deterministic ids', () => {
     expect(adopt.every(a => a.source === 'template')).toBe(true);
     expect(new Set(adopt.map(a => a.id)).size).toBe(adopt.length);
+  });
+});
+
+// #2 non-negativity is derived in two places for two purposes (adopt-for-enforcement here,
+// dedup-for-printing in implied.ts). They drifted once: templates.ts ignored @signed, so a
+// `balance : Money @signed` was adopted as `balance >= 0` — constraining every witness the solver
+// drew, AND (since isImplied consults implied.ts, which honoured @signed) printed by astToCode as
+// an explicit invariant contradicting the tag three lines above it. Both callers now share
+// nonNegativeMoneyFields; these tests pin the agreement rather than either implementation.
+describe('matchTemplates — #2 non-negativity honours @signed (no drift with implied.ts)', () => {
+  const signedModel: DomainModel = {
+    context: 'Ledger', ticksPerDay: 24, enums: [], values: [], entities: [],
+    aggregates: [{ kind: 'aggregate', name: 'Account', fields: [
+      { name: 'accountId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'balance', type: { kind: 'prim', prim: 'Money' }, tags: ['signed'] },
+      { name: 'lifetimeFees', type: { kind: 'prim', prim: 'Money' } }] }],
+    events: [], services: []
+  };
+  const { adopt } = matchTemplates(signedModel);
+
+  it('adopts no non-negative rule for a @signed Money field', () =>
+    expect(adopt.some(a => a.name === 'NonNegative_Account_balance')).toBe(false));
+
+  it('still adopts one for an unsigned Money field alongside it', () =>
+    expect(adopt.some(a => a.name === 'NonNegative_Account_lifetimeFees')).toBe(true));
+
+  // The drift guard proper: anything astToCode would print (adopted ∧ ¬isImplied) is a rule the
+  // two modules disagree about. This is the assertion that fails if either derivation moves alone.
+  it('every adopted non-negative candidate is recognized as implied', () => {
+    const nonNeg = adopt.filter(a => a.name.startsWith('NonNegative'));
+    expect(nonNeg.length).toBeGreaterThan(0);
+    expect(nonNeg.filter(a => !isImplied(a.candidate, signedModel))).toEqual([]);
+  });
+
+  it('holds for the richer revrec fixture too', () => {
+    const nonNeg = matchTemplates(revrecMini).adopt.filter(a => a.name.startsWith('NonNegative'));
+    expect(nonNeg.filter(a => !isImplied(a.candidate, revrecMini))).toEqual([]);
   });
 });
 

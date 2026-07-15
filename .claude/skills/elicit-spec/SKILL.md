@@ -16,11 +16,23 @@ the doctor output is all-green. Fresh checkouts and git worktrees lack node_modu
 gitignored solver binaries; the script installs deps and links solvers from the main checkout
 (idempotent, seconds when already set up). If it fails, stop and show the user its output.
 
+## Phase 0a — orient (you, no solver)
+BEFORE proposing any structure, ask 1–2 OPEN questions and let the user answer in their own words:
+the domain as they would explain it to a new hire, and — critically — whether they already have
+names for the core business objects. Recognition beats recall for *judging* a structure, but only
+once something has been recalled; proposing first anchors the user to your ontology and leaves them
+only a veto, which is a weak instrument for "you carved this along the wrong axis." Record the
+answers as structure Q&A. If they name objects, reconcile them explicitly against your Phase 0
+proposal and surface every divergence — the divergences are the informative part, and they are cheap
+before `init` and expensive after. Budget 1–2 of the ~15 questions for this.
+
 ## Phase 0 — structure elicitation (you, no solver)
-From the user's domain description, PROPOSE a concrete structure and let them correct it:
+From the Phase 0a answers, PROPOSE a concrete structure and let them correct it:
 aggregates, entities, enums, lifecycle blocks/states (tag @active/@terminal), refs, field tags
 (@balance/@total/@monotonic on money-flow fields — these power auto-invariants). One question
-per message; multiple-choice when possible; the user judges, never authors. Budget ~15 questions.
+per message; multiple-choice when possible; the user judges, never authors. Budget ~20 questions
+across 0a/0/0b — and spend it, don't grow it: a question Phase 0b earned (a field the templates
+proved missing) is worth more than one you guessed at, so let it displace a weaker one.
 Record each structure Q&A via `engine structure --question ... --answer ...` as you go, so the
 ledger keeps a durable trace of how the structure was decided.
 
@@ -46,14 +58,62 @@ init` (still you, no solver — each recorded as structure Q&A):
    `creates`/read-only methods too; the user corrects the list. This is the first step to compress
    if the question budget strains.
 
+## Phase 0b — dry-run the model against the templates (you, no solver)
+Before the real `init`, draft the model and init it into a THROWAWAY session, read what matched,
+then delete it. Put it OUTSIDE the repo — `SCRATCH=$(mktemp -d)` once, then `--session "$SCRATCH"`
+— and re-`init` a fresh `$(mktemp -d)` per re-run, since `init` is not idempotent. A random temp
+dir cannot collide with a previous run's leftovers, cannot be committed by accident, and is reaped
+by the OS if you never get to the `rm -rf "$SCRATCH"`. Do not hand-name scratch dirs in the repo
+root: the tree is not the place for a directory whose whole purpose is to be thrown away. This
+phase exists to make YOUR questions better: never show the user the scratch session, its JSON, or
+the model file.
+
+Read the result twice. First the `adopted` list — those become constraints on every witness the
+solver later draws (`planner.ts` passes them into every `solve`) and never re-enter the loop, so one
+false template silently distorts every Phase 2 question you will ever ask. Second — and this has no
+other home in the process — walk `templates.ts` (it is the authoritative list; never trust a list of
+templates written in this file) and for EVERY rule that did NOT fire, name the ingredient it wanted
+and decide: is the INGREDIENT missing, or is the FACT missing? Phases 1/2 elicit invariants over a
+FIXED model; no verdict can report that a field is absent. This is the only step that can. The
+shapes that recur, whatever the domain:
+- a missing TAG — the fact is in the model but untagged, so the rule cannot see it
+- a TYPE too weak to trip the rule — is the stronger type the honest one for this field?
+- a missing ARITY — the rule wants two of something and the model has one; what is the other?
+- a missing FIELD — the fact is nowhere in the model (the b03 pattern); ask for it, then re-run
+- an owner that matched NOTHING — genuinely inert, or does its `doc` assert a relationship its
+  fields don't carry? Prose doing structural work is the loudest signal available to you
+- an owner the matcher cannot see at all (it walks TOP-LEVEL `aggregates`/`entities` only)
+Each answer is a Phase 0 question you did not know to ask. One instance, to calibrate: a `Bill`
+carrying `total` and `amountDue` but no `amountPaid` — the conservation rule wants two parts and a
+total, found one, and silently did not fire. Nothing downstream would ever have reported it.
+
+Fix the model and re-run the scratch init as often as needed — that is what a throwaway is for.
+`init` is NOT idempotent (a second one duplicates every adopted candidate) and structure Q&A shares
+`ledger.jsonl` with adopted entries, so this cannot be iterated in the real session without either
+corrupting it or destroying the structure trace.
+
 When stable: `engine init --model <file>`. Fix any diagnostics by asking, not guessing.
-Present the auto-adopted template invariants as a list ("these come free — object to any?").
-All declared names (context, aggregates, entities, enums, fields, states, events) are code
-identifiers: PascalCase/camelCase, no spaces or punctuation — `engine init` rejects violations
-with `invalid-name`. The human-readable description of the domain goes in the model's `doc`
-field, never in a name. Example: `{ "context": "Subscriptions", "doc": "Subscriptions API:
-hybrid license-fee + usage-based billing", ... }` emits `// Subscriptions API: ...` above
-`context Subscriptions {`.
+Present the auto-adopted template invariants for objection — but NEVER as a bare list of template
+names. `SingleActive_Biller` is engine vocabulary; the user has no way to object to a name, so a
+name-list makes the objection step theater. For each one, state what it FORBIDS, in the user's
+own domain nouns, as a concrete case: "at most one Biller may be onboarding/active/suspended at
+any time — a second one is illegal". If you cannot state what a template forbids without using
+its template name, you do not understand it yet: read `lattice/src/engine/templates.ts` and find
+out before presenting it. Templates fire on structural coincidence, not domain truth: a match means
+the model's SHAPE tripped a rule, never that the rule holds in this domain — the same match on the
+same shape is right in one domain and absurd in the next. So audit each one against the domain
+YOURSELF and lead with the ones you suspect are wrong, rather than asking the user to find them.
+
+This generalizes: whenever a concept the user has not seen enters the conversation — a template
+name, an engine phase, a grammar kind, a solver artifact — either anchor it to a specific entity,
+field, or state change in THEIR domain, or explain it in one plain sentence before it appears in
+a question. The user judges domain truth; they cannot judge our vocabulary.
+
+How to author the model — names, types, tags, doc comments — is specified in `docs/language/`
+(start with `naming-conventions.md`). Read it; do not author from memory and do not trust a
+restatement in this file. The only authoring rule that is yours and not the language's: the
+human-readable description of the domain goes in a `doc` field, never in a name —
+`{ "context": "Subscriptions", "doc": "hybrid license-fee + usage-based billing" }`.
 
 ## Phase 1 — seeding
 Fold the engine's returned seeds with your own domain knowledge into 3–5 candidate invariants

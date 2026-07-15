@@ -56,15 +56,21 @@ export function valueLawInstances(m: DomainModel): { owner: AggregateDef | Entit
 }
 
 /**
- * The Money-non-negative rule's single source of truth — `docs/language/derived-invariants.md`:
- * an untagged `Money` field is non-negative; `@signed` opts out (a running balance, a refund
- * adjustment). Shared by impliedInvariants (below — parse-time dedup, never printed) and
- * templates.ts's tpl-2 (enforcement + template provenance). These two derived the rule separately
- * once and drifted: tpl-2 ignored @signed, silently adopting the rule on fields the modeler had
- * explicitly excluded. Keep them reading from here so they cannot diverge again.
+ * The Money ⇒ non-negative derivation, opted out of by @signed (spec P9). Shared with
+ * templates.ts's matchTemplates.adopt exactly as valueLawInstances is — ONE source of truth,
+ * because a divergence between the two is silent and severe: adopted candidates constrain every
+ * witness the solver draws (planner.ts), while astToCode prints any adopted candidate that
+ * isImplied — i.e. this module — does not recognize (code.ts). A rule the two disagree about is
+ * therefore both enforced and emitted into spec.lat, contradicting the very tag it ignored, and
+ * the round-trip cannot flag it redundant precisely because it is not implied.
+ *
+ * Both halves of the rule live here: which fields it applies to, and what it asserts. Sharing the
+ * predicate alone would leave the body duplicated at each call site — the same drift, one level
+ * down, and isImplied matches on body SHAPE (code.ts), so a body that drifts is exactly the
+ * divergence this comment warns about.
  */
-export const isUnsignedMoney = (f: Field): boolean =>
-  f.type.kind === 'prim' && f.type.prim === 'Money' && !f.tags?.includes('signed');
+export const nonNegativeMoneyFields = (o: AggregateDef | EntityDef): Field[] =>
+  o.fields.filter(f => f.type.kind === 'prim' && f.type.prim === 'Money' && !f.tags?.includes('signed'));
 
 export const nonNegativeBody = (field: string): Predicate =>
   ({ kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [field] }, right: { kind: 'int', value: 0 } });
@@ -72,16 +78,14 @@ export const nonNegativeBody = (field: string): Predicate =>
 /**
  * Structure-implied invariants (spec P9): @terminal ⇒ stays-terminal, ref ⇒ refs-resolve,
  * Money (unless @signed) ⇒ non-negative. Derived at load, never printed (spec §3.4).
- * The elicitation flow (templates.ts) is untouched — golden traces must not shift.
  */
 export function impliedInvariants(m: DomainModel): CandidateInvariant[] {
   const out: CandidateInvariant[] = [];
   const owners: (AggregateDef | EntityDef)[] = [...m.aggregates, ...m.entities];
   for (const o of owners) {
-    for (const f of o.fields)
-      if (isUnsignedMoney(f))
-        out.push(mk(`nonNegative${cap(o.name)}${cap(f.name)}`,
-          { kind: 'statePredicate', aggregate: o.name, body: nonNegativeBody(f.name) }));
+    for (const f of nonNegativeMoneyFields(o))
+      out.push(mk(`nonNegative${cap(o.name)}${cap(f.name)}`,
+        { kind: 'statePredicate', aggregate: o.name, body: nonNegativeBody(f.name) }));
     const sameContextRefFields = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type)).map(f => f.name);
     if (sameContextRefFields.length > 0)
       out.push(mk(`refsResolve${cap(o.name)}`, { kind: 'refsResolve', aggregate: o.name, fields: sameContextRefFields }));

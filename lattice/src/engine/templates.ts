@@ -1,7 +1,7 @@
 import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
 import { isQualifiedRef } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant } from '../ast/invariant.js';
-import { isUnsignedMoney, nonNegativeBody, valueLawInstances } from './implied.js';
+import { nonNegativeBody, nonNegativeMoneyFields, valueLawInstances } from './implied.js';
 
 const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
 const mk = (id: string, name: string, candidate: Candidate, prior = 0.9): CandidateInvariant =>
@@ -30,8 +30,9 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
       adopt.push(mk(`tpl-1-${o.name}`, `Conservation_${o.name}`,
         { kind: 'conservation', aggregate: o.name, parts: balances.map(b => [b.name]), total: [total.name] }));
 
-    // #2 non-negative for Money fields — @signed opts out (isUnsignedMoney is the shared rule)
-    for (const f of o.fields.filter(isUnsignedMoney))
+    // #2 non-negative for Money fields — @signed opts out; both the field set and the body come
+    // from implied.ts so the two derivations of this rule cannot drift (see nonNegativeMoneyFields).
+    for (const f of nonNegativeMoneyFields(o))
       adopt.push(mk(`tpl-2-${o.name}-${f.name}`, `NonNegative_${o.name}_${f.name}`,
         { kind: 'statePredicate', aggregate: o.name, body: nonNegativeBody(f.name) }));
 
