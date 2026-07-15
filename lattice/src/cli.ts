@@ -343,7 +343,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       name: { type: 'string' }, workspace: { type: 'string' }, 'max-steps': { type: 'string' }, conjunct: { type: 'string' },
       choose: { type: 'string' }, spec: { type: 'string' }, ledger: { type: 'string' },
       target: { type: 'string' }, enforce: { type: 'boolean' }, report: { type: 'boolean' },
-      contract: { type: 'boolean' },
+      contract: { type: 'boolean' }, id: { type: 'string' }, reason: { type: 'string' },
     }});
 
     // generate has its own source-of-input pair (--spec [--ledger], the .lat-canonical path) as
@@ -373,6 +373,10 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       case 'structure':
         if (!values.question) return { error: 'missing-arg', arg: 'question' };
         if (!values.answer) return { error: 'missing-arg', arg: 'answer' };
+        break;
+      case 'decline':
+        if (!values.id) return { error: 'missing-arg', arg: 'id' };
+        if (!values.reason) return { error: 'missing-arg', arg: 'reason' };
         break;
       case 'apply': if (!values.lat) return { error: 'missing-arg', arg: 'lat' }; break;
       case 'sync': if (!values.lat) return { error: 'missing-arg', arg: 'lat' }; break;
@@ -545,6 +549,22 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       case 'structure': {
         appendLedger(dir, { kind: 'structure', at: now(), question: values.question!, answer: values.answer! });
         return { ok: true, ledgerCount: readLedger(dir).length };
+      }
+      case 'decline': {
+        // The early half of §10.2's accept/decline: same ledger record reconcile.ts writes for a
+        // hand-removal, reachable at the moment the reviewer notices rather than only after
+        // hand-editing spec.lat. Refused once a verdict exists — witnesses were drawn from a space
+        // this rule shaped, so retracting it cannot un-ask the questions already answered. The late
+        // path stays `apply --force-remove`, which reconciles properly.
+        if (readLedger(dir).some(e => e.kind === 'verdict'))
+          return { error: 'verdicts-exist',
+            hint: 'decline is only legal before the first verdict; hand-edit spec.lat and use `apply --force-remove`' };
+        const tracked = s.candidates.find(c => c.inv.id === values.id);
+        if (!tracked) return { error: 'unknown-candidate', id: values.id };
+        if (tracked.status !== 'adopted') return { error: 'not-adopted', id: values.id, status: tracked.status };
+        tracked.status = 'declined';
+        appendLedger(dir, { kind: 'declined', at: now(), invariant: tracked.inv, reason: values.reason! });
+        return done({ ok: true, declined: tracked.inv.name });
       }
       case 'status': {
         // classified entries are append-only (session.ts:29-32) — later entries supersede earlier
