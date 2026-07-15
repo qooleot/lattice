@@ -62,7 +62,7 @@ export type LedgerEntry =
       violationCount: number;
       violations: { specElement: string; anchors: string[]; witnessIds: string[]; source: string; detail: string }[];
       residual: { autoBound: number; overridden: number; total: number };
-      optOuts: { invariant: string; reason: string }[]; durationMs: number };
+      optOuts: { invariant: string; reason: string }[]; crosschecks: string[]; durationMs: number };
 
 /** Calendar day of an ISO timestamp — the human-facing date in provenance and refusal text. */
 export const isoDay = (at: string): string => at.slice(0, 10);

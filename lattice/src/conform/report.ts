@@ -111,7 +111,7 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
       traceRowsChecked: report.traceRowsChecked, violationCount: report.violations.length,
       violations: report.violations.map(v => ({ specElement: v.specElement, anchors: v.anchors,
         witnessIds: v.witnessIds, source: v.source, detail: v.detail })),
-      residual: report.residual, optOuts: report.optOuts, durationMs: report.durationMs,
+      residual: report.residual, optOuts: report.optOuts, crosschecks: report.crosschecks, durationMs: report.durationMs,
     });
   } catch (e) { ledgerError = e instanceof Error ? e.message : String(e); }
   return { report, exitCode, ledgerError };

@@ -193,6 +193,8 @@ describe('runConform', () => {
       expect(entries[0]).toMatchObject({ kind: 'conformance', mode: 'report', target: resolve(tmpDir) });
       expect(entries[0]!.snapshots).toBeGreaterThan(0);
       expect(typeof entries[0]!.durationMs).toBe('number');
+      // tmp-target test copies overrides but NOT crosschecks.ts, so expect empty crosschecks array
+      expect(entries[0]!.crosschecks).toEqual([]);
 
       await runConform(tmpDir, 'report');
       expect(forThisRun()).toHaveLength(2); // append-only, one per run
