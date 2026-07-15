@@ -16,9 +16,8 @@ SQLite-backed TypeScript service with guards, outbox events, invariant enforceme
 `generated/subscriptions/`), inference (entailment classification + CTI-guided strengthening),
 generated mermaid docs, and conformance Tiers 1+2 (auto-bound `observe()` + machine-reachability
 trace checking over captured suite states via `lattice conform`, runs recorded to the ledger;
-negative control clean). Not yet run: the pre-registered drift experiments (plan 4) — briefs in
-`docs/superpowers/specs/`, and the app/UI —
-briefs in `docs/superpowers/specs/`. A real elicited spec lives at `specs/subscriptions/spec.lat`.
+negative control clean). Not yet run: the pre-registered drift experiments (plan 4) and the
+app/UI — briefs in `docs/superpowers/specs/`. A real elicited spec lives at `specs/subscriptions/spec.lat`.
 
 ## Getting started
 
