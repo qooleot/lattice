@@ -47,7 +47,7 @@
 - Modify: `lattice/src/engine/templates.ts`
 - Modify: `lattice/src/engine/implied.ts`
 - Modify: `lattice/test/engine/templates.test.ts`
-- Modify: `lattice/golden/trace-c.test.ts:52`, `lattice/test/cli-strengthen.test.ts:344`, `lattice/test/cli-strengthen.integration.test.ts:82`, `lattice/test/pipeline-from-scratch.test.ts:90`, `lattice/test/golden-trace-d.test.ts:22-23`
+- Modify (six files pinning pre-delegation names): `lattice/golden/trace-c.test.ts:52`, `lattice/test/cli-strengthen.test.ts:344`, `lattice/test/cli-strengthen.integration.test.ts:82`, `lattice/test/pipeline-from-scratch.test.ts:90`, `lattice/test/golden-trace-d.test.ts:22-23`, `lattice/test/cli-classify.test.ts:185-208`
 
 **Interfaces:**
 - Consumes: `impliedInvariants(m: DomainModel): CandidateInvariant[]` from `./implied.js`.
@@ -139,22 +139,55 @@ Remove the now-unused `Field` import from `templates.ts` if tsc flags it (it was
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run test/engine/templates.test.ts`
-Expected: PASS for the new block. Three pre-existing tests in that file pin the old naming and will FAIL — update each:
+Expected: PASS for the new block, and **exactly five** pre-existing tests FAIL. All five pin the pre-delegation names. Fix each:
 
+**(a)** in `describe('matchTemplates', …)`:
 ```ts
   // was: expect(adopt.filter(a => a.name.startsWith('NonNegative')).length).toBe(3)
   it('#2 non-negative is delegated to implied.ts (camelCase, implied- ids)', () =>
     expect(adopt.filter(a => a.name.startsWith('nonNegative')).length).toBe(3));
 ```
 
-In the `#2 non-negativity honours @signed` describe block, rename the two expectations:
-`'NonNegative_Account_balance'` → `'nonNegativeAccountBalance'`, `'NonNegative_Account_lifetimeFees'` → `'nonNegativeAccountLifetimeFees'`. Keep both — they still pin @signed suppression, now through the delegation.
+**(b)+(c)** in `describe('matchTemplates — #2 non-negativity honours @signed …')`: rename `'NonNegative_Account_lifetimeFees'` → `'nonNegativeAccountLifetimeFees'`, and in `every adopted non-negative candidate is recognized as implied` change the filter `a.name.startsWith('NonNegative')` → `'nonNegative'`.
+
+Its sibling `adopts no non-negative rule for a @signed Money field` keeps passing, but only **vacuously** — it asserts `'NonNegative_Account_balance'` is absent, and post-delegation no name is ever spelled that way, so it would pass even if `@signed` were ignored again. Rename it to `'nonNegativeAccountBalance'` so it tests the thing it claims to.
+
+**(d)+(e)** in `describe('matchTemplates — type-carried value laws', …)` — Step 3 deletes the `valueLawInstances` loop, so `adopt.find(a => a.id.startsWith('tpl-val-'))` is now `undefined` and both tests break (the second by dereferencing `law!`). Value laws now arrive via `impliedInvariants` like the other three families:
+
+```ts
+describe('matchTemplates — type-carried value laws', () => {
+  const { adopt } = matchTemplates(periodModel);
+  const law = adopt.find(a => a.id.startsWith('implied-val'));
+
+  it('adopts a value invariant as a prefixed statePredicate at its use site', () => {
+    expect(law).toBeDefined();
+    expect(law!.id).toBe('implied-valPeriodSubscriptionPeriodWellOrdered');
+    expect(law!.name).toBe('valPeriodSubscriptionPeriodWellOrdered');
+    expect(law!.candidate).toMatchObject({ kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'cmp', op: 'lt', left: { kind: 'field', path: ['period', 'start'] }, right: { kind: 'field', path: ['period', 'end'] } } });
+  });
+
+  it('the adopted value law IS the implied one, not a copy of it', () => {
+    expect(isImplied(law!.candidate, periodModel)).toBe(true);
+    expect(impliedInvariants(periodModel).find(i => i.id.startsWith('implied-val'))).toEqual(law);
+  });
+
+  it('all adopted value laws have template source + deterministic ids', () => {
+    expect(adopt.every(a => a.source === 'template')).toBe(true);
+    expect(new Set(adopt.map(a => a.id)).size).toBe(adopt.length);
+  });
+});
+```
+
+The second test is deliberately strengthened from `toEqual(law!.candidate)` to `toEqual(law)` — comparing whole objects. Shape-agreement was the right assertion when two derivations had to be kept in step; identity is what this task establishes, and only the whole-object compare pins it.
+
+That block's header comment (the "Task 11" paragraph above it) claims both callers "derive from the shared `valueLawInstances` helper … so they can never drift apart". After this task `templates.ts` does not derive value laws at all — rewrite it to say `impliedInvariants` is the sole derivation and `matchTemplates` adopts its output, which is what makes drift impossible.
 
 **Leave the two tpl-7 tests alone** (`#7 adopts NO cardinality for a refless @active aggregate`, and `#7 adopts no SingleActive_* … multi-tenant shape`). They assert an absence, which delegation does not touch, and they are `9bc1ed5`'s regression guard against re-inferring singletons from shape.
 
-Update that block's header comment too: it currently explains that both callers "now share `nonNegativeMoneyFields`". After this task they do not share it — there is one caller. The comment should say the tests pin that delegation keeps `matchTemplates` and `implied.ts` in agreement by construction.
+Update the `@signed` block's header comment too: it currently explains that both callers "now share `nonNegativeMoneyFields`". After this task there is one caller and nothing is shared — say instead that the tests pin @signed suppression surviving the delegation, and that agreement is now structural rather than asserted.
 
-- [ ] **Step 6: Migrate the five test files that hard-code names/ids**
+- [ ] **Step 6: Migrate the six test files that hard-code names/ids**
 
 `lattice/golden/trace-c.test.ts:52` — `tpl-3-*` and `tpl-9-*` become `implied-*`; `tpl-1`/`tpl-8` stay:
 
@@ -170,6 +203,16 @@ Update that block's header comment too: it currently explains that both callers 
 `lattice/test/pipeline-from-scratch.test.ts:90` — `'NonNegative_Order_balance'` → `'nonNegativeOrderBalance'`.
 
 `lattice/test/golden-trace-d.test.ts:22-23` — `'NonNegative_Invoice_totalDue'` → `'nonNegativeInvoiceTotalDue'`; `'ValueLaw_Invoice_period_wellOrdered'` → `'valPeriodInvoicePeriodWellOrdered'`.
+
+`lattice/test/cli-classify.test.ts` (~lines 185-208) — it drives a real `matchTemplates` over `traceAModel`, so it sees the renames. Replace `'NoOrphan_Subscription'` → `'refsResolveSubscription'` (3 occurrences incl. a comment), `'NoOrphan_Plan'` → `'refsResolvePlan'`, and `'Terminal_Subscription_Ended'` → **`'terminalSubscriptionAccessEnded'`**. Note that last one is not a mechanical fold: `implied.ts` names terminals `terminal<Owner><Region><State>`, and `traceAModel`'s region is `Access`, which the old name omitted entirely. Do not hand-derive these — they were computed by running `impliedInvariants(traceAModel)`.
+
+**This list of six is what a full survey found; my earlier one said five because I capped the grep output.** Before relying on it, re-run the survey yourself with no `head`/`limit`:
+
+```bash
+grep -rlE "NonNegative_|NoOrphan_|Terminal_[A-Z]|Conservation_|UniquePer_|ValueLaw_|Monotonic_|tpl-[0-9]" lattice/golden lattice/test | sort
+```
+
+Files that match the pattern but are genuinely unaffected — verified passing — are those that fabricate candidates rather than call `matchTemplates`: `test/ast/naming.test.ts`, `test/cli-explain.test.ts`, `test/cli.test.ts`, `test/emit/code-print.test.ts`. A hit is only a problem if the file drives a real `matchTemplates`/`init` over a real model.
 
 Comments in those files referencing the old names (e.g. `cli-strengthen.test.ts:339`, `:378`, `pipeline-from-scratch.test.ts:220`) must be updated too — a comment naming a symbol that no longer exists is a defect.
 

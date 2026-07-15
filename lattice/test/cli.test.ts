@@ -170,7 +170,7 @@ describe('engine CLI', () => {
     const ledger = readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l: string) => JSON.parse(l));
     const openDecision = ledger.find((e: any) => e.kind === 'open-decision' && e.topic === 'unanchored-survivor');
     expect(openDecision).toBeDefined();
-    // Template auto-adopts at init (e.g. NoOrphan_Subscription) are unrelated and expected; the
+    // Template auto-adopts at init (e.g. refsResolveSubscription) are unrelated and expected; the
     // elicited survivor H1 specifically must never get an 'adopted' ledger entry.
     expect(ledger.find((e: any) => e.kind === 'adopted' && e.invariant.id === 'H1')).toBeUndefined();
   });
@@ -195,7 +195,7 @@ describe('engine CLI', () => {
       context: 'Dedup', enums: [], values: [], events: [], entities: [], services: [],
       aggregates: [{ kind: 'aggregate', name: 'Box', fields: [
         { name: 'boxId', type: { kind: 'prim', prim: 'Id' }, key: true },
-        { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }],
+        { name: 'amount', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] }] }],
     };
     writeFileSync(join(dir, 'm.json'), JSON.stringify(model));
     await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
@@ -207,7 +207,7 @@ describe('engine CLI', () => {
       : o && typeof o === 'object' ? Object.fromEntries(Object.keys(o).reverse().map(k => [k, reorder(o[k])])) : o;
     adoptedEntry.inv.candidate = reorder(adoptedEntry.inv.candidate);
     writeFileSync(statePath, JSON.stringify(state));
-    // init template-adopts NonNegative_Box_amount whose candidate matches the implied rule
+    // init template-adopts nonNegativeBoxAmount whose candidate matches the implied rule
     const r: any = await runCommand(['emit', '--session', dir, '--out', dir], fakeDeps);
     expect(r.written).toBeDefined();
     const prose = readFileSync(join(dir, 'spec.prose.md'), 'utf8');

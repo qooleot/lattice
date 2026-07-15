@@ -32,11 +32,11 @@ export function prefixPredicate(p: Predicate, prefix: Path): Predicate {
  * Type-carried laws (design §3.5/§6): every value-typed field `f: V` on an owner instantiates
  * each of V's own invariants as a statePredicate CANDIDATE on the OWNER, with every term path
  * prefixed `[f.name, …]` — e.g. Period.wellOrdered (`start < end`) on Subscription.period becomes
- * a candidate reading `period.start < period.end`. Shared by impliedInvariants (below — parse-time
- * dedup, never printed) and templates.ts's matchTemplates.adopt (enforcement + template
- * provenance) — same shape, same source of truth, so isImplied's shape match correctly suppresses
- * the per-site printed form no matter which caller instantiated it (astToCode filters on
- * candidate shape, not id/source).
+ * a candidate reading `period.start < period.end`. impliedInvariants (below) is the only caller,
+ * and templates.ts's matchTemplates adopts impliedInvariants' output verbatim, so this is the one
+ * derivation of value laws — there is no second copy to disagree with it. isImplied's shape match
+ * suppresses the per-site printed form whether the candidate was adopted into a session or derived
+ * fresh here, because astToCode filters on candidate shape, not id/source.
  */
 export function valueLawInstances(m: DomainModel): { owner: AggregateDef | EntityDef; field: string; value: ValueDef; inv: NonNullable<ValueDef['invariants']>[number]; candidate: Candidate }[] {
   const out: { owner: AggregateDef | EntityDef; field: string; value: ValueDef; inv: NonNullable<ValueDef['invariants']>[number]; candidate: Candidate }[] = [];
@@ -55,24 +55,11 @@ export function valueLawInstances(m: DomainModel): { owner: AggregateDef | Entit
   return out;
 }
 
-/**
- * The Money ⇒ non-negative derivation, opted out of by @signed (spec P9). Shared with
- * templates.ts's matchTemplates.adopt exactly as valueLawInstances is — ONE source of truth,
- * because a divergence between the two is silent and severe: adopted candidates constrain every
- * witness the solver draws (planner.ts), while astToCode prints any adopted candidate that
- * isImplied — i.e. this module — does not recognize (code.ts). A rule the two disagree about is
- * therefore both enforced and emitted into spec.lat, contradicting the very tag it ignored, and
- * the round-trip cannot flag it redundant precisely because it is not implied.
- *
- * Both halves of the rule live here: which fields it applies to, and what it asserts. Sharing the
- * predicate alone would leave the body duplicated at each call site — the same drift, one level
- * down, and isImplied matches on body SHAPE (code.ts), so a body that drifts is exactly the
- * divergence this comment warns about.
- */
-export const nonNegativeMoneyFields = (o: AggregateDef | EntityDef): Field[] =>
+/** Money ⇒ non-negative, opted out of by @signed (spec P9). */
+const nonNegativeMoneyFields = (o: AggregateDef | EntityDef): Field[] =>
   o.fields.filter(f => f.type.kind === 'prim' && f.type.prim === 'Money' && !f.tags?.includes('signed'));
 
-export const nonNegativeBody = (field: string): Predicate =>
+const nonNegativeBody = (field: string): Predicate =>
   ({ kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [field] }, right: { kind: 'int', value: 0 } });
 
 /**
@@ -96,9 +83,9 @@ export function impliedInvariants(m: DomainModel): CandidateInvariant[] {
           { kind: 'terminal', aggregate: o.name, region: r.name, state: s.name }));
   }
   // Type-carried laws (design §3.5): every value-typed field's own invariants, instantiated at
-  // each use site — see valueLawInstances. Parse-time dedup only; never printed (isImplied's
-  // shape match, used by astToCode, suppresses these regardless of which caller — here or
-  // templates.ts's matchTemplates.adopt — instantiated the matching candidate).
+  // each use site — see valueLawInstances. Never printed: isImplied's shape match, used by
+  // astToCode, keys on candidate shape rather than id or source, so it suppresses a value law
+  // read back from a session as readily as one derived fresh here.
   for (const { owner, field, value, inv } of valueLawInstances(m))
     out.push({ id: `implied-val${value.name}${cap(owner.name)}${cap(field)}${cap(inv.name)}`,
       name: `val${value.name}${cap(owner.name)}${cap(field)}${cap(inv.name)}`, prior: 1, source: 'template',

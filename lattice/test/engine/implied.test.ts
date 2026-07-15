@@ -127,7 +127,7 @@ describe('impliedInvariants — type-carried value laws', () => {
       body: { kind: 'cmp', op: 'lt', left: { kind: 'field', path: ['period', 'start'] }, right: { kind: 'field', path: ['period', 'end'] } } });
   });
 
-  it('valueLawInstances is the shared source of truth (implied + templates derive from it)', () => {
+  it('valueLawInstances is the sole derivation of value laws; impliedInvariants is its only caller', () => {
     const instances = valueLawInstances(periodModel);
     expect(instances).toHaveLength(1);
     expect(instances[0]!.owner.name).toBe('Subscription');

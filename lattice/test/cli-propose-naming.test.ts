@@ -11,8 +11,8 @@ const MODEL = {
   aggregates: [{
     kind: 'aggregate', name: 'Invoice', fields: [
       { name: 'invoiceId', type: { kind: 'prim', prim: 'Id' }, key: true },
-      { name: 'totalDue', type: { kind: 'prim', prim: 'Money' } },
-      { name: 'usageAmount', type: { kind: 'prim', prim: 'Money' } },
+      { name: 'totalDue', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] },
+      { name: 'usageAmount', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] },
     ],
   }],
 };

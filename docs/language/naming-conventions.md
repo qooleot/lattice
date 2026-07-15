@@ -45,16 +45,17 @@ Every row in the table above is enforced as the `naming-convention` diagnostic �
 flags the style deviation. This is deliberate: case style is a readability convention the team can
 choose to enforce strictly (e.g. in review) without it blocking the parser or the solvers.
 
-## Agent-authored names are normalized, not warned
+## Candidate invariant names are normalized, not warned
 
-The warning above governs `.lat` text, which a human wrote. Candidate invariants arrive by a
-different road: `engine propose` reads them as JSON, and JSON never reaches the parser — so no
-`naming-convention` warning could ever fire on them. Left unchecked, a name like
+The warning above governs `.lat` text, which a human wrote. Candidate invariant names this codebase
+generates itself arrive by two roads, and neither passes through the parser, so no
+`naming-convention` warning could ever fire on them.
+
+One road is `engine propose`: it reads candidate invariants as JSON. Left unchecked, a name like
 `TotalDue_At_Most_Parts` reaches the ledger, gets adopted, and can then only be corrected through
-apply's `--rename` confirmation ceremony.
-
-So `propose` folds candidate names onto the convention on the way in
-([`toCamelName`](../../lattice/src/ast/naming.ts)), reporting each change under `normalized`:
+apply's `--rename` confirmation ceremony. So `propose` folds candidate names onto the convention on
+the way in ([`toCamelName`](../../lattice/src/ast/naming.ts)), reporting each change under
+`normalized`:
 
 ```
 $ engine propose --session s --candidates round1.json
@@ -62,10 +63,24 @@ $ engine propose --session s --candidates round1.json
   "normalized": [{ "id": "r1-discounts", "from": "TotalDue_At_Most_Parts", "to": "totalDueAtMostParts" }] }
 ```
 
-The split is about authorship, not construct kind. In `.lat` the identifier is the author's and the
-convention stays advisory — rewriting their file would overstep. A candidate name is agent-authored
-with nothing referencing it yet, and camelCase is a pure function of the words, so there is no
-judgment to defer to anyone and no reason to spend a round-trip asking.
+The other road is template matching: `matchTemplates` builds invariant names such as
+`Conservation_Invoice` or `Monotonic_Invoice_paidTotal` while matching a domain model against the
+template catalog, and folds them the same way at its own return, before either `adopt` or `seeds`
+is seen outside the module.
+
+Those two roads are the whole of the folding: it covers candidate invariant names, not every name
+the codebase mints. Auto-derived transition guards are the standing exception — `cli.ts` mints
+`guard_<transition>_<shape>` at a single point and keeps it verbatim, so the underscore form is what
+lands in the ledger and what `explain --name` answers to. Nothing is lost by leaving it alone: a
+guard is never printed as a standalone `invariant` block — it renders only through its transition's
+`requires` — so it never reaches the parser either, and no `naming-convention` warning can fire on
+it.
+
+Where folding does apply, the split is about authorship, not construct kind or which module does the
+folding. In `.lat` the identifier is the author's and the convention stays advisory — rewriting
+their file would overstep. A candidate name or a template-matched name is machine-authored with
+nothing referencing it yet, and camelCase is a pure function of the words, so there is no judgment
+to defer to anyone and no reason to spend a round-trip asking.
 
 Two candidates in one batch folding onto the same name is the one case that *is* judgment — an
 ambiguity no normalizer can settle — and `propose` refuses the batch with `name-collision`. The

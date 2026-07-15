@@ -17,10 +17,10 @@ describe('golden trace D: invoice-lines sum-over-collection, elicited end-to-end
     const modelFile = join(dir, 'model.json');
     writeFileSync(modelFile, JSON.stringify(traceDModel));
 
-    // --- Step 1: init — template adoptions fire ---
+    // --- Step 1: init — adoptions fire ---
     const init: any = await runCommand(['init', '--session', dir, '--model', modelFile], realDeps);
-    expect(init.adopted.map((a: any) => a.name)).toContain('NonNegative_Invoice_totalDue');
-    expect(init.adopted.map((a: any) => a.name)).toContain('ValueLaw_Invoice_period_wellOrdered');
+    expect(init.adopted.map((a: any) => a.name)).toContain('nonNegativeInvoiceTotalDue');
+    expect(init.adopted.map((a: any) => a.name)).toContain('valPeriodInvoicePeriodWellOrdered');
 
     // --- Step 2: propose H1 (eq) / H2 (le) sumOverCollection rivals ---
     const cands = [

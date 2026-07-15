@@ -72,15 +72,16 @@ describe('engine classify interactive strengthening hook (bulk, REAL quint)', ()
     // THE PROOF: the masking reclassify — run over REAL quint with the guard now in the machine —
     // reports paidExact as `entailed`. Guard-blind (pre-fix), this comes back `violated`. The
     // broadened §7.2 aggregate scope (item 1) also sweeps in every other adopted invariant over
-    // Invoice — here the four NonNegative_Invoice_* templates matchTemplates auto-adopts for
-    // subscriptionsModel's four Money fields — which real quint confirms stay `entailed` too.
+    // Invoice — here the four nonNegativeInvoice* implied invariants matchTemplates adopts (via
+    // impliedInvariants) for subscriptionsModel's four Money fields — which real quint confirms
+    // stay `entailed` too.
     expect(r.autoStrengthened[0].reclassified).toContainEqual(
       expect.objectContaining({ invariant: 'paidExact', verdict: 'entailed' }),
     );
     expect(r.autoStrengthened[0].reclassified.every((e: any) => e.verdict === 'entailed')).toBe(true);
     expect(r.autoStrengthened[0].reclassified.map((e: any) => e.invariant).sort()).toEqual([
-      'NonNegative_Invoice_amountPaid', 'NonNegative_Invoice_licenseFeeAmount',
-      'NonNegative_Invoice_totalDue', 'NonNegative_Invoice_usageAmount', 'paidExact',
+      'nonNegativeInvoiceAmountPaid', 'nonNegativeInvoiceLicenseFeeAmount',
+      'nonNegativeInvoiceTotalDue', 'nonNegativeInvoiceUsageAmount', 'paidExact',
     ]);
 
     // The guard is now adopted in the session with the same id the `strengthen` command mints.
@@ -94,7 +95,7 @@ describe('engine classify interactive strengthening hook (bulk, REAL quint)', ()
     // 600s, not 300s: this test runs 28 sequential real-quint verifies totalling ~299s (measured;
     // longest single call 25s, well under the adapter's 90s exec timeout — nothing hangs). The
     // 300s budget was set when the reclassify checked only paidExact; broadening it to the whole
-    // aggregate scope (9b0bba7) brought in the four NonNegative_Invoice_* and ~5x'd the work,
+    // aggregate scope (9b0bba7) brought in the four nonNegativeInvoice* implied invariants and ~5x'd the work,
     // leaving the test at 99.5% of budget — a coin flip on ordinary jitter, not a flake. 2x the
     // measured cost is the headroom the §2.4 budgets use.
   }, 600_000);

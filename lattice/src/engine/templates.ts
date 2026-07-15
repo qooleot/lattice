@@ -1,23 +1,22 @@
-import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
+import type { AggregateDef, DomainModel, EntityDef } from '../ast/domain.js';
 import { isQualifiedRef } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant } from '../ast/invariant.js';
-import { nonNegativeBody, nonNegativeMoneyFields, valueLawInstances } from './implied.js';
+import { impliedInvariants } from './implied.js';
+import { toCamelName } from '../ast/naming.js';
 
 const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
 const mk = (id: string, name: string, candidate: Candidate, prior = 0.9): CandidateInvariant =>
   ({ id, name, prior, source: 'template', candidate });
 
 export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; seeds: CandidateInvariant[] } {
-  const adopt: CandidateInvariant[] = [];
+  // The structure-implied families (non-negativity, refs-resolve, terminal, value laws) are NOT
+  // derived here. implied.ts is their single source of truth and its output is adopted verbatim:
+  // adoption is what puts a rule in front of the solver (planner.ts's adoptedConstraints reads
+  // s.candidates; impliedInvariants never reaches a solver on its own), so a second derivation
+  // here bought nothing but the opportunity to disagree — which it took, ignoring @signed while
+  // implied.ts honoured it. Only rules with no implied.ts counterpart are matched below.
+  const adopt: CandidateInvariant[] = [...impliedInvariants(m)];
   const seeds: CandidateInvariant[] = [];
-
-  // Type-carried laws (design §3.5/§6): every value-typed field's own invariants, adopted at each
-  // use site — mirrors Money non-negativity (#2 below) exactly: implied.ts derives the same
-  // candidate shape for parse-dedup (never printed), this gives it template provenance so the
-  // elicitation/enforcement loop treats it as an adopted invariant like any other template match.
-  for (const { owner, field, value, inv, candidate } of valueLawInstances(m))
-    adopt.push(mk(`tpl-val-${value.name}-${owner.name}-${field}-${inv.name}`,
-      `ValueLaw_${owner.name}_${field}_${inv.name}`, candidate));
 
   for (const o of owners(m)) {
     const refs = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type));
@@ -30,29 +29,12 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
       adopt.push(mk(`tpl-1-${o.name}`, `Conservation_${o.name}`,
         { kind: 'conservation', aggregate: o.name, parts: balances.map(b => [b.name]), total: [total.name] }));
 
-    // #2 non-negative for Money fields — @signed opts out; both the field set and the body come
-    // from implied.ts so the two derivations of this rule cannot drift (see nonNegativeMoneyFields).
-    for (const f of nonNegativeMoneyFields(o))
-      adopt.push(mk(`tpl-2-${o.name}-${f.name}`, `NonNegative_${o.name}_${f.name}`,
-        { kind: 'statePredicate', aggregate: o.name, body: nonNegativeBody(f.name) }));
-
     // #8 monotonic from @monotonic tag
     for (const f of o.fields.filter(f => f.tags?.includes('monotonic')))
       adopt.push(mk(`tpl-8-${o.name}-${f.name}`, `Monotonic_${o.name}_${f.name}`,
         { kind: 'monotonic', aggregate: o.name, field: [f.name] }));
 
-    // #9 no-orphan for owners with refs — fields scopes evaluation to same-context (unqualified)
-    // ref fields only (spec §4.2 excludes qualified/cross-context refs from invariant semantics).
-    if (refs.length > 0)
-      adopt.push(mk(`tpl-9-${o.name}`, `NoOrphan_${o.name}`,
-        { kind: 'refsResolve', aggregate: o.name, fields: refs.map(f => f.name) }));
-
     for (const r of machine?.regions ?? []) {
-      // #3 terminal
-      for (const s of r.states.filter(s => s.tags?.includes('terminal')))
-        adopt.push(mk(`tpl-3-${o.name}-${s.name}`, `Terminal_${o.name}_${s.name}`,
-          { kind: 'terminal', aggregate: o.name, region: r.name, state: s.name }));
-
       // #7 single-active (uniqueness) — catalog §10.2 row 7: an @active state on a CHILD
       // COLLECTION seeds `unique while active by (parent)`. Deliberately silent for a refless
       // aggregate: singleton-ness is a claim about how many instances EXIST and is not recoverable
@@ -60,7 +42,7 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
       const actives = r.states.filter(s => s.tags?.includes('active')).map(s => s.name);
       if (actives.length > 0)
         for (const f of refs)
-          seeds.push(mk(`tpl-7-${o.name}-${f.name}`, `UniquePer_${f.name}`,
+          seeds.push(mk(`tpl-7-${o.name}-${f.name}`, `UniquePer_${o.name}_${f.name}`,
             { kind: 'unique', aggregate: o.name, whileStates: { region: r.name, states: actives }, by: [[f.name]] }, 0.4));
 
       // #6+#11 grace-window shell: @active states + a Duration field + a (possibly one-hop) Date path
@@ -75,7 +57,13 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
                 right: { kind: 'plus', left: { kind: 'field', owner: 'self', path: datePath }, right: { kind: 'field', owner: 'self', path: [duration.name] } } } } }, 0.5));
     }
   }
-  return { adopt, seeds };
+  // Fold names onto the convention here, at the boundary where THIS module authors them, exactly
+  // as cli.ts's `propose` does for agent-authored names (docs/language/naming-conventions.md): a
+  // machine-authored name is normalized, a hand-written one only warned. Folding at the return
+  // keeps the literals above readable as `NonNegative_${o.name}_${f.name}` while nothing outside
+  // ever sees the un-folded form.
+  const fold = (i: CandidateInvariant): CandidateInvariant => ({ ...i, name: toCamelName(i.name) });
+  return { adopt: adopt.map(fold), seeds: seeds.map(fold) };
 }
 
 function findDatePath(m: DomainModel, o: AggregateDef | EntityDef): string[] | null {
