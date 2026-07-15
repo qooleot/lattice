@@ -91,5 +91,11 @@ describe('engine classify interactive strengthening hook (bulk, REAL quint)', ()
 
     // M-3: the adopted guard must NOT appear in `skipped` (that list names unclassified INVARIANTS).
     expect((r.skipped ?? []).some((x: any) => x.kind === 'guard')).toBe(false);
-  }, 300_000);
+    // 600s, not 300s: this test runs 28 sequential real-quint verifies totalling ~299s (measured;
+    // longest single call 25s, well under the adapter's 90s exec timeout — nothing hangs). The
+    // 300s budget was set when the reclassify checked only paidExact; broadening it to the whole
+    // aggregate scope (9b0bba7) brought in the four NonNegative_Invoice_* and ~5x'd the work,
+    // leaving the test at 99.5% of budget — a coin flip on ordinary jitter, not a flake. 2x the
+    // measured cost is the headroom the §2.4 budgets use.
+  }, 600_000);
 });

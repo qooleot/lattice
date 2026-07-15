@@ -63,9 +63,17 @@ export function valueLawInstances(m: DomainModel): { owner: AggregateDef | Entit
  * isImplied — i.e. this module — does not recognize (code.ts). A rule the two disagree about is
  * therefore both enforced and emitted into spec.lat, contradicting the very tag it ignored, and
  * the round-trip cannot flag it redundant precisely because it is not implied.
+ *
+ * Both halves of the rule live here: which fields it applies to, and what it asserts. Sharing the
+ * predicate alone would leave the body duplicated at each call site — the same drift, one level
+ * down, and isImplied matches on body SHAPE (code.ts), so a body that drifts is exactly the
+ * divergence this comment warns about.
  */
 export const nonNegativeMoneyFields = (o: AggregateDef | EntityDef): Field[] =>
   o.fields.filter(f => f.type.kind === 'prim' && f.type.prim === 'Money' && !f.tags?.includes('signed'));
+
+export const nonNegativeBody = (field: string): Predicate =>
+  ({ kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [field] }, right: { kind: 'int', value: 0 } });
 
 /**
  * Structure-implied invariants (spec P9): @terminal ⇒ stays-terminal, ref ⇒ refs-resolve,
@@ -76,9 +84,8 @@ export function impliedInvariants(m: DomainModel): CandidateInvariant[] {
   const owners: (AggregateDef | EntityDef)[] = [...m.aggregates, ...m.entities];
   for (const o of owners) {
     for (const f of nonNegativeMoneyFields(o))
-      out.push(mk(`nonNegative${cap(o.name)}${cap(f.name)}`, { kind: 'statePredicate', aggregate: o.name,
-        body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [f.name] },
-          right: { kind: 'int', value: 0 } } }));
+      out.push(mk(`nonNegative${cap(o.name)}${cap(f.name)}`,
+        { kind: 'statePredicate', aggregate: o.name, body: nonNegativeBody(f.name) }));
     const sameContextRefFields = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type)).map(f => f.name);
     if (sameContextRefFields.length > 0)
       out.push(mk(`refsResolve${cap(o.name)}`, { kind: 'refsResolve', aggregate: o.name, fields: sameContextRefFields }));

@@ -1,7 +1,7 @@
 import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
 import { isQualifiedRef } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant } from '../ast/invariant.js';
-import { nonNegativeMoneyFields, valueLawInstances } from './implied.js';
+import { nonNegativeBody, nonNegativeMoneyFields, valueLawInstances } from './implied.js';
 
 const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
 const mk = (id: string, name: string, candidate: Candidate, prior = 0.9): CandidateInvariant =>
@@ -30,12 +30,11 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
       adopt.push(mk(`tpl-1-${o.name}`, `Conservation_${o.name}`,
         { kind: 'conservation', aggregate: o.name, parts: balances.map(b => [b.name]), total: [total.name] }));
 
-    // #2 non-negative for Money fields — @signed opts out; shared with implied.ts so the two
-    // derivations of this rule cannot drift (see nonNegativeMoneyFields).
+    // #2 non-negative for Money fields — @signed opts out; both the field set and the body come
+    // from implied.ts so the two derivations of this rule cannot drift (see nonNegativeMoneyFields).
     for (const f of nonNegativeMoneyFields(o))
       adopt.push(mk(`tpl-2-${o.name}-${f.name}`, `NonNegative_${o.name}_${f.name}`,
-        { kind: 'statePredicate', aggregate: o.name,
-          body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [f.name] }, right: { kind: 'int', value: 0 } } }));
+        { kind: 'statePredicate', aggregate: o.name, body: nonNegativeBody(f.name) }));
 
     // #8 monotonic from @monotonic tag
     for (const f of o.fields.filter(f => f.tags?.includes('monotonic')))
@@ -54,17 +53,15 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
         adopt.push(mk(`tpl-3-${o.name}-${s.name}`, `Terminal_${o.name}_${s.name}`,
           { kind: 'terminal', aggregate: o.name, region: r.name, state: s.name }));
 
-      // #7 single-active
+      // #7 single-active (uniqueness) — catalog §10.2 row 7: an @active state on a CHILD
+      // COLLECTION seeds `unique while active by (parent)`. Deliberately silent for a refless
+      // aggregate: singleton-ness is a claim about how many instances EXIST and is not recoverable
+      // from field shape, so it is elicited or authored (`count where … <= 1`), never inferred.
       const actives = r.states.filter(s => s.tags?.includes('active')).map(s => s.name);
-      if (actives.length > 0) {
-        if (refs.length === 0)
-          adopt.push(mk(`tpl-7-${o.name}`, `SingleActive_${o.name}`,
-            { kind: 'cardinality', aggregate: o.name, where: { kind: 'inState', owner: 'self', region: r.name, states: actives }, atMost: 1 }));
-        else
-          for (const f of refs)
-            seeds.push(mk(`tpl-7-${o.name}-${f.name}`, `UniquePer_${f.name}`,
-              { kind: 'unique', aggregate: o.name, whileStates: { region: r.name, states: actives }, by: [[f.name]] }, 0.4));
-      }
+      if (actives.length > 0)
+        for (const f of refs)
+          seeds.push(mk(`tpl-7-${o.name}-${f.name}`, `UniquePer_${f.name}`,
+            { kind: 'unique', aggregate: o.name, whileStates: { region: r.name, states: actives }, by: [[f.name]] }, 0.4));
 
       // #6+#11 grace-window shell: @active states + a Duration field + a (possibly one-hop) Date path
       const duration = o.fields.find(f => f.type.kind === 'prim' && f.type.prim === 'Duration');
