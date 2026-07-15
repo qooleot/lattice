@@ -68,7 +68,7 @@ export function cancelSubscription(db: Database.Database, subId: string): void {
     if (!['trialing', 'active', 'past_due'].includes(sub.lifecycle_state))
       throw new Error(`cancel: ${subId} is ${sub.lifecycle_state}`);
     db.prepare(`UPDATE subscriptions SET lifecycle_state = 'canceled' WHERE id = ?`).run(subId);
-    appendEvent(db, SUBSCRIPTION_CANCELED, subId, { subId });
+    appendEvent(db, SUBSCRIPTION_ACTIVATED, subId, { subId });
     refreshAccountSummary(db, subId, 0);
   })();
 }
