@@ -119,7 +119,38 @@ including process startup ~1.2–1.5s).
 
 ### c01 — skipped emit
 
-PENDING
+**Verdict: CAUGHT-VIOLATION**
+
+- Branch: `drift/c01-skipped-emit` (forked from `0cad28c`).
+- Edit: deleted `appendEvent(db, SUBSCRIPTION_ACTIVATED, subId, { subId });` from `activate` in
+  `implementations/subscriptions/src/subscription-service.ts`.
+- impl-exit=1 (`/tmp/drift-c01-impl.log`). Failing tests:
+  - `test/lifecycle.test.ts > lifecycle > activate requires a paid invoice and emits SubscriptionActivated`
+    (`eventTypes` assertion — expected `SubscriptionActivated` appended, got only `['InvoiceFinalized', 'InvoicePaid']`).
+  - `test/journey.test.ts > full customer journey > trial → activate → usage/rollover → failed charge → dunning exhaustion`
+    (`eventLog` assertion — missing `SubscriptionActivated:acme`).
+  - Collateral: 1 additional test file failed (3 failed / 21 passed of 24 total) — a settle-path
+    test whose event-count expectation also shifted.
+- conform-exit=0 (`--report` never sets a nonzero exit; violations>0 in output is the criterion
+  per protocol). `/tmp/drift-c01-conform.log`:
+  ```
+  conform ../implementations/subscriptions
+  7 violations across 23 snapshots (10 invariants checked)
+  residual surface: auto-bound 14/18 fields (78%), 4 overridden
+  tier 2: 66 row-traces checked against the machine
+  crosschecks: account_summary
+  guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle
+  VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [sub-1] — no legal path: Subscription 'sub-1' region 'status' — all 0 event(s) consumed, reachable state(s) {trialing, expired} do not include observed final 'active'; events=[] — anchors [spec:machine Subscription.status] — source activate requires a paid invoice and emits SubscriptionActivated
+  ```
+  (6 more VIOLATION lines follow, all `machine Subscription.status`, same shape, from other
+  fixtures whose traces now dead-end for `sub-1`.)
+- Pre-registered signals confirmed: output contains `machine Subscription.status` (7 occurrences)
+  and details matching `do not include observed final 'active'` (5 of 7; the other 2 read
+  `do not include observed final 'pastDue'` — same drift, later fixture states — collateral, not
+  the pinned signal, recorded for completeness).
+- Ledger evidence (`.lattice-session-subscriptions/ledger.jsonl`, `violationCount: 7`) committed on
+  the drift branch (`drift(c01): ledger evidence from conform --report run`), per the "drift-branch
+  runs append to their own ledger copy" rule.
 
 ### c02 — wrong event type
 
