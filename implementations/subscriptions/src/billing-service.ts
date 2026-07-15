@@ -49,7 +49,7 @@ function settle(db: Database.Database, inv: InvoiceRow): void {
   appendEvent(db, INVOICE_PAID, inv.id, { invoiceId: inv.id });
   const sub = getSubscription(db, inv.subscription_id);
   db.prepare('UPDATE subscriptions SET paid_invoice_count = paid_invoice_count + 1 WHERE id = ?').run(sub.id);
-  if (sub.lifecycle_state === 'past_due') {
+  if (sub.lifecycle_state === 'past_due' || sub.lifecycle_state === 'canceled') {
     // payment restored the account — silent recovery, no event
     db.prepare(`UPDATE subscriptions SET lifecycle_state = 'active' WHERE id = ?`).run(sub.id);
   }

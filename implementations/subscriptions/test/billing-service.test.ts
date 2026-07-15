@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { makeDb } from './support.js';
-import { createSubscription, getSubscription } from '../src/subscription-service.js';
+import { cancelSubscription, createSubscription, getSubscription } from '../src/subscription-service.js';
 import { amountPaid, finalizeInvoice, getInvoice, recordPayment, voidInvoice, writeOffInvoice } from '../src/billing-service.js';
 
 function seeded() {
@@ -45,5 +45,13 @@ describe('billing-service', () => {
     expect(getInvoice(db, 'sub-1-inv-1').settlement_state).toBe('void');
     expect(() => writeOffInvoice(db, 'sub-1-inv-1')).toThrow();
     expect(events(db)).toEqual([]);
+  });
+
+  it('win-back: a canceled customer who settles is reactivated (v2 flow)', () => {
+    const db = seeded();
+    finalizeInvoice(db, 'sub-1-inv-1');
+    cancelSubscription(db, 'sub-1');                    // canceled with an open invoice
+    recordPayment(db, 'sub-1-inv-1', 5_000, 1_200);     // pays in full → drifted settle revives
+    expect(getSubscription(db, 'sub-1').lifecycle_state).toBe('active');
   });
 });
