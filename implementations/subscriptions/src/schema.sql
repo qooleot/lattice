@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS subscriptions (
   id                 TEXT PRIMARY KEY,
   plan_code          TEXT NOT NULL,
-  seats              INTEGER NOT NULL,
+  seat_qty           INTEGER NOT NULL,
   period_start       INTEGER NOT NULL,
   period_end         INTEGER NOT NULL,
   accrued_units      INTEGER NOT NULL DEFAULT 0,

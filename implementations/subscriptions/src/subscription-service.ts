@@ -6,7 +6,7 @@ import { refreshAccountSummary } from './read-model.js';
 import { recordPaymentFailure } from './dunning.js';
 
 export interface SubscriptionRow {
-  id: string; plan_code: string; seats: number; period_start: number; period_end: number;
+  id: string; plan_code: string; seat_qty: number; period_start: number; period_end: number;
   accrued_units: number; paid_invoice_count: number; max_retries: number;
   current_invoice_id: string | null; lifecycle_state: string; superseded_by: string | null;
 }
@@ -27,7 +27,7 @@ export function createSubscription(db: Database.Database, a: CreateSubscriptionA
     if (a.seats <= 0) throw new Error('seats must be positive');
     if (a.periodEnd <= a.periodStart) throw new Error('period must be well-ordered');
     db.prepare(`INSERT INTO subscriptions
-        (id, plan_code, seats, period_start, period_end, max_retries)
+        (id, plan_code, seat_qty, period_start, period_end, max_retries)
         VALUES (?,?,?,?,?,?)`)
       .run(a.id, a.planCode, a.seats, a.periodStart, a.periodEnd, a.maxRetries ?? 3);
     const invoiceId = `${a.id}-inv-1`;
@@ -123,7 +123,7 @@ export function changeSeats(db: Database.Database, subId: string, newSeats: numb
     if (inv.settlement_state !== 'draft') throw new Error('seat changes only while the current invoice is draft');
     if (inv.usage_amount + prorationAmount < 0) throw new Error('proration would drive usage negative');
     db.prepare('UPDATE invoices SET usage_amount = usage_amount + ? WHERE id = ?').run(prorationAmount, inv.id);
-    db.prepare('UPDATE subscriptions SET seats = ? WHERE id = ?').run(newSeats, subId);
+    db.prepare('UPDATE subscriptions SET seat_qty = ? WHERE id = ?').run(newSeats, subId);
   })();
 }
 
@@ -134,7 +134,7 @@ export function changePlan(db: Database.Database, subId: string, a: ChangePlanAr
     const sub = getSubscription(db, subId);
     cancelSubscription(db, subId);
     createSubscription(db, {
-      id: a.newId, planCode: a.planCode, seats: sub.seats,
+      id: a.newId, planCode: a.planCode, seats: sub.seat_qty,
       periodStart: a.now, periodEnd: a.periodEnd,
       licenseFeeAmount: a.licenseFeeAmount, maxRetries: sub.max_retries,
     });

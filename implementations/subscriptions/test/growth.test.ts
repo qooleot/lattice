@@ -51,7 +51,7 @@ describe('growth features (superset)', () => {
   it('changeSeats prorates onto the draft and clamps below zero', () => {
     const db = activeSub();
     changeSeats(db, 'sub-1', 6, 1_500);
-    expect(getSubscription(db, 'sub-1').seats).toBe(6);
+    expect(getSubscription(db, 'sub-1').seat_qty).toBe(6);
     expect(getInvoice(db, 'sub-1-inv-2').usage_amount).toBe(1_500);
     expect(() => changeSeats(db, 'sub-1', 2, -9_999)).toThrow(/negative/);
   });
@@ -65,7 +65,7 @@ describe('growth features (superset)', () => {
     expect(oldSub.superseded_by).toBe('sub-2');
     const newSub = getSubscription(db, 'sub-2');
     expect(newSub.plan_code).toBe('pro');
-    expect(newSub.seats).toBe(4); // carried over from the superseded row
+    expect(newSub.seat_qty).toBe(4); // carried over from the superseded row
     expect(newSub.lifecycle_state).toBe('trialing');
   });
 });
