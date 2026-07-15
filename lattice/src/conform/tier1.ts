@@ -28,13 +28,18 @@ function witnessesFor(inv: PlanInvariant, entities: CaseEntity[]): { ids: string
 
 export function checkInvariants(entities: CaseEntity[], plan: GenPlan, optOuts: OptOut[],
   source: string): ConformViolation[] {
+  const invariants = plan.aggregates.flatMap(a => a.invariants);
+  const invariantNames = new Set(invariants.map(i => i.name));
   // Validate all opt-outs up front — a reasonless opt-out is a config error, not a per-invariant
-  // concern, and must fail loudly before any evaluation happens.
+  // concern, and must fail loudly before any evaluation happens. Same for a phantom opt-out
+  // naming an invariant absent from the plan: it skips nothing, but the report still prints an
+  // OPT-OUT line for it, giving false comfort — treat it as a config error too, not a silent cap.
   for (const o of optOuts) {
     if (!o.reason.trim()) throw new Error(`conform: opt-out for '${o.invariant}' requires a non-empty reason`);
+    if (!invariantNames.has(o.invariant))
+      throw new Error(`conform: opt-out names unknown invariant '${o.invariant}' — not in the plan`);
   }
   const skipped = new Set(optOuts.map(o => o.invariant));
-  const invariants = plan.aggregates.flatMap(a => a.invariants);
   const out: ConformViolation[] = [];
   for (const inv of invariants) {
     if (skipped.has(inv.name)) continue;

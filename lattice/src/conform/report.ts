@@ -65,11 +65,16 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
   }
   // GenPlan has no top-level `invariants` — every invariant lives under an aggregate
   // (plan.aggregates[].invariants); guard-kind candidates are transition-enablement conditions
-  // that checkInvariants skips entirely (Tier 2's concern), so they don't count as "checked" here.
+  // that checkInvariants skips entirely (Tier 2's concern), so they don't count as "checked"
+  // here. Opted-out invariants are likewise skipped by checkInvariants (never evaluated), so an
+  // "N invariants checked" header must exclude them too — by the time we get here every opt-out
+  // has already been validated (checkInvariants throws on a reasonless or phantom one), so the
+  // subtraction is safe.
   const allInvariants = plan.aggregates.flatMap(a => a.invariants);
+  const skippedOptOuts = new Set(cfg.optOuts.map(o => o.invariant));
   const report: ConformReport = {
     target: targetDir, snapshots: snaps.length,
-    invariantsChecked: allInvariants.filter(i => i.candidate.kind !== 'guard').length,
+    invariantsChecked: allInvariants.filter(i => i.candidate.kind !== 'guard' && !skippedOptOuts.has(i.name)).length,
     optOuts: cfg.optOuts, violations, residual: residual(manifest!),
   };
   const exitCode = mode === 'enforce' && violations.length > 0 ? 1 : 0;

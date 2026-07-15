@@ -26,7 +26,7 @@ describe('observeEntities', () => {
     const manifest = bindSchema(db, tinyModel, overrides);
     const entities = observeEntities(db, tinyModel, manifest, overrides);
     expect(entities).toEqual([
-      { type: 'Account', id: 'a1', fields: { accountId: 'a1', ownerName: 'Ada', balance: 500, status: 'openState' } },
+      { type: 'Account', id: 'a1', fields: { accountId: 'a1', ownerName: 'Ada', balance: 500, 'status.state': 'openState' } },
     ]);
   });
 
@@ -50,7 +50,7 @@ describe('observeEntities', () => {
     // a1 has NULL parent_id, so the 'parent' key should be omitted from fields
     const a1 = entities.find(e => e.id === 'a1')!;
     expect('parent' in a1.fields).toBe(false);
-    expect(a1.fields).toEqual({ accountId: 'a1', ownerName: 'Ada', balance: 0, status: 'openState' });
+    expect(a1.fields).toEqual({ accountId: 'a1', ownerName: 'Ada', balance: 0, 'status.state': 'openState' });
 
     // a2 has parent_id='a1', so the 'parent' key should be present with that value
     const a2 = entities.find(e => e.id === 'a2')!;
@@ -77,5 +77,9 @@ describe('observeEntities', () => {
     const a2 = entities.find(e => e.id === 'a2')!;
     expect('parent' in a2.fields).toBe(true);
     expect(a2.fields.parent).toBe('a1');
+
+    // 'status' is a region member (bound via override here) — must project under the
+    // evaluator's witness-key convention '<region>.state', not the bare region name.
+    expect(a2.fields['status.state']).toBe('openState');
   });
 });

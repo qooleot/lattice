@@ -55,6 +55,14 @@ describe('checkInvariants', () => {
     expect(() => checkInvariants([], plan, [{ invariant: 'nonNegativeBalance', reason: '' }], 's')).toThrow(/reason/);
   });
 
+  it('rejects an opt-out naming an invariant absent from the plan (phantom opt-out)', () => {
+    // A typo'd invariant name must not be silently accepted — it would skip nothing while the
+    // report still prints an OPT-OUT line for it, giving false comfort (final-review F4).
+    expect(() => checkInvariants([acct('a1', 10)], plan,
+      [{ invariant: 'nonNegativeBalence', reason: 'typo of nonNegativeBalance' }], 's'))
+      .toThrow(/unknown invariant/);
+  });
+
   it('pins a set-level violation to all subject ids, not a single row', () => {
     const uniquePlan: GenPlan = {
       context: 'Test', events: [],

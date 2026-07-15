@@ -20,6 +20,12 @@ export function observeEntities(db: Database.Database, model: DomainModel,
     // Ref-typed spec fields are the only fields where a live SQL NULL is a legal absence
     // (an unset foreign key) rather than a lying projection — see module doc above.
     const nullableRefs = new Set(spec.fields.filter(f => f.type.kind === 'ref').map(f => f.name));
+    // Region members (spec.machine.regions — bindAggregate folds them into agg.fields
+    // alongside spec fields, see bind.ts) project under the evaluator's witness-key
+    // convention '<region>.state' (evaluate.ts's inState/whileStates read
+    // `self.fields['${region}.state']`), never the bare region name — for both auto-bound
+    // and overridden region members alike.
+    const regionNames = new Set((spec.machine?.regions ?? []).map(r => r.name));
     const rows = db.prepare(`SELECT * FROM ${agg.table}`).all() as Record<string, unknown>[];
     for (const row of rows) {
       const id = String(row[agg.keyColumn]);
@@ -34,7 +40,8 @@ export function observeEntities(db: Database.Database, model: DomainModel,
             `conform observe: ${agg.aggregate}.${fb.field} is null/undefined for row ${id} — ` +
             `projection must be total or the field overridden`);
         }
-        fields[fb.field] = v as string | number | boolean;
+        const key = regionNames.has(fb.field) ? `${fb.field}.state` : fb.field;
+        fields[key] = v as string | number | boolean;
       }
       out.push({ type: agg.aggregate, id, fields });
     }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatReport, runConform } from './report.js';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, copyFileSync, existsSync, readdirSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -63,6 +63,37 @@ describe('runConform', () => {
         expect(err).toBeInstanceOf(Error);
         expect((err as Error).message).toMatch(/must export 'overrides'/);
       }
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  it('excludes opted-out invariants from invariantsChecked (final-review F3)', async () => {
+    const implDir = resolve(__dirname, '../../..', 'implementations/subscriptions');
+    const realSessionPath = resolve(__dirname, '../../..', '.lattice-session-subscriptions');
+    const snapDir = join(implDir, '.conform/snapshots');
+    if (!existsSync(snapDir)) return; // no captured snapshots to reuse in this checkout — nothing to assert
+    const snapSqlite = readdirSync(snapDir).find(f => f.endsWith('.sqlite'));
+    if (!snapSqlite) return;
+    const snapJson = snapSqlite.replace(/\.sqlite$/, '.json');
+
+    const tmpDir = mkdtempSync(join(tmpdir(), 'conform-optout-test-'));
+    try {
+      mkdirSync(join(tmpDir, 'conform'), { recursive: true });
+      mkdirSync(join(tmpDir, '.conform', 'snapshots'), { recursive: true });
+      copyFileSync(join(implDir, 'conform', 'overrides.ts'), join(tmpDir, 'conform', 'overrides.ts'));
+      copyFileSync(join(implDir, 'conform', 'spec-state.ts'), join(tmpDir, 'conform', 'spec-state.ts'));
+      copyFileSync(join(snapDir, snapSqlite), join(tmpDir, '.conform', 'snapshots', snapSqlite));
+      copyFileSync(join(snapDir, snapJson), join(tmpDir, '.conform', 'snapshots', snapJson));
+      writeFileSync(join(tmpDir, 'conform', 'conform.config.json'), JSON.stringify({
+        session: realSessionPath,
+        snapshots: '.conform/snapshots',
+        optOuts: [{ invariant: 'retryCapWhilePastDue', reason: 'test: excluded from checked count' }],
+      }));
+
+      const { report } = await runConform(tmpDir, 'report');
+      // 6 adopted invariants total, 1 opted out — the header must say 5, not 6.
+      expect(report.invariantsChecked).toBe(5);
     } finally {
       rmSync(tmpDir, { recursive: true });
     }

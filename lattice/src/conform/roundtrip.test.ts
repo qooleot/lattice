@@ -28,7 +28,7 @@ describe('observe() round-trip against the event stream', () => {
         for (const e of events) {
           if (e.event_type === 'SubscriptionActivated') {
             const s = entities.find(x => x.type === 'Subscription' && x.id === e.aggregate_id)!;
-            expect(['active', 'pastDue', 'canceled'], `${snap}: ${e.aggregate_id}`).toContain(s.fields.status);
+            expect(['active', 'pastDue', 'canceled'], `${snap}: ${e.aggregate_id}`).toContain(s.fields['status.state']);
           }
           if (e.event_type === 'InvoicePaid') {
             const i = entities.find(x => x.type === 'Invoice' && x.id === e.aggregate_id)!;
