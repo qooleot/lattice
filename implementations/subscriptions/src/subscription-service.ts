@@ -99,16 +99,10 @@ export function rolloverPeriod(db: Database.Database, subId: string, a: Rollover
     const closingId = sub.current_invoice_id;
     const closingBefore = getInvoice(db, closingId);
     const needsBilling = closingBefore.settlement_state === 'draft'; // settled-ahead invoices skip billing
-    if (needsBilling) finalizeInvoice(db, closingId);
     db.prepare(`INSERT INTO invoices (id, subscription_id, license_fee_amount) VALUES (?,?,?)`)
       .run(a.nextInvoiceId, subId, a.licenseFeeAmount);
     db.prepare(`UPDATE subscriptions SET period_start = period_end, period_end = ?, accrued_units = 0,
                 current_invoice_id = ? WHERE id = ?`).run(a.nextPeriodEnd, a.nextInvoiceId, subId);
-    if (needsBilling) {
-      const closing = getInvoice(db, closingId);
-      if (a.charge(closingId, closing.total_due)) recordPayment(db, closingId, closing.total_due, a.now);
-      else recordPaymentFailure(db, closingId, a.now);
-    }
     refreshAccountSummary(db, subId, a.now);
   })();
 }
