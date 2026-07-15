@@ -9,8 +9,8 @@ The engine is rigorous; you are not. NEVER simulate the engine's answers — alw
 Engine: `cd lattice && npx tsx src/cli.ts <command> --session <dir>` (JSON in, JSON out).
 Session dir: `.lattice-session-<slug>/` in the repo root. Commands: structure, init, decline,
 propose, next-question, verdict, regenerate, status, witness-show, emit, apply, sync, explain,
-classify, strengthen, generate, docs (see lattice/src/cli.ts for flags — it is the authoritative
-list).
+classify, strengthen, generate, docs, conform (see lattice/src/cli.ts for flags — it is the
+authoritative list).
 
 BEFORE the first engine call, ALWAYS run `bash lattice/scripts/ensure-ready.sh` once and confirm
 the doctor output is all-green. Fresh checkouts and git worktrees lack node_modules and the
@@ -161,6 +161,15 @@ Repeat `engine next-question`:
   user it's parked as an open decision.
 - `need-alternatives` → try up to 2 genuinely different rules that also fit the ledger. Submitting
   none that survive = convergence, which is the goal, not a failure.
+- `parked` → the loop has run out of road on this question: no candidate is still active and the 3
+  regeneration attempts are spent (`reason` says why). Calling `next-question` again just returns
+  `parked` again — nothing advances, so it is not a retry. Unlike a witness you park with
+  `verdict --judge undecided`, this path writes NOTHING to the ledger, so the `Open decisions`
+  section `emit` prints from `open-decision` entries will not mention it. Carry it yourself and tell
+  the user at convergence: a rule the loop could not settle is an open decision, not a silent drop.
+  The session is not over — `propose` the next open question's candidates and the loop resumes on
+  them (but `regenAttempts` is per-session and never resets, so a later batch that empties out parks
+  at once instead of being offered `regenerate`).
 - `converged` → `engine emit --out specs/<slug>/`, show the prose spec, note open decisions.
 
 ## Rules
