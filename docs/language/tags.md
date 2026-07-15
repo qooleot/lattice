@@ -31,11 +31,11 @@ carry more than one tag.
 
 | Tag | Applies to | Meaning |
 |---|---|---|
-| `@total` | field | Marks this `Money` field as a "total" candidate for the conservation template — paired with ≥2 `@balance` fields, the elicitation flow proposes `conserve <balances> == <total>`. |
-| `@balance` | field | Marks this `Money` field as a "part" candidate for the same conservation template. |
+| `@total` | field | Marks this `Money` field as the "total" for the conservation template — paired with ≥2 `@balance` fields on the same owner, `matchTemplates` **adopts** `conserve <balances> == <total>`: `engine init` records it with `status: 'adopted'` and a ledger entry, with no review gate. |
+| `@balance` | field | Marks this `Money` field as a "part" of that same adopted conservation rule. |
 | `@signed` | field | Suppresses the [derived](derived-invariants.md) non-negative rule that would otherwise apply to a `Money` field — use it on a field that can legitimately go negative (a running balance, a refund adjustment). |
 | `@unsigned` | field | Records that this `Money` field's sign was **decided**: it may not go negative. Inert to the language — the non-negative rule already applies by default, so `@unsigned` changes no rule and suppresses none. It exists so `engine init` can tell a decided field from an unconsidered one; `init` rejects a `Money` field carrying neither `@signed` nor `@unsigned`. |
-| `@monotonic` | field | Marks a numeric field that never decreases; `matchTemplates` adopts a `monotonic` invariant for it. Template-adopted only: `engine propose` and `engine regenerate` reject the `monotonic` candidate kind as `not-elicitable` (`UNELICITABLE_KINDS` in `cli.ts`), so tagging the field is the only way this rule ever enters a spec. |
+| `@monotonic` | field | Marks a numeric field that never decreases; `matchTemplates` adopts a `monotonic` invariant for it. Template-adopted only: `engine propose` and `engine regenerate` reject the `monotonic` candidate kind as `not-elicitable` (`UNELICITABLE_KINDS` in `cli.ts`), so tagging the field is the only route by which the engine itself introduces this rule — a spec author can still write `monotonic <path>` by hand in `.lat`, which the grammar accepts (`MonotonicBody`). |
 | `@active` | state | Documents "this is a normal operating state" — no [derived](derived-invariants.md) rule reads it, but `matchTemplates` does: it seeds the tpl-7 `unique while active by (parent)` candidate and the tpl-11 deadline-bound candidate from it. |
 | `@terminal` | state | Once entered, this state is never left — [derived](derived-invariants.md) automatically as a `terminal` invariant, opt out by removing the tag. |
 | `@initial` | state | Marks the lifecycle block's starting state — **exactly one** per block is required (`multiple-initial` otherwise); this is the one tag that is structurally load-bearing, not just advisory. |
