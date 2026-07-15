@@ -44,7 +44,6 @@ export function activate(db: Database.Database, subId: string): void {
     if (sub.lifecycle_state !== 'trialing') throw new Error(`activate: ${subId} is ${sub.lifecycle_state}`);
     if (sub.paid_invoice_count < 1) throw new Error(`activate: ${subId} has no paid invoice yet`);
     db.prepare(`UPDATE subscriptions SET lifecycle_state = 'active' WHERE id = ?`).run(subId);
-    appendEvent(db, SUBSCRIPTION_ACTIVATED, subId, { subId });
     refreshAccountSummary(db, subId, 0);
   })();
 }
