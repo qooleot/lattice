@@ -189,7 +189,56 @@ including process startup ~1.2–1.5s).
 
 ### c03 — emit outside the transaction
 
-PENDING
+**Verdict: MISSED** (the pre-registered detail signal did not fire — a real but different Tier-2
+violation fired instead; recorded honestly per protocol, not re-scoped).
+
+- Branch: `drift/c03-emit-outside-tx` (forked from work-branch tip after the c02 doc commit,
+  `1afc833`).
+- Edit: in `activate`, `implementations/subscriptions/src/subscription-service.ts`, moved
+  `appendEvent(db, SUBSCRIPTION_ACTIVATED, subId, { subId });` to before `db.transaction(() => { ... })()`.
+- impl-exit=1 (`/tmp/drift-c03-impl.log`). Only 1 test failed (not the "outbox-count
+  assertions in lifecycle/journey" plural predicted by the brief):
+  - `test/lifecycle.test.ts > lifecycle > activate requires a paid invoice and emits SubscriptionActivated`
+    — `eventTypes` order assertion: expected `['InvoiceFinalized', 'InvoicePaid', 'SubscriptionActivated']`,
+    got `['SubscriptionActivated', 'InvoiceFinalized', 'InvoicePaid', 'SubscriptionActivated']`
+    (the early emit from the REJECTED first `activate(db,'sub-1')` call in the same test survives,
+    then a second, legitimate `SubscriptionActivated` is appended by the later successful call in
+    the same test body — both events land in one outbox since the DB is shared across both calls
+    within the test).
+  - 1 failed / 23 passed of 24 total. The journey test passed (its own `activate` call never hits
+    the rejection path), so the "journey" half of the predicted failure set did not fail.
+- conform-exit=0 (`--report`). `/tmp/drift-c03-conform.log`:
+  ```
+  conform ../implementations/subscriptions
+  1 violations across 23 snapshots (10 invariants checked)
+  residual surface: auto-bound 14/18 fields (78%), 4 overridden
+  tier 2: 66 row-traces checked against the machine
+  crosschecks: account_summary
+  guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle
+  VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [sub-1] — no legal path: Subscription 'sub-1' region 'status' — stuck at event #2 (SubscriptionActivated, outbox seq 4) from state(s) {active, pastDue, canceled}; events=[SubscriptionActivated, SubscriptionActivated] — anchors [transition activate] — source activate requires a paid invoice and emits SubscriptionActivated
+  duration 0.0s — budget 60s OK
+  ```
+- Pre-registered signal check (grepped verbatim, no tuning): neither substring fired.
+  - `grep "do not include observed final 'trialing'" /tmp/drift-c03-conform.log` → no match.
+  - `grep "all 1 event(s) consumed" /tmp/drift-c03-conform.log` → no match.
+  - The witness (`sub-1`) and spec element (`machine Subscription.status`, Tier 2) DO match, and a
+    real violation with a legitimate detail (`stuck at event #2 (SubscriptionActivated, outbox seq 4)
+    from state(s) {active, pastDue, canceled); events=[SubscriptionActivated, SubscriptionActivated]`)
+    was produced — but that exact string was not the pre-registered one, so per the "zero tuning /
+    verbatim MISSED" rule this class is recorded as MISSED, not silently credited as a match.
+- Root-cause finding for the human: the pre-registration assumed conform would observe an
+  *intermediate* state — final `trialing` with 1 stray event, straight after the rejected
+  `activate(db,'sub-1')` call. That state is never captured: `conform-capture.ts` snapshots only in
+  `afterEach`, i.e. once per whole test, after the test's *final* DB state. Because the pinned
+  exercising test (`activate requires a paid invoice and emits SubscriptionActivated`) chains a
+  rejected call followed by a real successful `activate` call on the SAME db/subId, the only
+  snapshot ever taken shows the union of both calls: final state `active`, 2 accumulated
+  `SubscriptionActivated` events — not the isolated rejection outcome the class spec predicted. The
+  harness still caught *a* violation from the drift (Tier 2, same spec element, same witness), just
+  described differently than pre-registered — a finding about single-snapshot-per-test capture
+  granularity limiting what the corpus can exercise, not a harness catching-power gap.
+- Ledger evidence (`violationCount: 1`) committed on the drift branch
+  (`drift(c03): ledger evidence from conform --report run`).
 
 ### c04 — weakened guard
 
