@@ -454,7 +454,49 @@ fixture in the corpus.
 
 ### c09 — cross-aggregate activation
 
-PENDING
+**Verdict: CAUGHT-VIOLATION**
+
+- Branch: `drift/c09-upgrade-activates` (forked from work-branch tip `a34633b`).
+- Edit: in `changePlan`, `implementations/subscriptions/src/subscription-service.ts`, after
+  `createSubscription(...)`, added the "carry the customer's active status over, and bill the new
+  fee immediately" accident:
+  ```ts
+  if (sub.lifecycle_state === 'active' || sub.lifecycle_state === 'past_due') {
+    finalizeInvoice(db, `${a.newId}-inv-1`);
+    db.prepare(`UPDATE subscriptions SET lifecycle_state = 'active' WHERE id = ?`).run(a.newId);
+    appendEvent(db, SUBSCRIPTION_ACTIVATED, a.newId, { subId: a.newId });
+  }
+  ```
+  (`sub` is read before `cancelSubscription`, so `sub.lifecycle_state` is the predecessor's
+  pre-cancel state; `finalizeInvoice` and `SUBSCRIPTION_ACTIVATED` were already imported.) The
+  drift emits a well-formed `SubscriptionActivated` event — the trace itself is not malformed, only
+  the unpaid activation it represents.
+- impl-exit=1 (`/tmp/drift-c09-impl.log`). 1 failed / 23 passed of 24 total:
+  - `test/growth.test.ts > growth features (superset) > changePlan supersedes: cancels old (event),
+    creates new on the new plan, never mutates plan_code` — `newSub.lifecycle_state` expected
+    `trialing`, got `active`. Matches the pre-registration exactly.
+- conform-exit=0 (`--report`; violations>0 in output is the criterion). `/tmp/drift-c09-conform.log`:
+  ```
+  conform ../implementations/subscriptions
+  2 violations across 23 snapshots (10 invariants checked)
+  residual surface: auto-bound 14/18 fields (78%), 4 overridden
+  tier 2: 66 row-traces checked against the machine
+  crosschecks: account_summary
+  guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle
+  VIOLATION activePaidInFull (invariant activePaidInFull) — witnesses [sub-2] — violated by 1/2 Subscription row(s) — anchors [hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5; w1; w2; w3; w4; w5] — source changePlan supersedes: cancels old (event), creates new on the new plan, never mutates plan_code
+  VIOLATION crosscheck account_summary (crosscheck account_summary) — witnesses [sub-2] — status 'trialing' != lifecycle_state 'active' — anchors [target crosscheck (out-of-spec read model, design §6 class 13)] — source changePlan supersedes: cancels old (event), creates new on the new plan, never mutates plan_code
+  duration 0.0s — budget 60s OK
+  ```
+- Pre-registered signal confirmed: output contains `activePaidInFull` (1 occurrence) with witness
+  `sub-2` — exact match, Tier 1, invariant fires from a passive-mode row scan (no guard evaluated),
+  exactly the pre-registered "guards are unevaluated in passive mode ... the cross-aggregate
+  invariant is the catcher" design intent for this class. Collateral (recorded, not the pinned
+  signal): the class-13 `crosscheck account_summary` instrument independently flags the same row
+  (`sub-2`, read-model `status 'trialing' != lifecycle_state 'active'` — the account_summary read
+  model was refreshed inside `createSubscription` before the drift's late mutation, so it still
+  reads `trialing` while the subscriptions table now reads `active`).
+- Ledger evidence (`violationCount: 2`) committed on the drift branch
+  (`drift(c09): ledger evidence from conform --report run`).
 
 ### c10 — schema rename breaks auto-binding
 
