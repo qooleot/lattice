@@ -519,27 +519,32 @@ Example: safety `available >= 0` is not inductive. CTI: `available=10` + `reserv
 
 ### 10.1 Two layers, clean division of labor
 
-- **Layer 1 — semantic tags** on the model (cheap, added by the domain modeler): `@active`, `@terminal`, `@balance`, `@reservation`, `@idempotencyKey`, plus the `external` keyword. Tags **classify** ("this state is terminal"); they do **not** carry rule parameters. (Per-model uniqueness is the inline `unique while … by …` statement, *not* a tag.)
+- **Layer 1 — semantic tags** on the model (cheap, added by the domain modeler). The tags the engine reads: `@initial`, `@active`, `@terminal` on states; `@balance`, `@total`, `@monotonic`, `@signed`, `@unsigned` on fields (see `docs/language/tags.md`). Tags **classify** ("this state is terminal"); they do **not** carry rule parameters. (Per-model uniqueness is the inline `unique while … by …` statement, *not* a tag.) Two clarifications the catalog below depends on: `@balance` marks **a part for the conservation rule**, not "a money bucket" — the bucket's non-negativity comes from its `Money` type, not from the tag; and `@initial` is the only structurally load-bearing one (exactly one per lifecycle block, `multiple-initial` otherwise). **Not yet implemented:** `@reservation`, `@idempotencyKey`, and the `external` keyword — no grammar or engine surface exists for any of the three, which is why templates #4 and #5 below are deferred.
 - **Layer 2 — templates** (written once by a platform team; consumed by everyone): pattern-match tags + shape → emit invariants.
 
 ### 10.2 The catalog (payments/billing starter set)
 
-| # | Template | Auto-proposed when… | Schema (parameterized) | Catches | Engine |
-|---|---|---|---|---|---|
-| 1 | Money conservation | ≥2 `@balance` fields on one aggregate | `sum(buckets) == initial(sum(buckets))` | reserve debits available w/o crediting reserved → leak | SMT (inductive) |
-| 2 | Non-negative balance | a `@balance` field | `bucket.amount >= 0` | reserve when `available < delta` | SMT + guard |
-| 3 | Terminal state | a `@terminal` state | `once T: stays T` | any transition leaving `Canceled` | temporal/safety |
-| 4 | At-most-once / idempotency | an `external` call with `@idempotencyKey` | `forall k: applied(call,k) <= 1` | crash-retry double charge | temporal + fault |
-| 5 | Reservation eventually released | `@reservation` bucket w/ no unconditional release | `reserved>0 leads-to reserved==0 under fairness` | cancel strands a reservation | liveness + fairness |
-| 6 | Cross-aggregate coupling | a `ref` with a state dependency | `A.state==Active ⇒ B.status∈{Paid} ∨ within grace` | active sub, long-unpaid invoice | relational + temporal |
-| 7 | Single-active (uniqueness) | an `@active` state on a child collection | `unique while active by (parent, key)` | two active per family | structural (Alloy) |
-| 8 | No period reuse / monotonic | an incrementing period/version/seq | `period never repeats`, `version only ↑` | double-billing a cycle | temporal |
-| 9 | No orphan (referential integrity) | any `ref` field | `every ref resolves` | invoice → deleted subscription | structural |
-| 10 | Ordered lifecycle / no-skip | a machine with intended ordering | `can't reach Paid without passing Open` | skipping finalization | reachability |
-| 11 | Deadline / grace bound | a `Date` gating a state | `state X only while now <= due + @window` | stuck `PastDue` forever | temporal + arithmetic |
-| 12 | Saga net-zero on abort | a saga with compensating transitions | `forward ∘ compensate == identity` | partial refund on abort | temporal + fault |
+| # | Template | Auto-proposed when… | Schema (parameterized) | Catches | Engine | Status |
+|---|---|---|---|---|---|---|
+| 1 | Money conservation | ≥2 `@balance` fields **and** a `@total` field on one owner | `conserve <parts> == <total>` | parts that cannot add up to their total → **a missing field** (found `Payment`'s absent clawback fields during the BillPayments elicitation) | SMT (inductive) | **implemented** — `templates.ts` #1, adopted |
+| 1b | Bucket-sum conservation | ≥2 `@balance` fields, **no** `@total` | `sum(buckets) == initial(sum(buckets))` | reserve debits available w/o crediting reserved → leak; needs no `@total` | SMT (inductive) | **deferred** — needs `initial(…)`, which the closed candidate grammar (`ast/invariant.ts`) cannot express |
+| 2 | Non-negative balance | a `Money` field not tagged `@signed` | `field >= 0` | reserve when `available < delta` | SMT + guard | **implemented** — `implied.ts`; the sign is *elicited*, not defaulted: `init` rejects a `Money` field carrying neither `@signed` nor `@unsigned` |
+| 3 | Terminal state | a `@terminal` state | `once T: stays T` | any transition leaving `Canceled` | temporal/safety | **implemented** — `implied.ts` |
+| 4 | At-most-once / idempotency | an `external` call with `@idempotencyKey` | `forall k: applied(call,k) <= 1` | crash-retry double charge | temporal + fault | **deferred** — neither `@idempotencyKey` nor the `external` keyword exists (§10.1) |
+| 5 | Reservation eventually released | `@reservation` bucket w/ no unconditional release | `reserved>0 leads-to reserved==0 under fairness` | cancel strands a reservation | liveness + fairness | **deferred** — no `@reservation` tag exists (§10.1) |
+| 6 | Cross-aggregate coupling | a `ref` with a state dependency | `A.state==Active ⇒ B.status∈{Paid} ∨ within grace` | active sub, long-unpaid invoice | relational + temporal | **deferred** — no template matches this shape, and `inState` is self-only (every consumer ignores its `owner`), so a *referenced* aggregate's state cannot be named |
+| 7 | Single-active (uniqueness) | an `@active` state on a child collection | `unique while active by (parent, key)` | two active per family | structural (Alloy) | **implemented** — `templates.ts` #7, **seeded** at prior 0.4 (a hypothesis the loop tests), not adopted |
+| 8 | No period reuse / monotonic | a `@monotonic` field | `field only ↑` | double-billing a cycle | temporal | **implemented** — `templates.ts` #8, adopted. The tag is the *only* route to a monotonic rule: `propose`/`regenerate` reject the kind as `not-elicitable` |
+| 9 | No orphan (referential integrity) | any same-context `ref` field (qualified cross-context refs excluded) | `every ref resolves` | invoice → deleted subscription | structural | **implemented** — `implied.ts`, one rule per owner covering all its ref fields |
+| 10 | Ordered lifecycle / no-skip | a machine with intended ordering | `can't reach Paid without passing Open` | skipping finalization | reachability | **deferred** — no reachability encoding; the candidate grammar has no trace/path form to say "without passing" in |
+| 11 | Deadline / grace bound | `@active` states + a `Duration` field + a `Date` reachable in ≤1 ref hop | `in an @active state ⇒ now <= <date> + <duration>` | stuck `PastDue` forever | temporal + arithmetic | **implemented** — `templates.ts` #11, **seeded** at prior 0.5, not adopted |
+| 12 | Saga net-zero on abort | a saga with compensating transitions | `forward ∘ compensate == identity` | partial refund on abort | temporal + fault | **deferred** — sagas and compensating transitions are not modelled |
 
-**Application model:** the tool matches templates → materializes candidates → renders each as a *concrete reachable violation* → the writer accepts / edits / declines. Accept → invariant added with provenance (`// from Idempotency@acme v3`). **Decline → recorded in the ledger with a reason** (a *declined* invariant ≠ an *absent* one; auditable). Templates cover the known 80%; inference (§9.1) reaches the long tail.
+A **deferred** row is recorded, not absent — this catalog's own *declined ≠ absent* rule (below), applied to the catalog itself. Each names the ingredient it waits on.
+
+**Where each rule is derived.** Two modules, no overlap: `implied.ts` owns the structure-implied families (rows 2, 3, 9, and the type-carried value laws) and is their single source of truth; `matchTemplates` **adopts its output verbatim** rather than re-deriving it, which is what puts those rules in front of the solver (`adoptedConstraints` reads only the session's candidates). `templates.ts` owns the rules with no implied counterpart: 1, 7, 8, 11.
+
+**Application model:** the tool matches templates → materializes candidates → **adopts** every match, writing a provenance-tagged `adopted` ledger entry (`template tpl-1-Bill`). Rows 7 and 11 are the exception: `init` returns them as *seeds* — hypotheses for the elicitation loop to test — rather than adopting them (§16). Review is **advisory, not a gate**: nothing blocks on it and adoption is not withheld pending it. **A decline is recorded in the ledger with a reason** (a *declined* invariant ≠ an *absent* one; auditable), by either of two paths separated by cost: `decline --id <id> --reason <text>` before the first verdict, or a hand-edit plus `apply --force-remove` after one exists. Declining is refused once a verdict exists — witnesses were drawn from a space the rule shaped, and retracting it cannot un-ask the questions already answered. **Deferred:** rendering each match as a *concrete reachable violation* for the writer to judge, and an `accept`/`edit` step opposite the decline. Templates cover the known 80%; inference (§9.1) reaches the long tail.
 
 ### 10.3 How a template is authored — three projections (like everything else)
 
