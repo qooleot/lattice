@@ -39,8 +39,13 @@ lattice/vendor/*.jar
 lattice/vendor/*.class
 lattice/vendor/jdk
 
-# Lattice: scratch sessions & solver output
-lattice/.lattice-session*/
+# Lattice: elicitation sessions & solver output. Unanchored on purpose — the elicit-spec skill
+# runs the CLI from lattice/ with `--session ../.lattice-session-<slug>/`, so sessions land at the
+# repo ROOT, which the old `lattice/`-anchored pattern never matched. Phase 0b scratch sessions go
+# to mktemp -d and never land in the tree at all; the pattern below is a backstop for the ones that
+# predate that, or that get pointed here by hand.
+.lattice-session*/
+.lattice-scratch*/
 lattice/_apalache-out/
 
 # Tooling scratch

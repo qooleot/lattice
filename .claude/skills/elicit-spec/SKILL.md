@@ -59,9 +59,14 @@ init` (still you, no solver — each recorded as structure Q&A):
    if the question budget strains.
 
 ## Phase 0b — dry-run the model against the templates (you, no solver)
-Before the real `init`, draft the model and init it into a THROWAWAY session
-(`--session .lattice-scratch-<slug>/`), read what matched, then delete the directory. This exists to
-make YOUR questions better: never show the user the scratch session, its JSON, or the model file.
+Before the real `init`, draft the model and init it into a THROWAWAY session, read what matched,
+then delete it. Put it OUTSIDE the repo — `SCRATCH=$(mktemp -d)` once, then `--session "$SCRATCH"`
+— and re-`init` a fresh `$(mktemp -d)` per re-run, since `init` is not idempotent. A random temp
+dir cannot collide with a previous run's leftovers, cannot be committed by accident, and is reaped
+by the OS if you never get to the `rm -rf "$SCRATCH"`. Do not hand-name scratch dirs in the repo
+root: the tree is not the place for a directory whose whole purpose is to be thrown away. This
+phase exists to make YOUR questions better: never show the user the scratch session, its JSON, or
+the model file.
 
 Read the result twice. First the `adopted` list — those become constraints on every witness the
 solver later draws (`planner.ts` passes them into every `solve`) and never re-enter the loop, so one
