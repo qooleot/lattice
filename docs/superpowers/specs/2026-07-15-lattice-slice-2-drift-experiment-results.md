@@ -240,6 +240,18 @@ violation fired instead; recorded honestly per protocol, not re-scoped).
 - Ledger evidence (`violationCount: 1`) committed on the drift branch
   (`drift(c03): ledger evidence from conform --report run`).
 
+**Controller adjudication (human review requested at the Task-8 verdict):** the registered
+DETAIL SUBSTRING missed; the CLASS-level catch question is separable. The harness DID flag the
+drifted row (`sub-1`) at the pre-registered tier (Tier 2) and element (`machine
+Subscription.status`), from the pre-registered drift edit, with a correct and developer-locatable
+diagnostic — the registration's error was predicting the fixture's quiescent state (the pinned
+test chains the rejected activate into a successful one, so quiescence is `active` with 2 events,
+not `trialing` with 1). Proposed scoring for §7.1: **caught-violation with a pre-registration
+phrasing error**, recorded distinctly from a clean catch; the alternative (strict MISSED) stands
+in this section's verdict line until the human rules at Task 8. Follow-up options (post-slice,
+never mid-experiment): per-command capture granularity, or a dedicated rejected-then-quiesce
+fixture in the corpus.
+
 ### c04 — weakened guard
 
 PENDING
