@@ -93,6 +93,12 @@ describe('runConform', () => {
 
     const tmpDir = mkdtempSync(join(tmpdir(), 'conform-optout-test-'));
     try {
+      // own session COPY — runConform now appends a ledger entry per run (Task 5 write-back), so
+      // pointing straight at the real committed session would pollute .lattice-session-subscriptions.
+      mkdirSync(join(tmpDir, 'session'), { recursive: true });
+      for (const f of ['state.json', 'model.json', 'ledger.jsonl']) {
+        copyFileSync(join(realSessionPath, f), join(tmpDir, 'session', f));
+      }
       mkdirSync(join(tmpDir, 'conform'), { recursive: true });
       mkdirSync(join(tmpDir, '.conform', 'snapshots'), { recursive: true });
       copyFileSync(join(implDir, 'conform', 'overrides.ts'), join(tmpDir, 'conform', 'overrides.ts'));
@@ -100,7 +106,7 @@ describe('runConform', () => {
       copyFileSync(join(snapDir, snapSqlite), join(tmpDir, '.conform', 'snapshots', snapSqlite));
       copyFileSync(join(snapDir, snapJson), join(tmpDir, '.conform', 'snapshots', snapJson));
       writeFileSync(join(tmpDir, 'conform', 'conform.config.json'), JSON.stringify({
-        session: realSessionPath,
+        session: join(tmpDir, 'session'),
         snapshots: '.conform/snapshots',
         optOuts: [{ invariant: 'retryCapWhilePastDue', reason: 'test: excluded from checked count' }],
       }));
@@ -113,6 +119,52 @@ describe('runConform', () => {
       const nonGuard = plan.aggregates.flatMap(a => a.invariants).filter(i => i.candidate.kind !== 'guard').length;
       const { report } = await runConform(tmpDir, 'report');
       expect(report.invariantsChecked).toBe(nonGuard - 1);
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  it('appends one conformance ledger entry per run (write-back, design §4.6)', async () => {
+    const implDir = resolve(__dirname, '../../..', 'implementations/subscriptions');
+    const realSessionPath = resolve(__dirname, '../../..', '.lattice-session-subscriptions');
+    const snapDir = join(implDir, '.conform/snapshots');
+    if (!existsSync(snapDir)) return; // no snapshots in this checkout — nothing to assert
+    const snapSqlite = readdirSync(snapDir).find(f => f.endsWith('.sqlite'));
+    if (!snapSqlite) return;
+    const snapJson = snapSqlite.replace(/\.sqlite$/, '.json');
+
+    const tmpDir = mkdtempSync(join(tmpdir(), 'conform-ledger-test-'));
+    try {
+      // own session COPY so the append never mutates the real committed ledger
+      mkdirSync(join(tmpDir, 'session'), { recursive: true });
+      for (const f of ['state.json', 'model.json', 'ledger.jsonl']) {
+        copyFileSync(join(realSessionPath, f), join(tmpDir, 'session', f));
+      }
+      mkdirSync(join(tmpDir, 'conform'), { recursive: true });
+      mkdirSync(join(tmpDir, '.conform', 'snapshots'), { recursive: true });
+      copyFileSync(join(implDir, 'conform', 'overrides.ts'), join(tmpDir, 'conform', 'overrides.ts'));
+      copyFileSync(join(implDir, 'conform', 'spec-state.ts'), join(tmpDir, 'conform', 'spec-state.ts'));
+      copyFileSync(join(snapDir, snapSqlite), join(tmpDir, '.conform', 'snapshots', snapSqlite));
+      copyFileSync(join(snapDir, snapJson), join(tmpDir, '.conform', 'snapshots', snapJson));
+      writeFileSync(join(tmpDir, 'conform', 'conform.config.json'), JSON.stringify({
+        session: join(tmpDir, 'session'), snapshots: '.conform/snapshots', optOuts: [],
+      }));
+
+      // The copied ledger.jsonl carries whatever real conformance history the checked-in session
+      // already has (this task's own step 4 real run commits one such entry) — scope by `target`
+      // (this test's unique tmpDir) rather than asserting the ledger is pristine, so the test keeps
+      // verifying "one entry per run, append-only" without being order/history-dependent forever.
+      const { readConformance } = await import('../engine/session.js');
+      const forThisRun = () => readConformance(join(tmpDir, 'session')).filter(e => e.target === tmpDir);
+      await runConform(tmpDir, 'report');
+      const entries = forThisRun();
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({ kind: 'conformance', mode: 'report', target: tmpDir });
+      expect(entries[0]!.snapshots).toBeGreaterThan(0);
+      expect(typeof entries[0]!.durationMs).toBe('number');
+
+      await runConform(tmpDir, 'report');
+      expect(forThisRun()).toHaveLength(2); // append-only, one per run
     } finally {
       rmSync(tmpDir, { recursive: true });
     }

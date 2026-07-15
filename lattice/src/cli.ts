@@ -419,8 +419,9 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           console.log(path);
           process.exit(0);
         }
-        const { report, exitCode } = await runConform(target, values.enforce ? 'enforce' : 'report');
+        const { report, exitCode, ledgerError } = await runConform(target, values.enforce ? 'enforce' : 'report');
         console.log(formatReport(report));
+        if (ledgerError) console.error('ledger append failed: ' + ledgerError);
         process.exit(exitCode);
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));

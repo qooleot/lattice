@@ -13,6 +13,7 @@ import { observeEntities } from './observe.js';
 import { checkInvariants, type OptOut } from './tier1.js';
 import { checkTraces, type ObservedEvent } from './trace.js';
 import { renderContract } from './contract.js';
+import { appendLedger } from '../engine/session.js';
 import type { BindingManifest, ConformReport, ConformViolation, OverridesModule } from './types.js';
 
 interface ConformConfig { session: string; snapshots: string; optOuts: OptOut[] }
@@ -39,9 +40,10 @@ function residual(manifest: BindingManifest): ConformReport['residual'] {
 }
 
 export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
-  Promise<{ report: ConformReport; exitCode: number }> {
+  Promise<{ report: ConformReport; exitCode: number; ledgerError?: string }> {
   const cfg = readConfig(targetDir);
-  const input = loadGenInput(resolve(targetDir, cfg.session));
+  const sessionDir = resolve(targetDir, cfg.session);
+  const input = loadGenInput(sessionDir);
   const plan = buildPlan(input);
   const overridesPath = resolve(targetDir, 'conform', 'overrides.ts');
   const ovModule = await import(overridesPath) as { overrides: OverridesModule };
@@ -90,7 +92,18 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
     traceRowsChecked: traceRows, guardedTransitions: [...guardedSet].sort(), durationMs: Date.now() - startedAt,
   };
   const exitCode = mode === 'enforce' && violations.length > 0 ? 1 : 0;
-  return { report, exitCode };
+  let ledgerError: string | undefined;
+  try {
+    appendLedger(sessionDir, {
+      kind: 'conformance', at: new Date().toISOString(), target: targetDir, mode,
+      snapshots: report.snapshots, invariantsChecked: report.invariantsChecked,
+      traceRowsChecked: report.traceRowsChecked, violationCount: report.violations.length,
+      violations: report.violations.map(v => ({ specElement: v.specElement, anchors: v.anchors,
+        witnessIds: v.witnessIds, source: v.source, detail: v.detail })),
+      residual: report.residual, optOuts: report.optOuts, durationMs: report.durationMs,
+    });
+  } catch (e) { ledgerError = e instanceof Error ? e.message : String(e); }
+  return { report, exitCode, ledgerError };
 }
 
 export function formatReport(r: ConformReport): string {

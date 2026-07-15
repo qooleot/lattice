@@ -51,7 +51,18 @@ export type LedgerEntry =
   // survived to the ledger for `status` to count or later tooling to read back. One entry per
   // (service, method) result, append-only like `classified`/`guard-finding` — `status` dedups
   // latest-per-`service::method` before counting.
-  | { kind: 'method-guard'; at: string; service: string; method: string; verdict: MethodGuardVerdict; reachable?: boolean; provenance: string };
+  | { kind: 'method-guard'; at: string; service: string; method: string; verdict: MethodGuardVerdict; reachable?: boolean; provenance: string }
+  // Conformance write-back (Task 5, design §4.6): every `conform` run — report or enforce — is
+  // itself evidence, so it appends exactly one entry per run to the session it resolved from the
+  // target's conform.config.json. Structural shape is inlined (not imported from ../conform/types)
+  // because the engine must not depend on the conform module tree; violations are mapped
+  // structurally, dropping the `invariant` member that conform's ConformViolation carries.
+  | { kind: 'conformance'; at: string; target: string; mode: 'report' | 'enforce';
+      snapshots: number; invariantsChecked: number; traceRowsChecked: number;
+      violationCount: number;
+      violations: { specElement: string; anchors: string[]; witnessIds: string[]; source: string; detail: string }[];
+      residual: { autoBound: number; overridden: number; total: number };
+      optOuts: { invariant: string; reason: string }[]; durationMs: number };
 
 /** Calendar day of an ISO timestamp — the human-facing date in provenance and refusal text. */
 export const isoDay = (at: string): string => at.slice(0, 10);
@@ -92,4 +103,7 @@ export function readGuardSweeps(dir: string): Extract<LedgerEntry, { kind: 'guar
 }
 export function readMethodGuards(dir: string): Extract<LedgerEntry, { kind: 'method-guard' }>[] {
   return readLedger(dir).filter((e): e is Extract<LedgerEntry, { kind: 'method-guard' }> => e.kind === 'method-guard');
+}
+export function readConformance(dir: string): Extract<LedgerEntry, { kind: 'conformance' }>[] {
+  return readLedger(dir).filter((e): e is Extract<LedgerEntry, { kind: 'conformance' }> => e.kind === 'conformance');
 }
