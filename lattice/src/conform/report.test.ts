@@ -43,6 +43,19 @@ describe('formatReport', () => {
     expect(text).toContain('guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle');
     expect(text).toContain('duration 4.2s — budget 60s OK');
   });
+
+  it('renders tier-2 violations with empty invariant using specElement as headline', () => {
+    const text = formatReport({
+      target: 't', snapshots: 1, invariantsChecked: 2, optOuts: [],
+      violations: [{ invariant: '', specElement: 'outbox (orphan)',
+        anchors: ['transaction rolled back after append'],
+        witnessIds: ['sub-1'], source: 'journeys', detail: 'orphaned event in outbox' }],
+      residual: { autoBound: 14, overridden: 4, total: 18 },
+      traceRowsChecked: 10, guardedTransitions: [], durationMs: 0,
+    });
+    expect(text).toContain('VIOLATION outbox (orphan) (outbox (orphan))');
+    expect(text).not.toContain('VIOLATION  ('); // no double space
+  });
 });
 
 describe('runConform', () => {
@@ -155,11 +168,11 @@ describe('runConform', () => {
       // (this test's unique tmpDir) rather than asserting the ledger is pristine, so the test keeps
       // verifying "one entry per run, append-only" without being order/history-dependent forever.
       const { readConformance } = await import('../engine/session.js');
-      const forThisRun = () => readConformance(join(tmpDir, 'session')).filter(e => e.target === tmpDir);
+      const forThisRun = () => readConformance(join(tmpDir, 'session')).filter(e => e.target === resolve(tmpDir));
       await runConform(tmpDir, 'report');
       const entries = forThisRun();
       expect(entries).toHaveLength(1);
-      expect(entries[0]).toMatchObject({ kind: 'conformance', mode: 'report', target: tmpDir });
+      expect(entries[0]).toMatchObject({ kind: 'conformance', mode: 'report', target: resolve(tmpDir) });
       expect(entries[0]!.snapshots).toBeGreaterThan(0);
       expect(typeof entries[0]!.durationMs).toBe('number');
 

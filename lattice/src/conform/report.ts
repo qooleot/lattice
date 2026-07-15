@@ -41,6 +41,7 @@ function residual(manifest: BindingManifest): ConformReport['residual'] {
 
 export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
   Promise<{ report: ConformReport; exitCode: number; ledgerError?: string }> {
+  const startedAt = Date.now();
   const cfg = readConfig(targetDir);
   const sessionDir = resolve(targetDir, cfg.session);
   const input = loadGenInput(sessionDir);
@@ -54,11 +55,17 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
   if (!existsSync(snapDir)) throw new Error(`conform: no snapshots at ${snapDir} — run the target's test suite first`);
   const snaps = readdirSync(snapDir).filter(f => f.endsWith('.sqlite')).sort();
   if (snaps.length === 0) throw new Error(`conform: snapshot directory ${snapDir} is empty — run the target's test suite first`);
-  const startedAt = Date.now();
   const violations: ConformViolation[] = [];
   let manifest: BindingManifest | undefined;
   let traceRows = 0;
-  const guardedSet = new Set<string>();
+  // Derive guardedTransitions from the machine, not observed rows: compute from plan.aggregates
+  // unconditionally so no-row aggregates still appear in the "guards NOT evaluated" line.
+  const guardedTransitions = plan.aggregates
+    .flatMap(a => a.transitions)
+    .filter(t => t.requires)
+    .map(t => t.name)
+    .sort();
+  const guardedSet = new Set(guardedTransitions);
   for (const snap of snaps) {
     const db = new Database(join(snapDir, snap), { readonly: true });
     try {
@@ -73,7 +80,6 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
       const trace = checkTraces(entitiesArr, events, plan.aggregates, meta.source);
       violations.push(...trace.violations);
       traceRows += trace.rowsChecked;
-      for (const g of trace.guardedTransitions) guardedSet.add(g);
     } finally { db.close(); }
   }
   // GenPlan has no top-level `invariants` — every invariant lives under an aggregate
@@ -89,13 +95,13 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
     target: targetDir, snapshots: snaps.length,
     invariantsChecked: allInvariants.filter(i => i.candidate.kind !== 'guard' && !skippedOptOuts.has(i.name)).length,
     optOuts: cfg.optOuts, violations, residual: residual(manifest!),
-    traceRowsChecked: traceRows, guardedTransitions: [...guardedSet].sort(), durationMs: Date.now() - startedAt,
+    traceRowsChecked: traceRows, guardedTransitions, durationMs: Date.now() - startedAt,
   };
   const exitCode = mode === 'enforce' && violations.length > 0 ? 1 : 0;
   let ledgerError: string | undefined;
   try {
     appendLedger(sessionDir, {
-      kind: 'conformance', at: new Date().toISOString(), target: targetDir, mode,
+      kind: 'conformance', at: new Date().toISOString(), target: resolve(targetDir), mode,
       snapshots: report.snapshots, invariantsChecked: report.invariantsChecked,
       traceRowsChecked: report.traceRowsChecked, violationCount: report.violations.length,
       violations: report.violations.map(v => ({ specElement: v.specElement, anchors: v.anchors,
@@ -118,7 +124,7 @@ export function formatReport(r: ConformReport): string {
       : []),
     ...r.optOuts.map(o => `OPT-OUT ${o.invariant} — ${o.reason}`),
     ...r.violations.map(v =>
-      `VIOLATION ${v.invariant} (${v.specElement}) — witnesses [${v.witnessIds.join(', ')}] — ` +
+      `VIOLATION ${v.invariant || v.specElement} (${v.specElement}) — witnesses [${v.witnessIds.join(', ')}] — ` +
       `${v.detail} — anchors [${v.anchors.join('; ')}] — source ${v.source}`),
     `duration ${(r.durationMs / 1000).toFixed(1)}s — budget 60s ${r.durationMs <= 60_000 ? 'OK' : 'EXCEEDED'}`,
   ];

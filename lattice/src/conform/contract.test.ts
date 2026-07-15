@@ -9,7 +9,7 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 describe('renderContract', () => {
   const src = renderContract(loadGenInput(join(repoRoot, '.lattice-session-subscriptions')).model);
 
-  it('emits per-aggregate spec-state interfaces with region unions and ref fields as string', () => {
+  it('emits per-aggregate spec-state interfaces with region unions and ref fields as nullable string', () => {
     expect(src).toContain('export interface SubscriptionSpecState');
     expect(src).toContain(`status: 'trialing' | 'active' | 'pastDue' | 'canceled' | 'expired';`);
     expect(src).toContain(`settlement: 'draft' | 'open' | 'paid' | 'void' | 'uncollectible';`);
