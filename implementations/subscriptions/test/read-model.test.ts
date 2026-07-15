@@ -34,4 +34,13 @@ describe('account summary read model', () => {
     // at 'trialing' (final-review F2).
     expect(summary(db, 'sub-2')).toMatchObject({ status: 'expired' });
   });
+
+  it('a partial payment refreshes open_balance without settling', () => {
+    const db = makeDb();
+    createSubscription(db, { id: 'sub-p', planCode: 'pro', seats: 1, periodStart: 1_000, periodEnd: 2_000, licenseFeeAmount: 3_000 });
+    finalizeInvoice(db, 'sub-p-inv-1');
+    expect(summary(db, 'sub-p').open_balance).toBe(3_000);
+    recordPayment(db, 'sub-p-inv-1', 1_000, 1_100); // partial — invoice stays open
+    expect(summary(db, 'sub-p')).toMatchObject({ status: 'trialing', open_balance: 2_000 });
+  });
 });

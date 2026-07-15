@@ -9,7 +9,7 @@ const STATE_MAP: Record<string, 'trialing' | 'active' | 'pastDue' | 'canceled' |
 export const overrides = defineOverrides({
   Subscription: {
     status: (_db, row) => STATE_MAP[row.lifecycle_state as string]!,
-    latestInvoice: (_db, row) => row.current_invoice_id as string,
+    latestInvoice: (_db, row) => row.current_invoice_id as string | null,
   },
   Invoice: {
     amountPaid: (db, row) =>

@@ -13,7 +13,7 @@ function tsType(model: DomainModel, t: TypeRef): string {
       return en.values.map(v => `'${v}'`).join(' | ');
     }
     case 'ref':
-      return 'string'; // foreign id
+      return 'string | null'; // foreign id
     case 'list':
       return `${tsType(model, t.of)}[]`;
     case 'value':
