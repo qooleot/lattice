@@ -46,6 +46,15 @@ lattice/vendor/jdk
 # predate that, or that get pointed here by hand.
 .lattice-session*/
 .lattice-scratch*/
+
+# ...except the two committed reference sessions, which are TRACKED and read directly by
+# lattice/test/cli-apply.test.ts and lattice/test/dod.test.ts. Tracked files ignore .gitignore, so
+# the pattern above never threatened what is already committed — but without these negations a NEW
+# file added to either (a regenerated session gaining an artifact, say) would be silently dropped
+# from the commit rather than reported as untracked.
+!/.lattice-session-catalog/
+!/.lattice-session-subscriptions/
+
 lattice/_apalache-out/
 
 # Tooling scratch
