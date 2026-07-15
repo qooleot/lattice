@@ -65,7 +65,7 @@ export function expireTrials(db: Database.Database, now: number): number {
 export function cancelSubscription(db: Database.Database, subId: string): void {
   db.transaction(() => {
     const sub = getSubscription(db, subId);
-    if (!['trialing', 'active', 'past_due'].includes(sub.lifecycle_state))
+    if (!['trialing', 'active', 'delinquent'].includes(sub.lifecycle_state))
       throw new Error(`cancel: ${subId} is ${sub.lifecycle_state}`);
     db.prepare(`UPDATE subscriptions SET lifecycle_state = 'canceled' WHERE id = ?`).run(subId);
     appendEvent(db, SUBSCRIPTION_CANCELED, subId, { subId });

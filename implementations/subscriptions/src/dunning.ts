@@ -8,7 +8,7 @@ function failedAttempts(db: Database.Database, invoiceId: string): number {
     .get(invoiceId) as { c: number }).c;
 }
 
-// An initial payment decline (e.g. on rollover) marks the subscription past_due but is
+// An initial payment decline (e.g. on rollover) marks the subscription delinquent but is
 // NOT itself a retry attempt: only dunning sweeps (see runDunning's failure branch) insert
 // dunning_attempts rows.
 export function recordPaymentFailure(db: Database.Database, invoiceId: string, now: number): void {
@@ -17,7 +17,7 @@ export function recordPaymentFailure(db: Database.Database, invoiceId: string, n
     if (inv.settlement_state !== 'open') throw new Error(`payment failure on non-open invoice ${invoiceId}`);
     const sub = getSubscription(db, inv.subscription_id);
     if (sub.lifecycle_state === 'active') {
-      db.prepare(`UPDATE subscriptions SET lifecycle_state = 'past_due' WHERE id = ?`).run(sub.id);
+      db.prepare(`UPDATE subscriptions SET lifecycle_state = 'delinquent' WHERE id = ?`).run(sub.id);
     }
     refreshAccountSummary(db, inv.subscription_id, now);
   })();
@@ -29,7 +29,7 @@ export function runDunning(
 ): { attempted: number; exhausted: number } {
   const targets = db.prepare(`
     SELECT i.id FROM invoices i JOIN subscriptions s ON s.id = i.subscription_id
-    WHERE i.settlement_state = 'open' AND s.lifecycle_state = 'past_due' ORDER BY i.id
+    WHERE i.settlement_state = 'open' AND s.lifecycle_state = 'delinquent' ORDER BY i.id
   `).all() as { id: string }[];
   let attempted = 0, exhausted = 0;
   for (const { id } of targets) {

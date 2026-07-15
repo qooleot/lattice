@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   paid_invoice_count INTEGER NOT NULL DEFAULT 0,
   max_retries        INTEGER NOT NULL DEFAULT 3,
   current_invoice_id TEXT,
-  lifecycle_state    TEXT NOT NULL DEFAULT 'trialing',  -- trialing|active|past_due|canceled|expired
+  lifecycle_state    TEXT NOT NULL DEFAULT 'trialing',  -- trialing|active|delinquent|canceled|expired
   superseded_by      TEXT
 );
 
