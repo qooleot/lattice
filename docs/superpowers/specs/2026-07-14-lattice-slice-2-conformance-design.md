@@ -2,7 +2,9 @@
 
 - **Date:** 2026-07-14
 - **Status:** APPROVED design (brainstormed with the human 2026-07-14; all forks below resolved by
-  the human). Next step: writing-plans.
+  the human). Next step: writing-plans. Results: the 13 pre-registered drift experiments have been
+  run — 12/13 caught cleanly, 1/13 (c03) adjudication-pending — see
+  [`2026-07-15-lattice-slice-2-drift-experiment-results.md`](2026-07-15-lattice-slice-2-drift-experiment-results.md).
 - **Brief:** [`2026-07-05-lattice-slice-2-conformance-brief.md`](2026-07-05-lattice-slice-2-conformance-brief.md)
 - **Parent design:** [`docs/plan.md`](../../plan.md) — §11.5 (conformance adapter), §11.6 (CI-first
   wedge), §13 (outbox = the conformance interface), §19 Risk 6, §21 step 2.

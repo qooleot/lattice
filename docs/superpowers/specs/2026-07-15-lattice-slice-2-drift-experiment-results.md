@@ -644,3 +644,119 @@ fixture in the corpus.
   fail on it.
 - Ledger evidence (`violationCount: 2`) committed on the drift branch
   (`drift(c13): ledger evidence from conform --report run`).
+
+## Verdict — against the pre-registered §7 criteria
+
+### §7.1 — Catch 13/13 drift classes (diagnostic names the violated element + ledger anchors)
+
+| class | verdict | tier + element (pre-registered signal) |
+|-------|---------|------------------------------------------|
+| c01 skipped-emit | CAUGHT-VIOLATION | Tier 2, `machine Subscription.status` |
+| c02 wrong-event | CAUGHT-VIOLATION | Tier 2, `machine Subscription.status` |
+| c03 emit-outside-tx | **ADJUDICATION PENDING (human)** | Tier 2, `machine Subscription.status` — real violation fired, registered detail substring did not |
+| c04 weakened-guard | CAUGHT-VIOLATION | Tier 1, `activePaidInFull` |
+| c05 win-back | CAUGHT-VIOLATION | Tier 2, `machine Subscription.status` |
+| c06 state-rename | CAUGHT-LOUD | binder abort, `Subscription.status is null/undefined` |
+| c07 partial-write | CAUGHT-VIOLATION | Tier 1, `neverOverpaidAndPaidExact` |
+| c08 two-drafts | CAUGHT-VIOLATION | Tier 1, `oneDraftInvoicePerSubscription` |
+| c09 upgrade-activates | CAUGHT-VIOLATION | Tier 1, `activePaidInFull` |
+| c10 column-rename | CAUGHT-LOUD | binder abort, `unbound spec fields` |
+| c11 stale-override | CAUGHT-LOUD | binder abort, `no such column: amount` |
+| c12 proration-total | CAUGHT-VIOLATION | Tier 1, `totalDueAtMostParts` |
+| c13 stale-read-model | CAUGHT-VIOLATION | crosscheck, `crosscheck account_summary` |
+
+**Tally: 9 caught-violation + 3 caught-loud = 12/13 clean catches on the registered signal, 1/13
+(c03) adjudication-pending.** Every one of the 12 clean catches names the correct spec element
+(machine region, invariant name, or binder field) and carries a witness/anchor a developer can
+locate without additional context (see each class's `VIOLATION` or abort line above) — the §7.1
+"locatable diagnostic" bar is met for all 12.
+
+**c03 — the one open item.** The registered DETAIL SUBSTRING (`do not include observed final
+'trialing'` / `all 1 event(s) consumed`) did not appear in the conform output. What did appear: a
+real Tier-2 violation, on the pre-registered spec element (`machine Subscription.status`), from the
+pre-registered drift edit, on the pre-registered witness (`sub-1`) —
+`stuck at event #2 (SubscriptionActivated, outbox seq 4) from state(s) {active, pastDue, canceled};
+events=[SubscriptionActivated, SubscriptionActivated]`. The root cause (documented in the c03
+outcome above) is that `conform-capture.ts` snapshots only once per test, in `afterEach`; the pinned
+exercising test chains a rejected `activate` call into a successful one on the same subscription, so
+the only snapshot taken shows the union of both calls (quiescent state `active`, 2 events) rather
+than the isolated rejection state (`trialing`, 1 stray event) the class-3 registration predicted.
+Two scorings remain open, one sentence each:
+
+- **Strict signal-miss (❌):** the pre-registered detail substring is the contract; it never
+  matched, so per the "zero tuning / verbatim MISSED" protocol this class is a miss regardless of
+  what else fired.
+- **Class-catch with a phrasing error (✅):** the drift WAS flagged at the registered tier
+  (Tier 2), the registered spec element (`machine Subscription.status`), and the registered witness
+  (`sub-1`) — only the registration's predicted *fixture quiescent state* was wrong, not the
+  harness's catching power, so this counts as a catch with a pre-registration bug, not a harness
+  gap.
+
+**§7.1 totals, pending the ruling: 12/13 (strict) or 13/13 (class-catch).** Under the design's own
+rule — "any structurally uncatchable class is a design finding for the human — never quietly
+re-scoped" — c03 is escalated verbatim rather than resolved unilaterally in this document.
+
+**c13 — coverage the impl suite structurally could not provide.** c13's impl suite ran fully green
+(24/24, impl-exit=0) while `conform --report` independently caught 2 violations
+(`crosscheck account_summary`, stale `lifetime_paid`/`open_balance`) that no impl test observed.
+The root cause, in the harness author's own words from the outcome above: `refreshAccountSummary`
+fully recomputes `open_balance`/`lifetime_paid` from scratch on every call (not incrementally), so
+any subsequent refresh-triggering call (`activate`, another `recordPayment`, `rolloverPeriod`,
+`expireTrials`, etc.) after a `settle()` self-heals the summary before a test's final assertion
+runs — every `read-model.test.ts` fixture happens to call one of those afterward. The staleness only
+survives into the snapshot for the two `billing-service.test.ts` fixtures where `settle()` is the
+terminal write and no follow-up call self-heals it before teardown — and those fixtures don't assert
+on `account_summary` at all. This is exactly the class of drift the design's §6-class-13 crosscheck
+instrument was built to catch and the ordinary impl suite is structurally blind to: conform caught
+it, the impl suite could not have, by construction, no matter how thorough its assertions.
+
+**c11 — first-stale-artifact caveat.** c11's drift left two conformance-side artifacts stale
+(`conform/overrides.ts`'s `Invoice.amountPaid` override AND `conform/crosschecks.ts`'s independent
+`account_summary` recomputation both still reference the renamed-away `amount` column). The harness
+correctly caught-loud on the first one it evaluates (`no such column: amount`, from the override),
+but the binder/override layer aborts the whole run at that point — `crosschecks.ts`'s parallel
+staleness was never independently exercised in this experiment, because the run never reached it.
+The recorded evidence demonstrates the harness catches loud on *a* stale artifact, not that it would
+also catch loud on the second one in isolation; that second claim is untested by this class.
+
+### §7.2 — 0 false positives across 3 full harness runs on the clean impl
+
+**0/3 ✅.** All three negative-control runs (section 2, run BEFORE any drift experiment) reported
+`0 violations across 23 snapshots (10 invariants checked)`, `residual surface: auto-bound 14/18
+fields (78%), 4 overridden`, `crosschecks: account_summary`, no CAUGHT-LOUD abort. No false positive
+was observed on the clean impl at any point during the slice.
+
+### §7.3 — Runtime ≤ 60s for a full `lattice conform` run over the impl suite
+
+**✅.** Every conform run that reached the report stage printed `duration 0.0s` or `duration 0.1s`
+against the 60s budget; the negative control's internal harness timer (`durationMs`) measured
+56–73ms across its 3 runs — the max observed duration across all runs (negative control + all 13
+drift classes) is 0.1s (73ms), roughly 3 orders of magnitude under budget. (c06, c10, c11
+CAUGHT-LOUD before ever reaching the point where a duration line is printed — consistent with the
+loud-abort design, not a runtime data point.)
+
+### §7.4 — Residual surface measured and reported (kill criterion: auto-binding <50% of spec fields)
+
+**Measured: auto-bound 14/18 fields (78%), 4 overridden** — identical across all runs where the
+binder completed (negative control ×3 and every CAUGHT-VIOLATION drift class). 78% is well above
+the 50% kill-criterion floor; the 4 overridden fields are `Invoice.amountPaid`,
+`Subscription.status`, and the 2 more listed in `implementations/subscriptions/conform/overrides.ts`
+(hand-written mapping for values not derivable by naming convention alone — e.g. `STATE_MAP` for the
+enum rename c06/c10 exercise). No kill condition was triggered.
+
+### What the drift experiments demonstrate about H-conformance
+
+Across 13 pre-registered real-code edits plus a ×3 negative control, the target-agnostic
+observe-and-check harness (outbox trace legality + state invariants + one out-of-spec-read-model
+crosscheck) caught 12 of 13 drift classes on their exact registered diagnostic, produced zero false
+positives on the unmodified implementation, ran in well under 1% of its runtime budget, and did so
+while auto-binding 78% of spec fields without any hand-written adapter for most of the covered
+surface. One class (c03) surfaced a real but differently-worded violation, traced to a test-capture
+granularity limitation (one snapshot per test, at `afterEach`) rather than a gap in what the harness
+can observe, and is left for human adjudication rather than resolved here. This is what was
+measured: on this one engineer-shaped implementation, over this one drift corpus, non-generated code
+that never calls into the spec at all can be checked from the outside for conformance to it, without
+static analysis of the implementation's source, without a false-positive cost, and within a runtime
+budget compatible with running on every test invocation. It does not show this generalizes to other
+implementations, other languages, other drift shapes, or drift introduced by a different mechanism
+(e.g. LLM-authored edits rather than the hand-authored edits used here) — none of that was tested.
