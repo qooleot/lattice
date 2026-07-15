@@ -22,10 +22,10 @@ CREATE TABLE IF NOT EXISTS invoices (
 );
 
 CREATE TABLE IF NOT EXISTS invoice_payments (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  invoice_id TEXT NOT NULL REFERENCES invoices(id),
-  amount     INTEGER NOT NULL,
-  paid_at    INTEGER NOT NULL
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id   TEXT NOT NULL REFERENCES invoices(id),
+  amount_cents INTEGER NOT NULL,
+  paid_at      INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS dunning_attempts (

@@ -16,7 +16,7 @@ export function getInvoice(db: Database.Database, id: string): InvoiceRow {
 }
 
 export function amountPaid(db: Database.Database, invoiceId: string): number {
-  return (db.prepare('SELECT COALESCE(SUM(amount), 0) s FROM invoice_payments WHERE invoice_id = ?')
+  return (db.prepare('SELECT COALESCE(SUM(amount_cents), 0) s FROM invoice_payments WHERE invoice_id = ?')
     .get(invoiceId) as { s: number }).s;
 }
 
@@ -38,7 +38,7 @@ export function recordPayment(db: Database.Database, invoiceId: string, amount: 
     if (amount <= 0) throw new Error('payment amount must be positive');
     const paid = amountPaid(db, invoiceId);
     if (paid + amount > inv.total_due) throw new Error(`overpayment rejected: ${paid} + ${amount} > ${inv.total_due}`);
-    db.prepare('INSERT INTO invoice_payments (invoice_id, amount, paid_at) VALUES (?,?,?)').run(invoiceId, amount, now);
+    db.prepare('INSERT INTO invoice_payments (invoice_id, amount_cents, paid_at) VALUES (?,?,?)').run(invoiceId, amount, now);
     if (paid + amount === inv.total_due) settle(db, inv);
     else refreshAccountSummary(db, inv.subscription_id, now);
   })();
