@@ -14,6 +14,7 @@ describe('formatReport', () => {
         anchors: ['hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5'],
         witnessIds: ['sub-1'], source: 'journey: trial → activate', detail: 'violated by 1/3 Subscription row(s)' }],
       residual: { autoBound: 14, overridden: 4, total: 18 },
+      traceRowsChecked: 0, guardedTransitions: [], durationMs: 0,
     });
     expect(text).toContain('auto-bound 14/18');
     expect(text).toContain('4 overridden');
@@ -26,8 +27,21 @@ describe('formatReport', () => {
 
   it('reports a clean run explicitly, never silently', () => {
     const text = formatReport({ target: 't', snapshots: 3, invariantsChecked: 6, optOuts: [],
-      violations: [], residual: { autoBound: 14, overridden: 4, total: 18 } });
+      violations: [], residual: { autoBound: 14, overridden: 4, total: 18 },
+      traceRowsChecked: 0, guardedTransitions: [], durationMs: 0 });
     expect(text).toContain('0 violations across 3 snapshots (6 invariants checked)');
+  });
+
+  it('prints tier-2 coverage, unevaluated guards, and the duration budget verdict', () => {
+    const text = formatReport({
+      target: 't', snapshots: 3, invariantsChecked: 6, optOuts: [], violations: [],
+      residual: { autoBound: 14, overridden: 4, total: 18 },
+      traceRowsChecked: 57, guardedTransitions: ['activate', 'finalize', 'settle'],
+      durationMs: 4_210,
+    });
+    expect(text).toContain('tier 2: 57 row-traces checked against the machine');
+    expect(text).toContain('guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle');
+    expect(text).toContain('duration 4.2s — budget 60s OK');
   });
 });
 

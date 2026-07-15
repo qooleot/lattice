@@ -11,6 +11,7 @@ import { buildPlan } from '../generate/plan.js';
 import { bindSchema } from './bind.js';
 import { observeEntities } from './observe.js';
 import { checkInvariants, type OptOut } from './tier1.js';
+import { checkTraces, type ObservedEvent } from './trace.js';
 import { renderContract } from './contract.js';
 import type { BindingManifest, ConformReport, ConformViolation, OverridesModule } from './types.js';
 
@@ -51,16 +52,26 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
   if (!existsSync(snapDir)) throw new Error(`conform: no snapshots at ${snapDir} — run the target's test suite first`);
   const snaps = readdirSync(snapDir).filter(f => f.endsWith('.sqlite')).sort();
   if (snaps.length === 0) throw new Error(`conform: snapshot directory ${snapDir} is empty — run the target's test suite first`);
+  const startedAt = Date.now();
   const violations: ConformViolation[] = [];
   let manifest: BindingManifest | undefined;
+  let traceRows = 0;
+  const guardedSet = new Set<string>();
   for (const snap of snaps) {
     const db = new Database(join(snapDir, snap), { readonly: true });
     try {
       const meta = JSON.parse(readFileSync(join(snapDir, snap.replace(/\.sqlite$/, '.json')), 'utf8')) as { source: string };
       const m = bindSchema(db, input.model, ovModule.overrides);
       manifest ??= m; // first snapshot's binding fixes the manifest reported (schema is shared across snapshots)
-      const entities = observeEntities(db, input.model, m, ovModule.overrides);
-      violations.push(...checkInvariants(entities, plan, cfg.optOuts, meta.source));
+      const entitiesArr = observeEntities(db, input.model, m, ovModule.overrides);
+      violations.push(...checkInvariants(entitiesArr, plan, cfg.optOuts, meta.source));
+      const events = db.prepare(
+        'SELECT id as seq, event_type as eventType, aggregate_id as aggregateId FROM outbox ORDER BY id'
+      ).all() as ObservedEvent[];
+      const trace = checkTraces(entitiesArr, events, plan.aggregates, meta.source);
+      violations.push(...trace.violations);
+      traceRows += trace.rowsChecked;
+      for (const g of trace.guardedTransitions) guardedSet.add(g);
     } finally { db.close(); }
   }
   // GenPlan has no top-level `invariants` — every invariant lives under an aggregate
@@ -76,6 +87,7 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
     target: targetDir, snapshots: snaps.length,
     invariantsChecked: allInvariants.filter(i => i.candidate.kind !== 'guard' && !skippedOptOuts.has(i.name)).length,
     optOuts: cfg.optOuts, violations, residual: residual(manifest!),
+    traceRowsChecked: traceRows, guardedTransitions: [...guardedSet].sort(), durationMs: Date.now() - startedAt,
   };
   const exitCode = mode === 'enforce' && violations.length > 0 ? 1 : 0;
   return { report, exitCode };
@@ -87,10 +99,15 @@ export function formatReport(r: ConformReport): string {
     `${r.violations.length} violations across ${r.snapshots} snapshots (${r.invariantsChecked} invariants checked)`,
     `residual surface: auto-bound ${r.residual.autoBound}/${r.residual.total} fields ` +
       `(${Math.round((100 * r.residual.autoBound) / r.residual.total)}%), ${r.residual.overridden} overridden`,
+    `tier 2: ${r.traceRowsChecked} row-traces checked against the machine`,
+    ...(r.guardedTransitions.length
+      ? [`guards NOT evaluated at event time (pre-state unobserved in passive mode): ${r.guardedTransitions.join(', ')}`]
+      : []),
     ...r.optOuts.map(o => `OPT-OUT ${o.invariant} — ${o.reason}`),
     ...r.violations.map(v =>
       `VIOLATION ${v.invariant} (${v.specElement}) — witnesses [${v.witnessIds.join(', ')}] — ` +
       `${v.detail} — anchors [${v.anchors.join('; ')}] — source ${v.source}`),
+    `duration ${(r.durationMs / 1000).toFixed(1)}s — budget 60s ${r.durationMs <= 60_000 ? 'OK' : 'EXCEEDED'}`,
   ];
   return lines.join('\n');
 }
