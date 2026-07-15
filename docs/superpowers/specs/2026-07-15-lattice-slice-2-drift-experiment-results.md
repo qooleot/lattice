@@ -416,7 +416,41 @@ fixture in the corpus.
 
 ### c08 — widened uniqueness
 
-PENDING
+**Verdict: CAUGHT-VIOLATION**
+
+- Branch: `drift/c08-two-drafts` (forked from work-branch tip `1cbc7b2`).
+- Edit: in `rolloverPeriod`, `implementations/subscriptions/src/subscription-service.ts`, deleted
+  `if (needsBilling) finalizeInvoice(db, closingId);` and the whole
+  `if (needsBilling) { ...charge... }` block at the end (the "simplify rollover — billing runs
+  nightly anyway" accident: the old draft is left open as draft while the next draft still opens).
+- impl-exit=1 (`/tmp/drift-c08-impl.log`). 3 failed / 21 passed of 24 total:
+  - `test/growth.test.ts > growth features (superset) > failed rollover charge leaves the sub
+    past_due with the old invoice open` — `lifecycle_state` expected `past_due`, got `active`.
+  - `test/journey.test.ts > full customer journey > trial → activate → usage/rollover → failed
+    charge → dunning exhaustion` — same shape, `lifecycle_state` expected `past_due`, got `active`.
+  - `test/read-model.test.ts > account summary read model > tracks status and balances through the
+    lifecycle` — `status` expected `past_due`/`open_balance: 3000`, got `active`/`open_balance: 0`.
+  - Matches the pre-registration ("growth rollover tests (finalize/charge expectations), journey").
+- conform-exit=0 (`--report`; violations>0 in output is the criterion). `/tmp/drift-c08-conform.log`:
+  ```
+  conform ../implementations/subscriptions
+  3 violations across 23 snapshots (10 invariants checked)
+  residual surface: auto-bound 14/18 fields (78%), 4 overridden
+  tier 2: 66 row-traces checked against the machine
+  crosschecks: account_summary
+  guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle
+  VIOLATION oneDraftInvoicePerSubscription (invariant oneDraftInvoicePerSubscription) — witnesses [acme-inv-1, acme-inv-2, acme-inv-3] — set-level violation — anchors [elicited (w1, w2, w3, w4, w5); w1; w2; w3; w4; w5] — source trial → activate → usage/rollover → failed charge → dunning exhaustion
+  VIOLATION oneDraftInvoicePerSubscription (invariant oneDraftInvoicePerSubscription) — witnesses [sub-1-inv-1, sub-1-inv-2, sub-1-inv-3] — set-level violation — anchors [elicited (w1, w2, w3, w4, w5); w1; w2; w3; w4; w5] — source failed rollover charge leaves the sub past_due with the old invoice open
+  VIOLATION oneDraftInvoicePerSubscription (invariant oneDraftInvoicePerSubscription) — witnesses [sub-1-inv-1, sub-1-inv-2, sub-1-inv-3] — set-level violation — anchors [elicited (w1, w2, w3, w4, w5); w1; w2; w3; w4; w5] — source tracks status and balances through the lifecycle
+  duration 0.0s — budget 60s OK
+  ```
+- Pre-registered signal confirmed: output contains `oneDraftInvoicePerSubscription` (3 occurrences)
+  with `set-level violation` detail, witnesses include the affected invoice ids
+  (`acme-inv-1, acme-inv-2, acme-inv-3` and `sub-1-inv-1, sub-1-inv-2, sub-1-inv-3` — the closing
+  draft invoice is left open alongside the newly-opened draft after each rollover without a
+  finalize, exactly the two-drafts drift the class predicts).
+- Ledger evidence (`violationCount: 3`) committed on the drift branch
+  (`drift(c08): ledger evidence from conform --report run`).
 
 ### c09 — cross-aggregate activation
 
