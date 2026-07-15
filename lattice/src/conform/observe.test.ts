@@ -36,4 +36,25 @@ describe('observeEntities', () => {
     const manifest = bindSchema(db, tinyModel, lying);
     expect(() => observeEntities(db, tinyModel, manifest, lying)).toThrow(/Account\.status.*a1/);
   });
+
+  it('omits nullable-ref field from fields when SQL NULL (auto-bound ref with no value)', () => {
+    const db = tinyDb();
+    // One account with NULL parent_id (no parent set)
+    db.prepare(`INSERT INTO accounts (id, owner_name, state) VALUES ('a1','Ada','openState')`).run();
+    // Another account with parent_id pointing to a1 (has a parent)
+    db.prepare(`INSERT INTO accounts (id, owner_name, state, parent_id) VALUES ('a2','Bob','openState','a1')`).run();
+
+    const manifest = bindSchema(db, tinyModel, overrides);
+    const entities = observeEntities(db, tinyModel, manifest, overrides);
+
+    // a1 has NULL parent_id, so the 'parent' key should be omitted from fields
+    const a1 = entities.find(e => e.id === 'a1')!;
+    expect('parent' in a1.fields).toBe(false);
+    expect(a1.fields).toEqual({ accountId: 'a1', ownerName: 'Ada', balance: 0, status: 'openState' });
+
+    // a2 has parent_id='a1', so the 'parent' key should be present with that value
+    const a2 = entities.find(e => e.id === 'a2')!;
+    expect('parent' in a2.fields).toBe(true);
+    expect(a2.fields.parent).toBe('a1');
+  });
 });

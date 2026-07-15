@@ -19,6 +19,7 @@ export const tinyModel: DomainModel = {
       { name: 'accountId', type: { kind: 'prim', prim: 'Id' }, key: true },
       { name: 'balance', type: { kind: 'prim', prim: 'Money' } },
       { name: 'ownerName', type: { kind: 'prim', prim: 'Text' } },
+      { name: 'parent', type: { kind: 'ref', target: 'Account' } },
     ],
     machine: {
       regions: [{
@@ -38,7 +39,8 @@ export function tinyDb(): Database.Database {
     CREATE TABLE accounts (
       id TEXT PRIMARY KEY,
       owner_name TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'openState'   -- region column with a non-convention name
+      state TEXT NOT NULL DEFAULT 'openState',   -- region column with a non-convention name
+      parent_id TEXT                             -- nullable ref to another Account
     );
     CREATE TABLE account_entries (               -- balance = SUM(amount): materialized nowhere
       id INTEGER PRIMARY KEY AUTOINCREMENT,
