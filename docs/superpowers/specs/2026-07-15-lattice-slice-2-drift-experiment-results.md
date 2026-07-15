@@ -500,7 +500,35 @@ fixture in the corpus.
 
 ### c10 — schema rename breaks auto-binding
 
-PENDING
+**Verdict: CAUGHT-LOUD**
+
+- Branch: `drift/c10-column-rename` (forked from work-branch tip `a67b648`).
+- Edit: migration-style rename, kept internally consistent — `src/schema.sql` `seats INTEGER NOT
+  NULL` → `seat_qty INTEGER NOT NULL`; `src/subscription-service.ts`: `SubscriptionRow.seats` →
+  `seat_qty`, the `INSERT INTO subscriptions (...)` column list `seats` → `seat_qty`, the
+  `UPDATE subscriptions SET seats = ?` → `SET seat_qty = ?`, and the one read site
+  `seats: sub.seats` (in `changePlan`, carrying seat count to the new row) → `seats: sub.seat_qty`.
+  Two `test/growth.test.ts` assertions that read `getSubscription(...).seats` off the row type
+  were fixed to `.seat_qty` to keep the drift branch's own suite compiling and green (straggler
+  fix per protocol — the rename is otherwise complete and consistent). `conform/overrides.ts` was
+  NOT touched — no override exists for `Subscription.seats`, by design, so the spec field no
+  longer auto-binds and has nothing to fall back on.
+- `npx tsc --noEmit`: clean, no errors.
+- impl-exit=0 (`/tmp/drift-c10-impl.log`). 24/24 tests passed, 8 test files — a working drifted
+  service, exactly as pre-registered ("expected impl failures: none").
+- conform-exit=2 (`/tmp/drift-c10-conform.log`):
+  ```
+  conform: unbound spec fields — add typed overrides or fix naming:
+    Subscription (table subscriptions): seats
+  ```
+- Pre-registered signal confirmed: stderr matches `unbound spec fields` and names `Subscription`
+  … `seats` — the binder fails loud (`ConformBindError`) rather than silently dropping or
+  mis-mapping the field. Exit 2, never a false green.
+- Ledger evidence: none. The abort happens during binding, before any snapshot is checked or the
+  conformance run is recorded — a loud exit-2 CAUGHT-LOUD outcome produces no ledger delta by
+  design (the run never reaches the point where it would write one). `.lattice-session-subscriptions/ledger.jsonl`
+  is unchanged (`git status --short` after the run showed nothing); this absence is itself the
+  expected evidence for this class, not an omission.
 
 ### c11 — stale override
 
