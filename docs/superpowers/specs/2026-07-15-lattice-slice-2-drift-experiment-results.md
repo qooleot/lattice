@@ -254,7 +254,37 @@ fixture in the corpus.
 
 ### c04 — weakened guard
 
-PENDING
+**Verdict: CAUGHT-VIOLATION**
+
+- Branch: `drift/c04-weakened-guard` (forked from work-branch tip `ec4bff3`).
+- Edit: deleted `if (sub.paid_invoice_count < 1) throw new Error(...)` from `activate` in
+  `implementations/subscriptions/src/subscription-service.ts`. Replaced the rejection test in
+  `test/lifecycle.test.ts` with the engineer's v2-flow happy test (pre-registered exact text):
+  `activate works immediately after invoicing (v2 flow)` — creates `sub-1`, finalizes
+  `sub-1-inv-1` (open, unpaid), calls `activate(db, 'sub-1')` (guard gone — succeeds), asserts
+  `lifecycle_state` is `active`.
+- impl-exit=0 (`/tmp/drift-c04-impl.log`) — all 8 test files, 24 tests passed. The replaced test
+  passes by design; no other test broke (the pre-registered "journey `recordUsage` reject
+  expectation may shift" did not materialize — `recordUsage`'s own guard is untouched and no
+  other fixture routes through the deleted `paid_invoice_count` check).
+- conform-exit=0 (`--report`; violations>0 in output is the criterion). `/tmp/drift-c04-conform.log`:
+  ```
+  conform ../implementations/subscriptions
+  1 violations across 23 snapshots (10 invariants checked)
+  residual surface: auto-bound 14/18 fields (78%), 4 overridden
+  tier 2: 66 row-traces checked against the machine
+  crosschecks: account_summary
+  guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle
+  VIOLATION activePaidInFull (invariant activePaidInFull) — witnesses [sub-1] — violated by 1/1 Subscription row(s) — anchors [hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5; w1; w2; w3; w4; w5] — source activate works immediately after invoicing (v2 flow)
+  duration 0.0s — budget 60s OK
+  ```
+- Pre-registered signal confirmed: output contains `activePaidInFull` (1 occurrence) with witness
+  `sub-1` — exact match, Tier 1, from the pinned exercising fixture (`source` line names the
+  replaced test verbatim).
+- Ledger evidence (`violationCount: 1`) committed on the drift branch
+  (`drift(c04): ledger evidence from conform --report run`).
+
+
 
 ### c05 — terminal resurrection
 
