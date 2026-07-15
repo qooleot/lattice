@@ -13,8 +13,11 @@ language with parser/round-trip + ledger reconciliation (`.lat` is the spec's so
 verdict ledger is the evidence's), grammar & machine growth (guards, services, value objects,
 sum-over-collection, `const`), spec→implementation generation (`lattice generate` → a running
 SQLite-backed TypeScript service with guards, outbox events, invariant enforcement — see
-`generated/subscriptions/`), inference (entailment classification + CTI-guided strengthening), and
-generated mermaid docs. Not yet built: conformance/anti-drift (plan §11.5–11.6) and the app/UI —
+`generated/subscriptions/`), inference (entailment classification + CTI-guided strengthening),
+generated mermaid docs, and conformance Tier 1 (an engineer-shaped target impl at
+`implementations/subscriptions`, auto-bound `observe()` with a 4-field residual of overrides,
+anchored invariant reports over captured suite states via `lattice conform`, negative control
+clean). Not yet built: conformance Tier 2 (trace checker + drift experiments) and the app/UI —
 briefs in `docs/superpowers/specs/`. A real elicited spec lives at `specs/subscriptions/spec.lat`.
 
 **The whole system reduces to three things:**
