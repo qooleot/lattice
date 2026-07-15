@@ -55,6 +55,8 @@ describe('checkTraces', () => {
     const r = checkTraces([sub('a', 'active')], [ev(1, 'Canceled', 'a')], [SUB], 't');
     expect(r.violations).toHaveLength(1);
     expect(r.violations[0]!.detail).toMatch(/Canceled/);
+    expect(r.violations[0]!.anchors).toContain('spec:transition cancel');
+    expect(r.violations[0]!.anchors).not.toContain('spec:transition expireTrial');
   });
 
   it('catches emit-outside-transaction: event exists for a row that was never created (class 3)', () => {
@@ -67,6 +69,7 @@ describe('checkTraces', () => {
     const r = checkTraces([sub('a', 'active')], [ev(1, 'Activated', 'a'), ev(2, 'Canceled', 'a')], [SUB], 't');
     expect(r.violations).toHaveLength(1);
     expect(r.violations[0]!.detail).toMatch(/canceled|final/i);
+    expect(r.violations[0]!.anchors).toEqual(['spec:machine Subscription.status']);
   });
 
   it('catches an undeclared event type for the aggregate', () => {

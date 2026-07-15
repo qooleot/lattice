@@ -105,9 +105,39 @@ export function checkTraces(entities: CaseEntity[], events: ObservedEvent[],
         const atEvent = stuck.index < regionEvents.length
           ? `stuck at event #${stuck.index + 1} (${regionEvents[stuck.index]!.eventType}, outbox seq ${regionEvents[stuck.index]!.seq}) from state(s) {${stuck.states.join(', ')}}`
           : `all ${regionEvents.length} event(s) consumed, reachable state(s) {${stuck.states.join(', ')}} do not include observed final '${finalState}'`;
+
+        // Narrow anchors to the implicated transitions
+        let violationAnchors: string[];
+        if (stuck.index < regionEvents.length) {
+          // Stuck at an unconsumed event: blame transitions that declare it
+          const stuckEventType = regionEvents[stuck.index]!.eventType;
+          const implicatedTransitions = regionTransitions.filter(t => t.emits === stuckEventType);
+          if (implicatedTransitions.length > 0) {
+            violationAnchors = implicatedTransitions.flatMap(t =>
+              t.anchors.provenance.length ? t.anchors.provenance : [t.anchors.specElement]
+            );
+          } else {
+            violationAnchors = [`spec:machine ${agg.name}.${region.name}`];
+          }
+        } else if (regionEvents.length === 1) {
+          // All events consumed but only one: blame the transition that emitted it
+          const lastEventType = regionEvents[0]!.eventType;
+          const lastEventTransitions = regionTransitions.filter(t => t.emits === lastEventType);
+          if (lastEventTransitions.length > 0) {
+            violationAnchors = lastEventTransitions.flatMap(t =>
+              t.anchors.provenance.length ? t.anchors.provenance : [t.anchors.specElement]
+            );
+          } else {
+            violationAnchors = [`spec:machine ${agg.name}.${region.name}`];
+          }
+        } else {
+          // Multiple events consumed or no events: blame the region
+          violationAnchors = [`spec:machine ${agg.name}.${region.name}`];
+        }
+
         violations.push({
           invariant: '', specElement: `machine ${agg.name}.${region.name}`,
-          anchors: regionTransitions.flatMap(t => t.anchors.provenance.length ? t.anchors.provenance : [t.anchors.specElement]),
+          anchors: violationAnchors,
           witnessIds: [entity.id], source,
           detail: `no legal path: ${agg.name} '${entity.id}' region '${region.name}' — ${atEvent}; events=[${regionEvents.map(e => e.eventType).join(', ')}]`,
         });
