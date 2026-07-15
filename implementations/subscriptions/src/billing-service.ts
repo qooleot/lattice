@@ -53,7 +53,6 @@ function settle(db: Database.Database, inv: InvoiceRow): void {
     // payment restored the account — silent recovery, no event
     db.prepare(`UPDATE subscriptions SET lifecycle_state = 'active' WHERE id = ?`).run(sub.id);
   }
-  refreshAccountSummary(db, inv.subscription_id, 0);
 }
 
 export function voidInvoice(db: Database.Database, invoiceId: string): void {
