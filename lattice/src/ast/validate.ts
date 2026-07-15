@@ -254,14 +254,17 @@ export function validateModel(m: DomainModel): Diagnostic[] {
 }
 
 /**
- * Money fields whose sign was never decided (spec: Slice A design §2). Deliberately NOT part of
- * validateModel: loadLatText calls that (fromLangium.ts), and the language keeps its
- * Money ⇒ non-negative default for hand-written .lat and every doc example. This gate is for the
- * elicitation path only, where the model is machine-authored and an unconsidered default silently
- * becomes an adopted rule that constrains every witness the solver draws.
+ * Money fields whose sign was never decided, or decided both ways (spec: Slice A design §2).
+ * Deliberately NOT part of validateModel: loadLatText calls that (fromLangium.ts), and the
+ * language keeps its Money ⇒ non-negative default for hand-written .lat and every doc example.
+ * This gate is for the elicitation path only, where the model is machine-authored and an
+ * unconsidered — or self-contradictory — default silently becomes an adopted rule that
+ * constrains every witness the solver draws.
  *
- * One diagnostic per owner, naming every undecided field — the caller elicits per cluster, so a
- * per-field list is what it needs to ask one question instead of N.
+ * @signed and @unsigned are mutually exclusive by construction: a field carrying both is reported
+ * as contradictory, never as undecided — the two lists are disjoint. One diagnostic per owner per
+ * list, naming every offending field — the caller elicits per cluster, so a per-field list is what
+ * it needs to ask one question instead of N.
  */
 export function undecidedMoneySigns(m: DomainModel): Diagnostic[] {
   const out: Diagnostic[] = [];
@@ -270,9 +273,15 @@ export function undecidedMoneySigns(m: DomainModel): Diagnostic[] {
     ...m.aggregates.flatMap(a => [a as { name: string; fields: Field[] }, ...(a.entities ?? [])]),
   ];
   for (const o of owners) {
-    const undecided = o.fields
-      .filter(f => f.type.kind === 'prim' && f.type.prim === 'Money'
-        && !f.tags?.includes('signed') && !f.tags?.includes('unsigned'))
+    const moneyFields = o.fields.filter(f => f.type.kind === 'prim' && f.type.prim === 'Money');
+    const contradictory = moneyFields
+      .filter(f => f.tags?.includes('signed') && f.tags?.includes('unsigned'))
+      .map(f => f.name);
+    if (contradictory.length)
+      out.push({ code: 'money-sign-contradictory', at: o.name,
+        message: `${o.name}: Money field(s) ${contradictory.join(', ')} are tagged both @signed and @unsigned — the tags contradict. @signed and @unsigned are mutually exclusive: pick the one that is true of the field.` });
+    const undecided = moneyFields
+      .filter(f => !f.tags?.includes('signed') && !f.tags?.includes('unsigned'))
       .map(f => f.name);
     if (undecided.length)
       out.push({ code: 'money-sign-undecided', at: o.name,

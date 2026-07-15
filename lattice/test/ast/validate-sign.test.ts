@@ -47,4 +47,23 @@ describe('undecidedMoneySigns', () => {
     expect(validateModel(model([money('balance')])).map(d => d.code)).not.toContain('money-sign-undecided');
     expect(validateModel(model([money('balance')]))).toEqual([]);
   });
+
+  it('flags a Money field tagged both @signed and @unsigned as contradictory', () => {
+    const d = undecidedMoneySigns(model([money('balance', ['signed', 'unsigned'])]));
+    expect(d.map(x => x.code)).toEqual(['money-sign-contradictory']);
+    expect(d[0]!.message).toContain('balance');
+    expect(d[0]!.at).toBe('Account');
+  });
+
+  it('does not also report a contradictory field as undecided', () => {
+    const d = undecidedMoneySigns(model([money('balance', ['signed', 'unsigned'])]));
+    expect(d.map(x => x.code)).not.toContain('money-sign-undecided');
+  });
+
+  // Same pinning as the load-path test above: the contradictory check must stay off the load path too.
+  it('validateModel does NOT emit money-sign-contradictory either', () => {
+    const m = model([money('balance', ['signed', 'unsigned'])]);
+    expect(validateModel(m).map(d => d.code)).not.toContain('money-sign-contradictory');
+    expect(validateModel(m)).toEqual([]);
+  });
 });
