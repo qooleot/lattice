@@ -2,9 +2,11 @@
 // CaseEntity[] for evaluateCandidate. One CaseEntity per row per bound aggregate. A ref field
 // carries the referenced row's key value (string) so the ref-hop in evaluate.ts's resolveValue
 // (`entities.find(x => x.id === v)`) works unmodified. Total or loud: SQL NULL in a nullable
-// ref auto-binding is the one legal absence (the field key is omitted); every other NULL, and
-// every override returning null/undefined, is a hard error naming aggregate/field/row id — a
-// lying projection must fail, not coerce (design drift class 6/11 depends on this).
+// ref field is the one legal absence (the field key is omitted) — whether the value comes from
+// an auto-bound column read or an override function computing the same nullable foreign key
+// (e.g. a semantic rename); every other NULL, and every override returning null/undefined for a
+// non-ref field, is a hard error naming aggregate/field/row id — a lying projection must fail,
+// not coerce (design drift class 6/11 depends on this).
 import type Database from 'better-sqlite3';
 import type { DomainModel } from '../ast/domain.js';
 import type { CaseEntity } from '../engine/evaluate.js';
@@ -27,7 +29,7 @@ export function observeEntities(db: Database.Database, model: DomainModel,
           ? row[fb.column!]
           : overrides[agg.aggregate]![fb.field]!(db, row);
         if (v === null || v === undefined) {
-          if (fb.kind === 'auto' && nullableRefs.has(fb.field)) continue; // absent optional ref: omit key
+          if (nullableRefs.has(fb.field)) continue; // absent optional ref: omit key (auto or override)
           throw new Error(
             `conform observe: ${agg.aggregate}.${fb.field} is null/undefined for row ${id} — ` +
             `projection must be total or the field overridden`);

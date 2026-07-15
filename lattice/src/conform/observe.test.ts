@@ -57,4 +57,25 @@ describe('observeEntities', () => {
     expect('parent' in a2.fields).toBe(true);
     expect(a2.fields.parent).toBe('a1');
   });
+
+  it('omits nullable-ref field from fields when an OVERRIDE returns null (semantic rename of a nullable ref)', () => {
+    const db = tinyDb();
+    db.prepare(`INSERT INTO accounts (id, owner_name, state) VALUES ('a1','Ada','openState')`).run();
+    db.prepare(`INSERT INTO accounts (id, owner_name, state, parent_id) VALUES ('a2','Bob','openState','a1')`).run();
+
+    // Force 'parent' to bind via an override (instead of auto) that reads the same column —
+    // exercises the OVERRIDE branch of the null/undefined check, not the auto branch.
+    const overridden = { Account: { ...overrides.Account, parent: (_db: unknown, row: Record<string, unknown>) => row.parent_id as string } };
+    const manifest = bindSchema(db, tinyModel, overridden);
+    const entities = observeEntities(db, tinyModel, manifest, overridden);
+
+    // a1's override returns null (row.parent_id is null) — the key must be omitted, not throw.
+    const a1 = entities.find(e => e.id === 'a1')!;
+    expect('parent' in a1.fields).toBe(false);
+
+    // a2's override returns 'a1' — the key must be present.
+    const a2 = entities.find(e => e.id === 'a2')!;
+    expect('parent' in a2.fields).toBe(true);
+    expect(a2.fields.parent).toBe('a1');
+  });
 });
