@@ -1,8 +1,8 @@
 # Tags
 
 `@name` annotations attach extra meaning to a field or a lifecycle state. Some tags feed
-[derived invariants](derived-invariants.md) automatically; others are informational or change
-how a template-matched invariant is proposed.
+[derived invariants](derived-invariants.md) automatically; others are informational or feed
+`matchTemplates`, which adopts or seeds an invariant depending on the tag.
 
 ## Syntax
 
@@ -58,8 +58,9 @@ the tags in the table above are read by the mapper and the engine — anything e
   default. Only `engine init` requires an explicit decision (`money-sign-undecided`), because a
   machine-authored model must not inherit a default nobody considered. A field tagged both `@signed`
   and `@unsigned` is `money-sign-contradictory` at `init`; the two are mutually exclusive.
-- `@total` and `@balance` only affect template matching during elicitation (which invariants get
-  *proposed*) — they carry no independent semantic check of their own and never block a load.
+- `@total` and `@balance` are read by `matchTemplates`, which **adopts** the conservation rule from
+  a `≥2 @balance` + `@total` shape at `init` — a ledger entry, no review gate, no elicitation
+  involved — but the tags carry no independent semantic check of their own and never block a load.
 
 ## Example
 
