@@ -440,7 +440,7 @@ Net: everyone *reads* fluent prose; domain experts *author by judging cases and 
 
 The loop is *active learning over a hypothesis space of invariants*, with the model finder manufacturing the questions. It is the same skeleton as CEGIS/CEGAR — but the "counterexample" is a **question for a human**, optimized to be the cheapest possible.
 
-**Honest scoping — this is not the workhorse in covered domains.** In a solved domain like billing, templates + LLM seeding + inference resolve most invariants and this loop is lightly exercised (§16: 2 of 12). Its value is twofold and **scales with domain novelty**: (i) it is the **residual handler** for genuinely novel invariants no template covers and inference can't settle; (ii) it is the shared **question-selection layer** every candidate source flows through when a human must confirm — boundary-probing (§8.3) catches an over-general *template*-proposed invariant just as it catches a de-novo one. Build-order implication (§21): templates + seeding + inference are the MVP; the full version-space / MaxSAT machinery below is a later, novelty-driven investment, not the first thing to build.
+**Honest scoping — this is not the workhorse in covered domains.** In a solved domain like billing, templates + LLM seeding + inference resolve most invariants and this loop is lightly exercised (§16: 2 of 10). Its value is twofold and **scales with domain novelty**: (i) it is the **residual handler** for genuinely novel invariants no template covers and inference can't settle; (ii) it is the shared **question-selection layer** every candidate source flows through when a human must confirm — boundary-probing (§8.3) catches an over-general *template*-proposed invariant just as it catches a de-novo one. Build-order implication (§21): templates + seeding + inference are the MVP; the full version-space / MaxSAT machinery below is a later, novelty-driven investment, not the first thing to build.
 
 ### 8.1 The atomic operation — a distinguishing witness is a satisfiability query
 
@@ -753,12 +753,13 @@ Founder:  Stripe-style subscriptions with invoicing and dunning.
 
 Agent:    Seeding from the Stripe model + your @acme templates:
           · Structure: Subscription + Invoice aggregates, PSP external call
-          · 12 invariants proposed. Breakdown so you see what actually needs you:
+          · 10 invariants proposed. Breakdown so you see what actually needs you:
 
-            6  auto-adopted from templates (MoneyConservation, Idempotency, Terminal,
-               NoOrphan, SingleActive, DeadlineBound) — verified, no question needed
+            4  auto-adopted from templates (MoneyConservation, Idempotency, Terminal,
+               NoOrphan) — verified, no question needed
             3  from Stripe domain knowledge, high-confidence — auto-confirmed, flagged for review
-            2  genuinely ambiguous → one judgment each
+            2  template-seeded but parameter-ambiguous (SingleActive, DeadlineBound) →
+               one judgment each
             1  a real policy fork → I won't guess
 
           [Q1]  Active subscription, latest invoice unpaid & 5 DAYS past due — valid state?
@@ -771,11 +772,11 @@ Agent:    Converged: Active-while-unpaid only within `grace` of the due date. �
           ⚠️ Open decision (parked; blocks `dunning_exhausted`): after retries exhausted,
              go Unpaid or Canceled? Alice: Unpaid · You: Canceled. Recorded, not guessed.
 
-          Total human input: 2 judgments + 1 pending decision, for 12 invariants.
+          Total human input: 2 judgments + 1 pending decision, for 10 invariants.
 ```
 Two questions, not twenty — the Question Planner asked the maximally-discriminating, reachable, minimal cases; everything else came from sources needing no interrogation. *(The "2 questions" is a best-case illustration, not a guarantee — see §19 Risk 3.)*
 
-**Read this ratio honestly (§8 intro).** 9 of 12 invariants came from templates + LLM seeding *because billing is a well-covered domain*; the active-learning loop did the residual 2. In a **novel** domain with no template coverage the ratio inverts — templates contribute little and the loop (plus inference) does most of the work, at a higher question cost. The loop's value scales with novelty; do not read "2 of 12" as "the loop is unimportant," nor as "elicitation is always cheap."
+**Read this ratio honestly (§8 intro).** 7 of 10 invariants arrived with no question asked — from templates + LLM seeding — *because billing is a well-covered domain*; the active-learning loop settled the residual 2. Note what those 2 are: templates *proposed* them, but only as seeds, because a template can match the shape of `SingleActive`/`DeadlineBound` without knowing the parameter (per customer? per family? how long a grace?) — that is precisely the elicitation in §8.5. Template coverage is therefore not the same as question-free coverage. In a **novel** domain with no template coverage the ratio inverts — templates contribute little and the loop (plus inference) does most of the work, at a higher question cost. The loop's value scales with novelty; do not read "2 of 10" as "the loop is unimportant," nor as "elicitation is always cheap."
 
 ---
 
