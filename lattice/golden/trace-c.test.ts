@@ -44,7 +44,11 @@ describe.skipIf(!existsSync(ALLOY_JAR))('GOLDEN TRACE C — revenue recognition'
     writeFileSync(join(dir, 'm.json'), JSON.stringify(revrecModel));
     const init: any = await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], realDeps);
     const adoptedIds = init.adopted.map((a: any) => a.id);
-    for (const id of ['tpl-1-Obligation', 'tpl-8-Obligation-recognized', 'tpl-3-AccountingPeriod-Closed', 'tpl-7-AccountingPeriod', 'tpl-9-RevenueEntry'])
+    // tpl-7-AccountingPeriod intentionally absent: #7 no longer infers a platform-wide singleton
+    // from a refless aggregate (2026-07-14 design). "At most one Open period" is real domain
+    // knowledge and belongs to LLM domain seeding (plan.md §9 source 5) or an authored
+    // `count where … <= 1` — not to a shape-matching template. The other four still come free.
+    for (const id of ['tpl-1-Obligation', 'tpl-8-Obligation-recognized', 'tpl-3-AccountingPeriod-Closed', 'tpl-9-RevenueEntry'])
       expect(adoptedIds).toContain(id);                              // the "comes free" moment (§2.3)
 
     await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify(seeds)], realDeps);
