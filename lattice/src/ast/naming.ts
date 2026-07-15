@@ -4,9 +4,11 @@
  * Capitalization interior to a segment survives, so `NonNegative_Invoice_totalDue` folds to
  * `nonNegativeInvoiceTotalDue` rather than flattening to `nonnegativeinvoicetotaldue`.
  *
- * Applied only to agent-authored names on the way into the session (see cli.ts `propose`), never
- * to hand-written `.lat` text — there the convention stays a warning, because the identifier is
- * the author's and rewriting it would overstep. See docs/language/naming-conventions.md.
+ * Applied at every boundary where this codebase authors a name itself: cli.ts's `propose`, for
+ * agent-submitted candidates on their way into the session, and templates.ts's `matchTemplates`,
+ * for template-matched invariant names on their way out. Never applied to hand-written `.lat`
+ * text — there the convention stays a warning, because the identifier is the author's and
+ * rewriting it would overstep. See docs/language/naming-conventions.md.
  */
 export function toCamelName(n: string): string {
   const segs = n.split('_').filter(s => s.length > 0);
