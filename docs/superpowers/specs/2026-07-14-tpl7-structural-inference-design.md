@@ -135,8 +135,8 @@ source.**
 
 After the drop, `AccountingPeriod` still gets its invariant, by three routes that are all better than
 today: LLM domain seeding proposes it with a prose confirmation (source 5, as designed); or a human
-authors `count where inState(Lifecycle, {Open}) <= 1`, which the grammar fully supports
-(`lat.langium:115`, `docs/language/invariant-forms.md` §4); or elicitation derives it. Each route ends
+authors `count where state Lifecycle in { Open } <= 1`, which the grammar fully supports
+(`lat.langium:154`, `docs/language/invariant-forms.md` §4); or elicitation derives it. Each route ends
 in a human judging the claim, which is the premise of the tool.
 
 **We lose the invariant's automatic arrival, not the invariant.** In exchange, `Biller` stops being
@@ -190,6 +190,13 @@ the fix is one edit away from regressing.
   deliberately advisory rather than candidates to mechanically register. Resolving it also shifts
   golden traces, which `implied.ts:61` explicitly warns against. Coupling it to two unambiguous
   correctness bugs would bury them in a debatable redesign.
+- **tpl-2's trigger breadth is a doc conflict, left unresolved.** `docs/plan.md` §10.2 (catalog row 2)
+  gives tpl-2's trigger as "a `@balance` field," but `templates.ts` fires on *any* `Money`-typed field
+  (see Bug 2 above), and `docs/language/derived-invariants.md:16` independently documents the
+  any-`Money` rule as the intended behavior for the equivalent `implied.ts` derivation. The two docs
+  disagree with each other; the implementation follows `derived-invariants.md`, not the catalog. This
+  design does not reconcile them — leaving `plan.md`'s catalog row stale against
+  `derived-invariants.md` and the code is a pre-existing, separate doc-accuracy task.
 
 ## Risks
 
@@ -204,6 +211,30 @@ the fix is one edit away from regressing.
   this worktree, so the `SingleActive_Biller` trace was not reproduced directly. The diagnosis rests
   on reading `templates.ts`, `prose.ts`, and `planner.ts`, which is sufficient to establish the
   mechanism, but the specific session's JSON was not inspected.
+
+### Backward compatibility
+
+`matchTemplates` is called from exactly one place, `lattice/src/cli.ts:417`, inside the `init`
+command. Adopted candidates are pushed to `s.candidates`, persisted to the session's `state.json`,
+and never re-derived. So this fix only heals **new** sessions — any session that already ran `init`
+before this change still carries an adopted `SingleActive_*` candidate and still has the resulting
+poisoned witness space (adopted invariants become solver assumptions via
+`lattice/src/engine/planner.ts:93`, `adoptedConstraints`). That includes
+`.lattice-session-bill-payment-ledger`, the very session cited above as the motivation for the fix —
+this change does not retroactively repair it.
+
+Verified blast radius: both in-repo tracked sessions (`.lattice-session-catalog`,
+`.lattice-session-subscriptions`) contain no `tpl-7-*` id and no `cardinality` candidate, and no
+committed `.lat` file has a `count` invariant. So **no committed artifact is wrong** — this is a
+user-session/ops matter, not a code defect.
+
+Remediation path for an affected session: `emit` the session's spec, hand-edit the resulting `.lat`
+to drop the offending `count … <= 1` invariant, then `apply --force-remove` to reconcile the session
+state to the edited spec.
+
+If a code-level migration is ever wanted (auto-stripping the bad candidate from stored session
+state on load), `lattice/src/engine/implied.ts:113-125` (`stripRefsResolveFields`) is the codebase's
+existing precedent for handling a legacy stored-candidate shape.
 
 ## Success criteria
 

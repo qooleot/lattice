@@ -755,8 +755,8 @@ Agent:    Seeding from the Stripe model + your @acme templates:
           · Structure: Subscription + Invoice aggregates, PSP external call
           · 12 invariants proposed. Breakdown so you see what actually needs you:
 
-            6  auto-adopted from templates (MoneyConservation, Idempotency, Terminal,
-               NoOrphan, SingleActive, DeadlineBound) — verified, no question needed
+            4  auto-adopted from templates (MoneyConservation, Idempotency, Terminal,
+               NoOrphan) — verified, no question needed
             3  from Stripe domain knowledge, high-confidence — auto-confirmed, flagged for review
             2  genuinely ambiguous → one judgment each
             1  a real policy fork → I won't guess
