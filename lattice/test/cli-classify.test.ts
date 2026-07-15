@@ -23,7 +23,7 @@ function scriptedDeps(results: { violated: boolean; witness?: any }[]) {
 
 const inertDeps: any = { alloy: async () => ({ sat: false, instances: [], ms: 0 }), quint: async () => ({ violated: false, ms: 0 }) };
 
-// Builds a session with traceAModel's 3 template-adopted (unclassifiable-kind) invariants plus two
+// Builds a session with traceAModel's 3 structure-implied (unclassifiable-kind) invariants plus two
 // hand-adopted `unique`-kind (quint-expressible) invariants h1/h2 — skipping elicitation entirely by
 // patching state.json directly (mirrors cli.test.ts's "next-question returning converged..." pattern).
 async function setup(): Promise<string> {
@@ -182,12 +182,12 @@ describe('engine classify CLI', () => {
     expect(r1.name).toBe('no-such-invariant');
     expect(r1.hint).toMatch(/no adopted invariant/i);
 
-    // Case 2: the name IS adopted (template-adopted NoOrphan_Subscription, kind refsResolve) but its
+    // Case 2: the name IS adopted (refsResolveSubscription, kind refsResolve) but its
     // kind isn't quint-expressible — distinct hint from case 1, since it's a real invariant just not
     // classifiable by this engine.
-    const r2: any = await runCommand(['classify', '--session', dir, '--name', 'NoOrphan_Subscription'], inertDeps);
+    const r2: any = await runCommand(['classify', '--session', dir, '--name', 'refsResolveSubscription'], inertDeps);
     expect(r2.error).toBe('not-classifiable');
-    expect(r2.name).toBe('NoOrphan_Subscription');
+    expect(r2.name).toBe('refsResolveSubscription');
     expect(r2.hint).toMatch(/refsResolve/);
     expect(r2.hint).not.toMatch(/no adopted invariant/i);
   });
@@ -200,12 +200,13 @@ describe('engine classify CLI', () => {
     ]);
     const r: any = await runCommand(['classify', '--session', dir], deps);
     expect(r.classified).toHaveLength(2);
-    // traceAModel's 3 template-adopted structural invariants (refsResolve/terminal kinds) are
-    // adopted but never quint-classifiable — bulk classify must name them, not just drop them.
+    // traceAModel's 3 structure-implied invariants (refsResolve/terminal kinds), adopted via
+    // impliedInvariants, are never quint-classifiable — bulk classify must name them, not just
+    // drop them.
     expect(r.skipped).toEqual(expect.arrayContaining([
-      { name: 'NoOrphan_Subscription', kind: 'refsResolve' },
-      { name: 'Terminal_Subscription_Ended', kind: 'terminal' },
-      { name: 'NoOrphan_Plan', kind: 'refsResolve' },
+      { name: 'refsResolveSubscription', kind: 'refsResolve' },
+      { name: 'terminalSubscriptionAccessEnded', kind: 'terminal' },
+      { name: 'refsResolvePlan', kind: 'refsResolve' },
     ]));
     expect(r.skipped).toHaveLength(3);
   });

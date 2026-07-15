@@ -55,24 +55,11 @@ export function valueLawInstances(m: DomainModel): { owner: AggregateDef | Entit
   return out;
 }
 
-/**
- * The Money ⇒ non-negative derivation, opted out of by @signed (spec P9). Shared with
- * templates.ts's matchTemplates.adopt exactly as valueLawInstances is — ONE source of truth,
- * because a divergence between the two is silent and severe: adopted candidates constrain every
- * witness the solver draws (planner.ts), while astToCode prints any adopted candidate that
- * isImplied — i.e. this module — does not recognize (code.ts). A rule the two disagree about is
- * therefore both enforced and emitted into spec.lat, contradicting the very tag it ignored, and
- * the round-trip cannot flag it redundant precisely because it is not implied.
- *
- * Both halves of the rule live here: which fields it applies to, and what it asserts. Sharing the
- * predicate alone would leave the body duplicated at each call site — the same drift, one level
- * down, and isImplied matches on body SHAPE (code.ts), so a body that drifts is exactly the
- * divergence this comment warns about.
- */
-export const nonNegativeMoneyFields = (o: AggregateDef | EntityDef): Field[] =>
+/** Money ⇒ non-negative, opted out of by @signed (spec P9). */
+const nonNegativeMoneyFields = (o: AggregateDef | EntityDef): Field[] =>
   o.fields.filter(f => f.type.kind === 'prim' && f.type.prim === 'Money' && !f.tags?.includes('signed'));
 
-export const nonNegativeBody = (field: string): Predicate =>
+const nonNegativeBody = (field: string): Predicate =>
   ({ kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: [field] }, right: { kind: 'int', value: 0 } });
 
 /**

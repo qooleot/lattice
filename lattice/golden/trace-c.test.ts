@@ -48,7 +48,8 @@ describe.skipIf(!existsSync(ALLOY_JAR))('GOLDEN TRACE C — revenue recognition'
     // from a refless aggregate (2026-07-14 design). "At most one Open period" is real domain
     // knowledge and belongs to LLM domain seeding (plan.md §9 source 5) or an authored
     // `count where … <= 1` — not to a shape-matching template. The other four still come free.
-    for (const id of ['tpl-1-Obligation', 'tpl-8-Obligation-recognized', 'tpl-3-AccountingPeriod-Closed', 'tpl-9-RevenueEntry'])
+    for (const id of ['tpl-1-Obligation', 'tpl-8-Obligation-recognized',
+                      'implied-terminalAccountingPeriodLifecycleClosed', 'implied-refsResolveRevenueEntry'])
       expect(adoptedIds).toContain(id);                              // the "comes free" moment (§2.3)
 
     await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify(seeds)], realDeps);

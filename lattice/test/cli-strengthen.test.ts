@@ -336,13 +336,13 @@ describe('engine classify interactive strengthening hook (bulk, scripted wiring)
     });
     // Wiring assertion (scripted, NOT masking proof): the broadened §7.2 reclassify pass (item 1)
     // re-ran for every adopted invariant over Invoice (the guard's aggregate) — paidExact plus the
-    // four NonNegative_Invoice_* template invariants matchTemplates auto-adopts for
+    // four nonNegativeInvoice* implied invariants matchTemplates adopts (via impliedInvariants) for
     // subscriptionsModel's four Money fields (licenseFeeAmount/usageAmount/totalDue/amountPaid) —
     // and their (scripted) verdicts are surfaced. Real masking proof: I-1 integ.
     const reclassifiedNames = r.autoStrengthened[0].reclassified.map((e: any) => e.invariant).sort();
     expect(reclassifiedNames).toEqual([
-      'NonNegative_Invoice_amountPaid', 'NonNegative_Invoice_licenseFeeAmount',
-      'NonNegative_Invoice_totalDue', 'NonNegative_Invoice_usageAmount', 'paidExact',
+      'nonNegativeInvoiceAmountPaid', 'nonNegativeInvoiceLicenseFeeAmount',
+      'nonNegativeInvoiceTotalDue', 'nonNegativeInvoiceUsageAmount', 'paidExact',
     ]);
     expect(r.autoStrengthened[0].reclassified.every((e: any) => e.verdict === 'entailed')).toBe(true);
     expect(r.autoStrengthened[0].reclassified.find((e: any) => e.invariant === 'paidExact').pinnedBy)
@@ -375,7 +375,7 @@ describe('engine classify interactive strengthening hook (bulk, scripted wiring)
 // stale unless it's swept into the same reclassify pass. Extends `setup()`'s session with two more
 // adopted invariants: `amountPaidAtMostTotal` (Invoice — the SAME aggregate as paidExact's `settle`
 // guard, so it must reclassify too) and `activePaidInFull` (Subscription — a DIFFERENT aggregate,
-// which must NOT be swept in). `init`'s matchTemplates also auto-adopts 4 NonNegative_Invoice_* template
+// which must NOT be swept in). `init`'s matchTemplates also adopts 4 nonNegativeInvoice* implied
 // invariants (subscriptionsModel's four Money fields on Invoice) — harmless here (hookDeps' fingerprint
 // entails anything whose q_I body isn't paidExact's), so assertions below check inclusion, not an exact set.
 async function setupWithAggregateSibling(): Promise<string> {

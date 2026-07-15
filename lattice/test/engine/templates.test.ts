@@ -29,8 +29,8 @@ describe('matchTemplates', () => {
 
   it('#1 conservation from @balance/@total tags', () =>
     expect(adopt.some(a => a.candidate.kind === 'conservation' && a.candidate.aggregate === 'Obligation')).toBe(true));
-  it('#2 non-negative for every Money field', () =>
-    expect(adopt.filter(a => a.name.startsWith('NonNegative')).length).toBe(3));
+  it('#2 non-negative is delegated to implied.ts (camelCase, implied- ids)', () =>
+    expect(adopt.filter(a => a.name.startsWith('nonNegative')).length).toBe(3));
   // @signed suppression is covered by the dedicated describe block below, which also pins the
   // stronger property: that this derivation and implied.ts agree.
   it('#3 terminal for @terminal states', () =>
@@ -75,26 +75,51 @@ describe('matchTemplates', () => {
   });
 });
 
-// Task 11: type-carried laws (design §3.5/§6) — mirrors the Money non-negativity pattern (#2
-// above) exactly: adopted here for enforcement + template provenance, and the SAME candidate
-// shape is separately derived by implied.ts for parse-dedup/never-printed. Both derive from the
-// shared valueLawInstances helper (implied.ts), so they can never drift apart.
+describe('matchTemplates — structure-implied families are delegated, not re-derived', () => {
+  const { adopt } = matchTemplates(revrecMini);
+  const implied = impliedInvariants(revrecMini);
+
+  it('adopts every implied invariant verbatim (same id, name, and candidate)', () => {
+    for (const i of implied) {
+      const found = adopt.find(a => a.id === i.id);
+      expect(found, `implied ${i.name} not adopted`).toBeDefined();
+      expect(found!.name).toBe(i.name);
+      expect(found!.candidate).toEqual(i.candidate);
+    }
+  });
+
+  it('derives no non-negative / refsResolve / terminal / value-law candidate of its own', () => {
+    const impliedIds = new Set(implied.map(i => i.id));
+    const ownDerived = adopt.filter(a => !impliedIds.has(a.id));
+    expect(ownDerived.every(a => a.id.startsWith('tpl-')), 'template-owned ids must be tpl-*').toBe(true);
+    // Obligation's conservation + monotonic are the whole template-owned set. No cardinality:
+    // 9bc1ed5 dropped tpl-7's no-refs arm, so a refless @active aggregate (AccountingPeriod)
+    // adopts nothing. Verified against main at cb01d6a — do not "correct" this to include
+    // cardinality without re-running matchTemplates first.
+    expect(ownDerived.map(a => a.candidate.kind).sort())
+      .toEqual(['conservation', 'monotonic']);
+  });
+});
+
+// Task 11: type-carried laws (design §3.5/§6). impliedInvariants is the sole derivation of these
+// candidates; matchTemplates adopts its output verbatim (see the delegation comment atop
+// matchTemplates), so drift between "enforced" and "printed" shapes is now structurally
+// impossible rather than merely tested for.
 describe('matchTemplates — type-carried value laws', () => {
   const { adopt } = matchTemplates(periodModel);
-  const law = adopt.find(a => a.id.startsWith('tpl-val-'));
+  const law = adopt.find(a => a.id.startsWith('implied-val'));
 
   it('adopts a value invariant as a prefixed statePredicate at its use site', () => {
     expect(law).toBeDefined();
-    expect(law!.id).toBe('tpl-val-Period-Subscription-period-wellOrdered');
-    expect(law!.name).toBe('ValueLaw_Subscription_period_wellOrdered');
+    expect(law!.id).toBe('implied-valPeriodSubscriptionPeriodWellOrdered');
+    expect(law!.name).toBe('valPeriodSubscriptionPeriodWellOrdered');
     expect(law!.candidate).toMatchObject({ kind: 'statePredicate', aggregate: 'Subscription',
       body: { kind: 'cmp', op: 'lt', left: { kind: 'field', path: ['period', 'start'] }, right: { kind: 'field', path: ['period', 'end'] } } });
   });
 
-  it('the adopted value-law candidate matches an implied candidate by shape (same source of truth)', () => {
+  it('the adopted value law IS the implied one, not a copy of it', () => {
     expect(isImplied(law!.candidate, periodModel)).toBe(true);
-    const impliedLaw = impliedInvariants(periodModel).find(i => i.id.includes('val'))!;
-    expect(impliedLaw.candidate).toEqual(law!.candidate);
+    expect(impliedInvariants(periodModel).find(i => i.id.startsWith('implied-val'))).toEqual(law);
   });
 
   it('all adopted value laws have template source + deterministic ids', () => {
@@ -103,12 +128,13 @@ describe('matchTemplates — type-carried value laws', () => {
   });
 });
 
-// #2 non-negativity is derived in two places for two purposes (adopt-for-enforcement here,
-// dedup-for-printing in implied.ts). They drifted once: templates.ts ignored @signed, so a
+// #2 non-negativity used to be derived in two places for two purposes (adopt-for-enforcement
+// here, dedup-for-printing in implied.ts). They drifted once: templates.ts ignored @signed, so a
 // `balance : Money @signed` was adopted as `balance >= 0` — constraining every witness the solver
 // drew, AND (since isImplied consults implied.ts, which honoured @signed) printed by astToCode as
-// an explicit invariant contradicting the tag three lines above it. Both callers now share
-// nonNegativeMoneyFields; these tests pin the agreement rather than either implementation.
+// an explicit invariant contradicting the tag three lines above it. Now templates.ts adopts
+// impliedInvariants verbatim, so @signed suppression surviving delegation is what these tests
+// pin — agreement is structural (one derivation), not merely asserted.
 describe('matchTemplates — #2 non-negativity honours @signed (no drift with implied.ts)', () => {
   const signedModel: DomainModel = {
     context: 'Ledger', ticksPerDay: 24, enums: [], values: [], entities: [],
@@ -121,21 +147,21 @@ describe('matchTemplates — #2 non-negativity honours @signed (no drift with im
   const { adopt } = matchTemplates(signedModel);
 
   it('adopts no non-negative rule for a @signed Money field', () =>
-    expect(adopt.some(a => a.name === 'NonNegative_Account_balance')).toBe(false));
+    expect(adopt.some(a => a.name === 'nonNegativeAccountBalance')).toBe(false));
 
   it('still adopts one for an unsigned Money field alongside it', () =>
-    expect(adopt.some(a => a.name === 'NonNegative_Account_lifetimeFees')).toBe(true));
+    expect(adopt.some(a => a.name === 'nonNegativeAccountLifetimeFees')).toBe(true));
 
   // The drift guard proper: anything astToCode would print (adopted ∧ ¬isImplied) is a rule the
   // two modules disagree about. This is the assertion that fails if either derivation moves alone.
   it('every adopted non-negative candidate is recognized as implied', () => {
-    const nonNeg = adopt.filter(a => a.name.startsWith('NonNegative'));
+    const nonNeg = adopt.filter(a => a.name.startsWith('nonNegative'));
     expect(nonNeg.length).toBeGreaterThan(0);
     expect(nonNeg.filter(a => !isImplied(a.candidate, signedModel))).toEqual([]);
   });
 
   it('holds for the richer revrec fixture too', () => {
-    const nonNeg = matchTemplates(revrecMini).adopt.filter(a => a.name.startsWith('NonNegative'));
+    const nonNeg = matchTemplates(revrecMini).adopt.filter(a => a.name.startsWith('nonNegative'));
     expect(nonNeg.filter(a => !isImplied(a.candidate, revrecMini))).toEqual([]);
   });
 });
@@ -157,13 +183,13 @@ describe('matchTemplates — qualified-ref exclusion (spec §4.2)', () => {
     events: [], services: []
   });
 
-  it('adopts no tpl-9 (refsResolve) invariant when the only ref field is qualified', () => {
+  it('adopts no refsResolve invariant when the only ref field is qualified', () => {
     const m = base('Catalog.Plan');
     const { adopt } = matchTemplates(m);
     expect(adopt.some(a => a.candidate.kind === 'refsResolve')).toBe(false);
   });
 
-  it('tpl-9 fields list excludes a qualified ref alongside a local one', () => {
+  it('the refsResolve fields list excludes a qualified ref alongside a local one', () => {
     const m = base('Catalog.Plan');
     m.entities.push({ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] });
     m.aggregates[0]!.fields.push({ name: 'who', type: { kind: 'ref', target: 'Customer' } });

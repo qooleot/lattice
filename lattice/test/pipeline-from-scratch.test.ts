@@ -87,7 +87,7 @@ describe('pipeline from scratch: elicit -> emit -> apply -> generate -> execute'
     writeFileSync(modelFile, JSON.stringify(model));
 
     const init: any = await runCommand(['init', '--session', sessionDir, '--model', modelFile], realDeps);
-    expect(init.adopted.map((a: any) => a.name)).toContain('NonNegative_Order_balance');   // free Money template
+    expect(init.adopted.map((a: any) => a.name)).toContain('nonNegativeOrderBalance');   // free Money template
 
     // --- Step 3: propose two `unique` rivals and drive next-question/verdict/probes/alternatives
     // until convergence, judged against the ground-truth candidate (H1: the real business rule from
@@ -217,7 +217,7 @@ describe('pipeline from scratch: elicit -> emit -> apply -> generate -> execute'
         expect(JSON.parse(outboxRows[0].payload)).toEqual({ orderId: 'ord-ok' });
 
         // (c) invariant-violating write rejected: balance is negative (still <= 0, so the guard
-        // itself passes) but the free NonNegative_Order_balance template invariant fails at
+        // itself passes) but the free nonNegativeOrderBalance implied invariant fails at
         // commit time — the whole transaction rolls back, leaving the aggregate at Pending and no
         // outbox row, exactly like generated/subscriptions/demo.ts's scenario 3.
         insertOrder(db, { orderId: 'ord-rollback', customer: 'cust-1', channel: 'Web', balance: -25, status: 'Pending' });
