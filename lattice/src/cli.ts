@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { DomainModel } from './ast/domain.js';
-import { validateModel } from './ast/validate.js';
+import { validateModel, undecidedMoneySigns } from './ast/validate.js';
 import { validateCandidate } from './ast/grammar.js';
 import { toCamelName } from './ast/naming.js';
 import type { CandidateInvariant, Candidate } from './ast/invariant.js';
@@ -439,7 +439,10 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       case 'init': {
         const m = readJson(values.model!);
         if (isBadJson(m)) return { error: 'bad-json-or-path', detail: m[BAD_JSON] };
-        const diags = validateModel(m as DomainModel);
+        // undecidedMoneySigns is init-only on purpose: loadLatText keeps the language's
+        // Money ⇒ non-negative default (see validate.ts). Adding it to validateModel would
+        // reject every hand-written .lat and doc example.
+        const diags = [...validateModel(m as DomainModel), ...undecidedMoneySigns(m as DomainModel)];
         if (diags.length) return { error: 'ill-formed-model', diagnostics: diags };
         s.model = m as DomainModel;
         const { adopt, seeds } = matchTemplates(m as DomainModel);

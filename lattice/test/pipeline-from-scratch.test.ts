@@ -55,7 +55,7 @@ describe('pipeline from scratch: elicit -> emit -> apply -> generate -> execute'
           { name: 'orderId', type: { kind: 'prim', prim: 'Id' }, key: true },
           { name: 'customer', type: { kind: 'ref', target: 'Customer' } },
           { name: 'channel', type: { kind: 'enum', enum: 'OrderChannel' } },
-          { name: 'balance', type: { kind: 'prim', prim: 'Money' } },
+          { name: 'balance', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] },
         ],
         machine: {
           regions: [{ name: 'status', initial: 'Pending', states: [

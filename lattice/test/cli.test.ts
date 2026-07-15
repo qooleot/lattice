@@ -195,7 +195,7 @@ describe('engine CLI', () => {
       context: 'Dedup', enums: [], values: [], events: [], entities: [], services: [],
       aggregates: [{ kind: 'aggregate', name: 'Box', fields: [
         { name: 'boxId', type: { kind: 'prim', prim: 'Id' }, key: true },
-        { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }],
+        { name: 'amount', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] }] }],
     };
     writeFileSync(join(dir, 'm.json'), JSON.stringify(model));
     await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);

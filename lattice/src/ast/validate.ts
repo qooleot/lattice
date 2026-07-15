@@ -252,3 +252,31 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   });
   return out;
 }
+
+/**
+ * Money fields whose sign was never decided (spec: Slice A design §2). Deliberately NOT part of
+ * validateModel: loadLatText calls that (fromLangium.ts), and the language keeps its
+ * Money ⇒ non-negative default for hand-written .lat and every doc example. This gate is for the
+ * elicitation path only, where the model is machine-authored and an unconsidered default silently
+ * becomes an adopted rule that constrains every witness the solver draws.
+ *
+ * One diagnostic per owner, naming every undecided field — the caller elicits per cluster, so a
+ * per-field list is what it needs to ask one question instead of N.
+ */
+export function undecidedMoneySigns(m: DomainModel): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  const owners: { name: string; fields: Field[] }[] = [
+    ...m.entities, ...m.values,
+    ...m.aggregates.flatMap(a => [a as { name: string; fields: Field[] }, ...(a.entities ?? [])]),
+  ];
+  for (const o of owners) {
+    const undecided = o.fields
+      .filter(f => f.type.kind === 'prim' && f.type.prim === 'Money'
+        && !f.tags?.includes('signed') && !f.tags?.includes('unsigned'))
+      .map(f => f.name);
+    if (undecided.length)
+      out.push({ code: 'money-sign-undecided', at: o.name,
+        message: `${o.name}: Money field(s) ${undecided.join(', ')} have no sign decision — tag each @signed (may go negative) or @unsigned (may not). The engine will not guess.` });
+  }
+  return out;
+}

@@ -98,11 +98,11 @@ export const invoiceLinesModel: DomainModel = {
     kind: 'aggregate', name: 'Invoice',
     fields: [
       { name: 'invId', type: { kind: 'prim', prim: 'Id' }, key: true },
-      { name: 'totalDue', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
+      { name: 'totalDue', type: { kind: 'prim', prim: 'Money' }, tags: ['total', 'unsigned'] },
       { name: 'lines', type: { kind: 'list', of: { kind: 'ref', target: 'InvoiceLine' } } }],
     entities: [{ kind: 'entity', name: 'InvoiceLine', fields: [
       { name: 'lineId', type: { kind: 'prim', prim: 'Id' }, key: true },
-      { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }],
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] }] }],
   }],
 };
 
@@ -168,11 +168,11 @@ export const traceDModel: DomainModel = {
     fields: [
       { name: 'invId', type: { kind: 'prim', prim: 'Id' }, key: true },
       { name: 'period', type: { kind: 'value', value: 'Period' } },
-      { name: 'totalDue', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
+      { name: 'totalDue', type: { kind: 'prim', prim: 'Money' }, tags: ['total', 'unsigned'] },
       { name: 'lines', type: { kind: 'list', of: { kind: 'ref', target: 'InvoiceLine' } } }],
     entities: [{ kind: 'entity', name: 'InvoiceLine', fields: [
       { name: 'lineId', type: { kind: 'prim', prim: 'Id' }, key: true },
-      { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }],
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] }] }],
     machine: { regions: [{ name: 'settlement', initial: 'draft', states: [
       { name: 'draft', tags: [] }, { name: 'open', tags: ['active'] }, { name: 'paid', tags: ['terminal'] }] }],
       transitions: [
@@ -241,10 +241,10 @@ export const subscriptionsModel: DomainModel = {
       fields: [
         { name: 'invoiceId', type: { kind: 'prim', prim: 'Id' }, key: true },
         { name: 'subscription', type: { kind: 'ref', target: 'Subscription' } },
-        { name: 'licenseFeeAmount', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
-        { name: 'usageAmount', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
-        { name: 'totalDue', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] },
-        { name: 'amountPaid', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+        { name: 'licenseFeeAmount', type: { kind: 'prim', prim: 'Money' }, tags: ['total', 'unsigned'] },
+        { name: 'usageAmount', type: { kind: 'prim', prim: 'Money' }, tags: ['total', 'unsigned'] },
+        { name: 'totalDue', type: { kind: 'prim', prim: 'Money' }, tags: ['total', 'unsigned'] },
+        { name: 'amountPaid', type: { kind: 'prim', prim: 'Money' }, tags: ['balance', 'unsigned'] },
         { name: 'retryCount', type: { kind: 'prim', prim: 'Int' } }],
       machine: {
         regions: [{ name: 'settlement', initial: 'draft', states: [
@@ -328,14 +328,14 @@ export const revrecModel: DomainModel = {
   entities: [
     { kind: 'entity', name: 'Obligation', fields: [
       { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
-      { name: 'recognized', type: { kind: 'prim', prim: 'Money' }, tags: ['balance', 'monotonic'] },
-      { name: 'deferred', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
-      { name: 'allocated', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] }] },
+      { name: 'recognized', type: { kind: 'prim', prim: 'Money' }, tags: ['balance', 'monotonic', 'unsigned'] },
+      { name: 'deferred', type: { kind: 'prim', prim: 'Money' }, tags: ['balance', 'unsigned'] },
+      { name: 'allocated', type: { kind: 'prim', prim: 'Money' }, tags: ['total', 'unsigned'] }] },
     { kind: 'entity', name: 'RevenueEntry', fields: [
       { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
       { name: 'obligation', type: { kind: 'ref', target: 'Obligation' } },
       { name: 'period', type: { kind: 'ref', target: 'AccountingPeriod' } },
-      { name: 'amount', type: { kind: 'prim', prim: 'Money' } },
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] },
       { name: 'kind', type: { kind: 'enum', enum: 'EntryKind' } },
       { name: 'postedAt', type: { kind: 'prim', prim: 'Date' } }] }
   ],
