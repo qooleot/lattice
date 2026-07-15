@@ -14,7 +14,7 @@ describe('formatReport', () => {
         anchors: ['hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5'],
         witnessIds: ['sub-1'], source: 'journey: trial → activate', detail: 'violated by 1/3 Subscription row(s)' }],
       residual: { autoBound: 14, overridden: 4, total: 18 },
-      traceRowsChecked: 0, guardedTransitions: [], durationMs: 0,
+      traceRowsChecked: 0, guardedTransitions: [], crosschecks: [], durationMs: 0,
     });
     expect(text).toContain('auto-bound 14/18');
     expect(text).toContain('4 overridden');
@@ -28,7 +28,7 @@ describe('formatReport', () => {
   it('reports a clean run explicitly, never silently', () => {
     const text = formatReport({ target: 't', snapshots: 3, invariantsChecked: 6, optOuts: [],
       violations: [], residual: { autoBound: 14, overridden: 4, total: 18 },
-      traceRowsChecked: 0, guardedTransitions: [], durationMs: 0 });
+      traceRowsChecked: 0, guardedTransitions: [], crosschecks: [], durationMs: 0 });
     expect(text).toContain('0 violations across 3 snapshots (6 invariants checked)');
   });
 
@@ -37,11 +37,29 @@ describe('formatReport', () => {
       target: 't', snapshots: 3, invariantsChecked: 6, optOuts: [], violations: [],
       residual: { autoBound: 14, overridden: 4, total: 18 },
       traceRowsChecked: 57, guardedTransitions: ['activate', 'finalize', 'settle'],
-      durationMs: 4_210,
+      crosschecks: [], durationMs: 4_210,
     });
     expect(text).toContain('tier 2: 57 row-traces checked against the machine');
     expect(text).toContain('guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle');
     expect(text).toContain('duration 4.2s — budget 60s OK');
+  });
+
+  it('states declared crosscheck names explicitly on the line after tier 2', () => {
+    const text = formatReport({
+      target: 't', snapshots: 3, invariantsChecked: 6, optOuts: [], violations: [],
+      residual: { autoBound: 14, overridden: 4, total: 18 },
+      traceRowsChecked: 57, guardedTransitions: [], crosschecks: ['account_summary'], durationMs: 0,
+    });
+    expect(text).toContain('crosschecks: account_summary');
+  });
+
+  it('states absence of declared crosschecks explicitly, never silently', () => {
+    const text = formatReport({
+      target: 't', snapshots: 3, invariantsChecked: 6, optOuts: [], violations: [],
+      residual: { autoBound: 14, overridden: 4, total: 18 },
+      traceRowsChecked: 57, guardedTransitions: [], crosschecks: [], durationMs: 0,
+    });
+    expect(text).toContain('crosschecks: none declared');
   });
 
   it('renders tier-2 violations with empty invariant using specElement as headline', () => {
@@ -51,7 +69,7 @@ describe('formatReport', () => {
         anchors: ['transaction rolled back after append'],
         witnessIds: ['sub-1'], source: 'journeys', detail: 'orphaned event in outbox' }],
       residual: { autoBound: 14, overridden: 4, total: 18 },
-      traceRowsChecked: 10, guardedTransitions: [], durationMs: 0,
+      traceRowsChecked: 10, guardedTransitions: [], crosschecks: [], durationMs: 0,
     });
     expect(text).toContain('VIOLATION outbox (orphan) (outbox (orphan))');
     expect(text).not.toContain('VIOLATION  ('); // no double space

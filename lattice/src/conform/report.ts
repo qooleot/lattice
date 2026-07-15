@@ -12,6 +12,7 @@ import { bindSchema } from './bind.js';
 import { observeEntities } from './observe.js';
 import { checkInvariants, type OptOut } from './tier1.js';
 import { checkTraces, type ObservedEvent } from './trace.js';
+import { loadCrosschecks, runCrosschecks } from './crosscheck.js';
 import { renderContract } from './contract.js';
 import { appendLedger } from '../engine/session.js';
 import type { BindingManifest, ConformReport, ConformViolation, OverridesModule } from './types.js';
@@ -51,6 +52,7 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
   if (!ovModule || typeof ovModule.overrides !== 'object' || ovModule.overrides === null) {
     throw new Error(`conform: ${overridesPath} must export 'overrides' (an aggregate→field→fn map)`);
   }
+  const cc = await loadCrosschecks(targetDir);
   const snapDir = resolve(targetDir, cfg.snapshots);
   if (!existsSync(snapDir)) throw new Error(`conform: no snapshots at ${snapDir} — run the target's test suite first`);
   const snaps = readdirSync(snapDir).filter(f => f.endsWith('.sqlite')).sort();
@@ -80,6 +82,7 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
       const trace = checkTraces(entitiesArr, events, plan.aggregates, meta.source);
       violations.push(...trace.violations);
       traceRows += trace.rowsChecked;
+      if (cc) violations.push(...runCrosschecks(db, cc, meta.source));
     } finally { db.close(); }
   }
   // GenPlan has no top-level `invariants` — every invariant lives under an aggregate
@@ -95,7 +98,9 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
     target: targetDir, snapshots: snaps.length,
     invariantsChecked: allInvariants.filter(i => i.candidate.kind !== 'guard' && !skippedOptOuts.has(i.name)).length,
     optOuts: cfg.optOuts, violations, residual: residual(manifest!),
-    traceRowsChecked: traceRows, guardedTransitions, durationMs: Date.now() - startedAt,
+    traceRowsChecked: traceRows, guardedTransitions,
+    crosschecks: cc ? Object.keys(cc.crosschecks) : [],
+    durationMs: Date.now() - startedAt,
   };
   const exitCode = mode === 'enforce' && violations.length > 0 ? 1 : 0;
   let ledgerError: string | undefined;
@@ -119,6 +124,7 @@ export function formatReport(r: ConformReport): string {
     `residual surface: auto-bound ${r.residual.autoBound}/${r.residual.total} fields ` +
       `(${Math.round((100 * r.residual.autoBound) / r.residual.total)}%), ${r.residual.overridden} overridden`,
     `tier 2: ${r.traceRowsChecked} row-traces checked against the machine`,
+    `crosschecks: ${r.crosschecks.length ? r.crosschecks.join(', ') : 'none declared'}`,
     ...(r.guardedTransitions.length
       ? [`guards NOT evaluated at event time (pre-state unobserved in passive mode): ${r.guardedTransitions.join(', ')}`]
       : []),

@@ -38,6 +38,7 @@ export interface ConformReport {
   residual: { autoBound: number; overridden: number; total: number };
   traceRowsChecked: number;
   guardedTransitions: string[];   // reported-unevaluated (design §4.4 honesty line)
+  crosschecks: string[];          // declared target crosscheck names run (empty when none declared, design §6 class 13)
   durationMs: number;
 }
 
