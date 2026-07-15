@@ -14,7 +14,7 @@ afterEach(ctx => {
   mkdirSync(outDir, { recursive: true });
   const slug = ctx.task.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
   for (const db of openDbs.splice(0)) {
-    const base = join(outDir, `${String(++seq).padStart(4, '0')}-${slug}`);
+    const base = join(outDir, `${process.pid}-${String(++seq).padStart(4, '0')}-${slug}`);
     writeFileSync(`${base}.sqlite`, db.serialize());
     writeFileSync(`${base}.json`, JSON.stringify({ source: ctx.task.name }));
     db.close();
