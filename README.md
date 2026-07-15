@@ -14,10 +14,10 @@ verdict ledger is the evidence's), grammar & machine growth (guards, services, v
 sum-over-collection, `const`), spec→implementation generation (`lattice generate` → a running
 SQLite-backed TypeScript service with guards, outbox events, invariant enforcement — see
 `generated/subscriptions/`), inference (entailment classification + CTI-guided strengthening),
-generated mermaid docs, and conformance Tier 1 (an engineer-shaped target impl at
-`implementations/subscriptions`, auto-bound `observe()` with a 4-field residual of overrides,
-anchored invariant reports over captured suite states via `lattice conform`, negative control
-clean). Not yet built: conformance Tier 2 (trace checker + drift experiments) and the app/UI —
+generated mermaid docs, and conformance Tiers 1+2 (auto-bound `observe()` + machine-reachability
+trace checking over captured suite states via `lattice conform`, runs recorded to the ledger;
+negative control clean). Not yet run: the pre-registered drift experiments (plan 4) — briefs in
+`docs/superpowers/specs/`, and the app/UI —
 briefs in `docs/superpowers/specs/`. A real elicited spec lives at `specs/subscriptions/spec.lat`.
 
 ## Getting started

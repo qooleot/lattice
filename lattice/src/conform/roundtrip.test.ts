@@ -15,6 +15,9 @@ const snapDir = join(implDir, '.conform/snapshots');
 // For every snapshot: a SubscriptionActivated event implies the aggregate observes status ∈
 // {active, pastDue, canceled} (activated then possibly failed/canceled later) and NEVER
 // trialing/expired; an InvoicePaid event implies that invoice observes amountPaid == totalDue.
+// Tier 2 (src/conform/trace.ts) now does full reachability checking in every conform run; this
+// test remains as the fast in-suite guardrail that the projection cannot contradict recorded
+// events even when no conform run happens.
 describe('observe() round-trip against the event stream', () => {
   it.skipIf(!existsSync(snapDir))('projection never contradicts recorded events', async () => {
     const { model } = loadGenInput(join(repoRoot, '.lattice-session-subscriptions'));
