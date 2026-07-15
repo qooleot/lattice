@@ -288,7 +288,42 @@ fixture in the corpus.
 
 ### c05 — terminal resurrection
 
-PENDING
+**Verdict: CAUGHT-VIOLATION**
+
+- Branch: `drift/c05-win-back` (forked from work-branch tip `3319251`).
+- Edit: in `settle()`, `implementations/subscriptions/src/billing-service.ts`, widened the silent
+  recovery condition from `sub.lifecycle_state === 'past_due'` to
+  `sub.lifecycle_state === 'past_due' || sub.lifecycle_state === 'canceled'`. Added the engineer's
+  win-back happy test to `test/billing-service.test.ts` (pre-registered exact text): `win-back: a
+  canceled customer who settles is reactivated (v2 flow)` — finalizes `sub-1-inv-1`, cancels
+  `sub-1` (canceled with an open invoice), pays it in full (`recordPayment` → drifted `settle`
+  revives), asserts `lifecycle_state` is `active`.
+- impl-exit=0 (`/tmp/drift-c05-impl.log`) — all 8 test files, 25 tests passed (24 pre-existing +
+  the 1 new win-back test). Matches the pre-registration: "none pre-registered (drift only ADDS a
+  path)" — no collateral failures.
+- conform-exit=0 (`--report`; violations>0 in output is the criterion). `/tmp/drift-c05-conform.log`:
+  ```
+  conform ../implementations/subscriptions
+  1 violations across 24 snapshots (10 invariants checked)
+  residual surface: auto-bound 14/18 fields (78%), 4 overridden
+  tier 2: 68 row-traces checked against the machine
+  crosschecks: account_summary
+  guards NOT evaluated at event time (pre-state unobserved in passive mode): activate, finalize, settle
+  VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [sub-1] — no legal path: Subscription 'sub-1' region 'status' — all 1 event(s) consumed, reachable state(s) {canceled} do not include observed final 'active'; events=[SubscriptionCanceled] — anchors [transition cancel] — source win-back: a canceled customer who settles is reactivated (v2 flow)
+  duration 0.0s — budget 60s OK
+  ```
+- Pre-registered signal confirmed: detail matches `do not include observed final 'active'`
+  verbatim, after all Subscription-region events consumed (`all 1 event(s) consumed, reachable
+  state(s) {canceled}` — canceled is terminal, `SubscriptionCanceled` is the only Subscription-
+  region event on this row), witness `sub-1`, Tier 2, `machine Subscription.status`. (The
+  pre-registration's "events end ... SubscriptionCanceled, InvoicePaid" describes the full outbox
+  log; the machine trace itself only consumes Subscription-region events, so its `events=[...]`
+  list correctly shows just `[SubscriptionCanceled]` — no discrepancy, the detail substring that
+  was pinned as the actual grep target matches exactly.)
+- Ledger evidence (`violationCount: 1`) committed on the drift branch
+  (`drift(c05): ledger evidence from conform --report run`).
+
+
 
 ### c06 — state-name drift
 
