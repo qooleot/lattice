@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (ESM, `.js` import extensions), vitest, Langium, Alloy + Quint solvers.
 
-**Design:** `docs/superpowers/specs/2026-07-14-template-layer-conformance-design.md` (commit `9d9a1ca`).
+**Design:** `docs/superpowers/specs/2026-07-14-template-layer-conformance-design.md` (rebased onto main `cb01d6a`).
 
 ## Global Constraints
 
@@ -25,8 +25,9 @@
 
 | File | Responsibility | Task |
 |---|---|---|
-| `lattice/src/engine/implied.ts` | **Single source of truth** for the four structure-implied families. `nonNegativeMoneyFields` reverts to private. | 1 |
-| `lattice/src/engine/templates.ts` | Only conservation / monotonic / single-active / deadline. Delegates the rest. | 1, 2 |
+| `lattice/src/engine/implied.ts` | **Single source of truth** for the four structure-implied families. `nonNegativeMoneyFields` **and** `nonNegativeBody` revert to private. | 1 |
+| `lattice/src/engine/templates.ts` | Only conservation / monotonic / uniquePer-seed / deadline. Delegates the rest; folds its own names via `toCamelName`. | 1, 2 |
+| `lattice/src/ast/naming.ts` | **Reused, not modified** — `toCamelName` already exists (`3438724`). | 2 |
 | `lattice/src/ast/validate.ts` | Gains `undecidedMoneySigns` — **exported, and NOT called by `validateModel`**. | 3 |
 | `lattice/src/engine/session.ts` | `CandidateStatus` gains `'declined'`. | 4 |
 | `lattice/src/cli.ts` | `init` calls the sign check; new `decline` command. | 3, 4 |
@@ -46,7 +47,7 @@
 - Modify: `lattice/src/engine/templates.ts`
 - Modify: `lattice/src/engine/implied.ts`
 - Modify: `lattice/test/engine/templates.test.ts`
-- Modify: `lattice/golden/trace-c.test.ts:47`, `lattice/test/cli-strengthen.test.ts:344`, `lattice/test/cli-strengthen.integration.test.ts:82`, `lattice/test/pipeline-from-scratch.test.ts:90`, `lattice/test/golden-trace-d.test.ts:22-23`
+- Modify: `lattice/golden/trace-c.test.ts:52`, `lattice/test/cli-strengthen.test.ts:344`, `lattice/test/cli-strengthen.integration.test.ts:82`, `lattice/test/pipeline-from-scratch.test.ts:90`, `lattice/test/golden-trace-d.test.ts:22-23`
 
 **Interfaces:**
 - Consumes: `impliedInvariants(m: DomainModel): CandidateInvariant[]` from `./implied.js`.
@@ -74,10 +75,12 @@ describe('matchTemplates — structure-implied families are delegated, not re-de
     const impliedIds = new Set(implied.map(i => i.id));
     const ownDerived = adopt.filter(a => !impliedIds.has(a.id));
     expect(ownDerived.every(a => a.id.startsWith('tpl-')), 'template-owned ids must be tpl-*').toBe(true);
-    // revrecMini's AccountingPeriod has an @active state and no refs, so #7 adopts a cardinality
-    // alongside Obligation's conservation and monotonic. These three are the whole template-owned set.
+    // Obligation's conservation + monotonic are the whole template-owned set. No cardinality:
+    // 9bc1ed5 dropped tpl-7's no-refs arm, so a refless @active aggregate (AccountingPeriod)
+    // adopts nothing. Verified against main at cb01d6a — do not "correct" this to include
+    // cardinality without re-running matchTemplates first.
     expect(ownDerived.map(a => a.candidate.kind).sort())
-      .toEqual(['cardinality', 'conservation', 'monotonic']);
+      .toEqual(['conservation', 'monotonic']);
   });
 });
 ```
@@ -98,7 +101,7 @@ import type { Candidate, CandidateInvariant } from '../ast/invariant.js';
 import { impliedInvariants } from './implied.js';
 ```
 
-(`Field` and `valueLawInstances` and `nonNegativeMoneyFields` are no longer used here. `Field` was already unused.)
+(All four of main's current imports from `./implied.js` — `nonNegativeBody`, `nonNegativeMoneyFields`, `valueLawInstances` — plus the `Field` type become unused here once the three blocks below are deleted.)
 
 Replace the opening of `matchTemplates` — the `adopt`/`seeds` declarations and the `valueLawInstances` loop — with:
 
@@ -121,38 +124,46 @@ Delete these three blocks from the `for (const o of owners(m))` loop:
 
 Keep `const refs = ...` — `#7` still uses it.
 
-- [ ] **Step 4: Revert `nonNegativeMoneyFields` to private in `implied.ts`**
+- [ ] **Step 4: Revert `nonNegativeMoneyFields` AND `nonNegativeBody` to private in `implied.ts`**
 
-It now has exactly one consumer. In `lattice/src/engine/implied.ts`, change `export const nonNegativeMoneyFields` to `const nonNegativeMoneyFields`, and replace its doc comment with:
+Both were exported so `templates.ts` could share them (`4c1bd33`/`eec5b3e`). Delegation orphans both — `impliedInvariants` becomes their only consumer. In `lattice/src/engine/implied.ts`, drop `export` from each, and replace the long shared-derivation doc comment above `nonNegativeMoneyFields` with:
 
 ```ts
 /** Money ⇒ non-negative, opted out of by @signed (spec P9). */
 ```
 
-The drift warning it carried is obsolete: with `templates.ts` delegating, there is only one derivation and nothing left to drift.
+The drift warning that comment carries is obsolete: with `templates.ts` delegating, there is exactly one derivation and nothing left to drift. Sharing a helper was the right fix while there were two callers; deleting the second caller is strictly better.
 
-Remove the now-unused `Field` import if tsc flags it.
+Remove the now-unused `Field` import from `templates.ts` if tsc flags it (it was only reachable via `nonNegativeMoneyFields`).
 
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run test/engine/templates.test.ts`
-Expected: PASS. The pre-existing `#2 non-negative for every Money field` test (asserting 3 `NonNegative*` names) will FAIL — it pins the old naming. Update it to:
+Expected: PASS for the new block. Three pre-existing tests in that file pin the old naming and will FAIL — update each:
 
 ```ts
+  // was: expect(adopt.filter(a => a.name.startsWith('NonNegative')).length).toBe(3)
   it('#2 non-negative is delegated to implied.ts (camelCase, implied- ids)', () =>
     expect(adopt.filter(a => a.name.startsWith('nonNegative')).length).toBe(3));
 ```
 
-Also update the two `@signed` regression tests added in 22f6c29 — `adopts no non-negative rule for a @signed Money field` and `still adopts one for an unsigned Money field alongside it` — to the new names `nonNegativeAccountBalance` / `nonNegativeAccountLifetimeFees`. Keep both: they still pin the behavior, now through the delegation.
+In the `#2 non-negativity honours @signed` describe block, rename the two expectations:
+`'NonNegative_Account_balance'` → `'nonNegativeAccountBalance'`, `'NonNegative_Account_lifetimeFees'` → `'nonNegativeAccountLifetimeFees'`. Keep both — they still pin @signed suppression, now through the delegation.
+
+**Leave the two tpl-7 tests alone** (`#7 adopts NO cardinality for a refless @active aggregate`, and `#7 adopts no SingleActive_* … multi-tenant shape`). They assert an absence, which delegation does not touch, and they are `9bc1ed5`'s regression guard against re-inferring singletons from shape.
+
+Update that block's header comment too: it currently explains that both callers "now share `nonNegativeMoneyFields`". After this task they do not share it — there is one caller. The comment should say the tests pin that delegation keeps `matchTemplates` and `implied.ts` in agreement by construction.
 
 - [ ] **Step 6: Migrate the five test files that hard-code names/ids**
 
-`lattice/golden/trace-c.test.ts:47` — `tpl-3-*` and `tpl-9-*` are delegated; `tpl-1`/`tpl-7`/`tpl-8` stay:
+`lattice/golden/trace-c.test.ts:52` — `tpl-3-*` and `tpl-9-*` become `implied-*`; `tpl-1`/`tpl-8` stay:
 
 ```ts
-    for (const id of ['tpl-1-Obligation', 'tpl-8-Obligation-recognized', 'tpl-7-AccountingPeriod',
+    for (const id of ['tpl-1-Obligation', 'tpl-8-Obligation-recognized',
                       'implied-terminalAccountingPeriodLifecycleClosed', 'implied-refsResolveRevenueEntry'])
 ```
+
+**Do NOT add `tpl-7-AccountingPeriod` to that list.** It is *intentionally absent* — the comment directly above it (lines 47-51) explains that `9bc1ed5` stopped #7 inferring a platform-wide singleton from a refless aggregate. Re-adding it would resurrect the behavior that comment exists to prevent. Leave those five lines exactly as they are.
 
 `lattice/test/cli-strengthen.test.ts:344` and `lattice/test/cli-strengthen.integration.test.ts:82` — replace the four `NonNegative_Invoice_*` names with `nonNegativeInvoiceAmountPaid`, `nonNegativeInvoiceLicenseFeeAmount`, `nonNegativeInvoiceTotalDue`, `nonNegativeInvoiceUsageAmount` (keep surrounding entries such as `paidExact` unchanged, and keep the arrays' existing sort order expectations).
 
@@ -200,9 +211,13 @@ the real subscriptions session performed by hand."
 
 ### Task 2: camelCase the template-owned names
 
-**Why:** 18 of 30 renames in the one real committed session are a human hand-fixing template names (`TotalDue_At_Most_Parts → totalDueAtMostParts`). Every spec this tool has emitted warns on reload. Task 1 fixed the delegated families; these four remain.
+**Why:** 18 of 30 renames in the one real committed session are a human hand-fixing template names (`TotalDue_At_Most_Parts → totalDueAtMostParts`). Every spec this tool has emitted warns on reload. Task 1 fixed the delegated families; these remain.
 
-**Also fixes a latent collision:** `UniquePer_${f.name}` is not unique per aggregate. The BillPayments model produced **three** seeds all named `UniquePer_biller` (on `Bill`, `SettlementBatch`, and `Fee`). The new name includes the owner.
+**Use main's normalizer, don't write another.** `3438724` landed `toCamelName` (`lattice/src/ast/naming.ts`) and applies it in `propose` at the boundary where the agent authors a name (`cli.ts:439`), on the reasoning that a machine-authored name should be *folded*, not warned about — while hand-written `.lat` keeps the convention advisory, "because rewriting their file would overstep" (`docs/language/naming-conventions.md`). **Template names are machine-authored by exactly the same argument**, so this task folds them at the `matchTemplates` boundary rather than hand-writing camelCase literals. One normalizer, two authorship boundaries.
+
+**Also fixes a latent collision that main's own design calls out.** `propose` refuses a batch with `name-collision` when two rules fold onto one name — "a real ambiguity no normalizer can settle". Templates bypass that path and have exactly this bug: `UniquePer_${f.name}` keys off the ref *field* only, so the BillPayments model produced **three distinct seeds all named `UniquePer_biller`** (on `Bill`, `SettlementBatch`, `Fee`) — folding to three identical `uniquePerBiller`. Including the owner fixes it at the source.
+
+**Note `SingleActive_*` is gone** (`9bc1ed5` dropped tpl-7's no-refs arm), so there is no `singleActive` rename to make.
 
 **Files:**
 - Modify: `lattice/src/engine/templates.ts`
@@ -210,7 +225,7 @@ the real subscriptions session performed by hand."
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: adopted/seeded names `conservation<Owner>`, `monotonic<Owner><Field>`, `singleActive<Owner>`, `uniquePer<Owner><Field>`, `deadlineBound<Owner>`. Ids are unchanged (`tpl-*`).
+- Produces: adopted/seeded names `conservation<Owner>`, `monotonic<Owner><Field>`, `uniquePer<Owner><Field>`, `deadlineBound<Owner>` — every template-owned name folded through `toCamelName`. Ids are unchanged (`tpl-*`). There is no `singleActive<Owner>`: `9bc1ed5` removed the arm that produced it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -285,45 +300,54 @@ describe('matchTemplates — invariant names follow the camelCase convention (sp
 Run: `npx vitest run test/engine/templates.test.ts -t "camelCase"`
 Expected: FAIL — names include `Conservation_Obligation`, `Monotonic_Obligation_recognized`, `SingleActive_AccountingPeriod`; and the two seeds collide on `UniquePer_biller`.
 
-- [ ] **Step 3: Rename in `templates.ts`**
+- [ ] **Step 3: Fix the collision at its source**
 
-Add a local helper below the `mk` declaration:
-
-```ts
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-```
-
-Then change the four name literals (ids stay as they are — they are ledger provenance keys, and `trace-c.test.ts` pins them):
+In `lattice/src/engine/templates.ts`, the tpl-7 seed name must carry the owner. Change:
 
 ```ts
-// #1 conservation
-adopt.push(mk(`tpl-1-${o.name}`, `conservation${cap(o.name)}`, …
-
-// #8 monotonic
-adopt.push(mk(`tpl-8-${o.name}-${f.name}`, `monotonic${cap(o.name)}${cap(f.name)}`, …
-
-// #7 single-active
-adopt.push(mk(`tpl-7-${o.name}`, `singleActive${cap(o.name)}`, …
-// …and the seeded arm — the owner is what disambiguates two aggregates sharing a ref field name:
-seeds.push(mk(`tpl-7-${o.name}-${f.name}`, `uniquePer${cap(o.name)}${cap(f.name)}`, …
-
-// #11 deadline
-seeds.push(mk(`tpl-11-${o.name}`, `deadlineBound${cap(o.name)}`, …
+          seeds.push(mk(`tpl-7-${o.name}-${f.name}`, `UniquePer_${o.name}_${f.name}`,
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+(The id already carried the owner; only the name did not. Ids stay exactly as they are — they are ledger provenance keys, and `trace-c.test.ts:52` pins them.)
+
+- [ ] **Step 4: Fold every template name through the shared normalizer**
+
+Import it in `templates.ts`:
+
+```ts
+import { toCamelName } from '../ast/naming.js';
+```
+
+Then fold at the single boundary — the `return` of `matchTemplates`:
+
+```ts
+  // Fold names onto the convention here, at the boundary where THIS module authors them, exactly
+  // as cli.ts's `propose` does for agent-authored names (docs/language/naming-conventions.md): a
+  // machine-authored name is normalized, a hand-written one only warned. Folding at the return
+  // keeps the literals above readable as `NonNegative_${o.name}_${f.name}` while nothing outside
+  // ever sees the un-folded form.
+  const fold = (i: CandidateInvariant): CandidateInvariant => ({ ...i, name: toCamelName(i.name) });
+  return { adopt: adopt.map(fold), seeds: seeds.map(fold) };
+```
+
+Note the delegated candidates from Task 1 arrive already camelCase (`implied.ts` builds them that way), and `toCamelName` is idempotent on a name with no underscores — so folding them again is a no-op, not a double-fold.
+
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run: `npx vitest run test/engine/templates.test.ts`
 Expected: PASS (all, including the Task 1 delegation tests).
 
-- [ ] **Step 5: Verify no other test pins the old names**
+- [ ] **Step 6: Verify no other test pins the old names**
 
 ```bash
-grep -rnE "Conservation_|SingleActive_|UniquePer_|Monotonic_|DeadlineBound_|ValueLaw_|NonNegative_|NoOrphan_|Terminal_" lattice/src lattice/test lattice/golden
+grep -rnE "Conservation_\{|UniquePer_\{|Monotonic_\{|DeadlineBound_\{|NonNegative_\{|NoOrphan_\{|Terminal_\{|ValueLaw_\{" lattice/src
+grep -rnE "'(Conservation|UniquePer|Monotonic|DeadlineBound|NonNegative|NoOrphan|Terminal|ValueLaw)_" lattice/test lattice/golden
 ```
-Expected: no output. Any hit is a file the migration missed — fix it before committing.
+Expected from the first: only the `templates.ts` literals that Step 4 folds at the boundary (they are meant to survive in source). Expected from the second: **no output** — any hit is a test still pinning a pre-fold name.
 
-- [ ] **Step 6: Commit**
+Note `'SingleActive_Biller'` legitimately remains in `templates.test.ts` as an **absence** assertion (`9bc1ed5`'s guard: `expect(...).not.toContain('SingleActive_Biller')`). Leave it — it pins that the name is never produced.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add lattice/src/engine/templates.ts lattice/test/engine/templates.test.ts
@@ -540,7 +564,9 @@ Money ⇒ non-negative default and every doc example is untouched.
 
 ### Task 4: `decline --id --reason`
 
-**Why:** §10.2 requires a declined invariant to be recorded, not merely absent. The record already exists (`session.ts:27`); the only writer is `reconcile.ts:107`'s post-hoc `--force-remove` ceremony. Today, rejecting `singleActiveBiller` means deleting `Biller`'s honest `@active` tag — deforming the model with no trace of why.
+**Why:** §10.2 requires a declined invariant to be recorded, not merely absent. The record already exists (`session.ts:27`); the only writer is `reconcile.ts:107`'s post-hoc `--force-remove` ceremony.
+
+The motivating example (`singleActiveBiller`) is **gone** — `9bc1ed5` fixed that misfire at the trigger, which is the better fix. A live one from the same elicitation: `monotonicPaymentAmountReturned`, adopted from a `@monotonic` tag on `Payment.amountReturned`, asserting the returned total never decreases. That is true *only* if a won dispute can never reverse a bank return — a question nobody answered. If it can, the rule is false, and `monotonic` is **template-adopted only** (`propose`/`regenerate` reject it as `not-elicitable`), so there is no way to argue with it in the loop. The escape today is to delete the `@monotonic` tag: the model then silently stops claiming something true-ish, and the reason it was removed lives nowhere. That is the same deformation, one tag over.
 
 **Refused once a verdict exists:** witnesses were drawn from a space that rule shaped; retracting it later does not un-ask those questions. The late path stays `apply --force-remove`.
 
@@ -618,10 +644,10 @@ Expected: FAIL — unknown command `decline`.
 
 - [ ] **Step 3: Add the `'declined'` status**
 
-`lattice/src/engine/session.ts:9`:
+`lattice/src/engine/session.ts:13` — note `'refuted'` is **not** in this union: `1560ac6` removed it as dead. Do not re-add it.
 
 ```ts
-export type CandidateStatus = 'active' | 'pruned' | 'merged' | 'refuted' | 'adopted' | 'parked' | 'declined';
+export type CandidateStatus = 'active' | 'pruned' | 'merged' | 'adopted' | 'parked' | 'declined';
 ```
 
 - [ ] **Step 4: Add the `decline` command**
@@ -701,9 +727,11 @@ git commit -m "feat(cli): decline --id --reason, the early half of plan.md §10.
 
 A declined invariant is not an absent one. The ledger record already existed
 (session.ts) but its only writer was reconcile.ts's post-hoc --force-remove
-ceremony, so rejecting a bad template match meant deforming the model instead:
-dropping Biller's honest @active tag to dodge an absurd single-active rule,
-leaving no trace of why.
+ceremony, so rejecting a bad template match meant deforming the model instead
+— dropping the @monotonic tag that produced a rule you doubt, which silently
+stops the model claiming something true-ish and leaves the reason nowhere.
+That matters most for monotonic, which is template-adopted only: propose and
+regenerate refuse it, so the elicitation loop can never argue with it.
 
 Refused once a verdict exists — witnesses were drawn from a space the rule
 shaped, so a late retraction cannot un-ask the questions already answered.
@@ -729,7 +757,10 @@ Current text lists `@active`, `@terminal`, `@balance`, `@reservation`, `@idempot
 - **Row 1 (Money conservation):** change the trigger to `≥2 @balance fields + a @total field` and the schema to `conserve <parts> == <total>`. Add a new row for the original time-based rule (`sum(buckets) == initial(sum(buckets))`, trigger `≥2 @balance, no @total`) marked **deferred — requires `initial(...)`, which the closed candidate grammar (§6.1) cannot express**.
 - **Row 2 (Non-negative balance):** change the trigger from "a `@balance` field" to "a `Money` field not tagged `@signed`", and note that `init` additionally rejects a `Money` field carrying neither `@signed` nor `@unsigned` — the sign is elicited, because the right default differs between the billing and ledger layers.
 - **Rows 4, 5, 6, 10, 12:** mark **deferred**, each naming the missing ingredient (`@idempotencyKey` + `external`; `@reservation`; cross-aggregate invariant paths; reachability encoding; saga/compensation modelling). A deferred template is recorded, not absent.
-- **Rows 3, 7, 8, 9, 11:** implemented. Note that 2/3/9 and value laws are derived by `implied.ts` and adopted by `matchTemplates`, not derived twice.
+- **Row 7:** leave the row's trigger and schema **as written** — `9bc1ed5` deleted tpl-7's no-refs arm, so the code now does what the row already said (`@active` on a child collection → the per-parent `unique` seed). This divergence closed itself while the design was being written; do not "fix" the row to describe the old behavior. Add only that it seeds at prior 0.4 rather than adopting.
+- **Rows 3, 8, 9, 11:** implemented. Note that 2/3/9 and value laws are derived by `implied.ts` and adopted by `matchTemplates`, not derived twice.
+
+§16 already says SingleActive/DeadlineBound are seeds rather than free adoptions (`988c807`) — leave it alone.
 
 - [ ] **Step 3: Amend §10.2's application-model paragraph**
 
@@ -803,12 +834,18 @@ The paragraph beginning "When stable: `engine init --model <file>`" says to pres
 
 ```markdown
 When one IS wrong, decline it — `engine decline --id <id> --reason <why>` — do not deform the model
-to dodge it. Dropping an honest `@active` tag so a bad single-active rule cannot fire leaves the
-model lying and the reason nowhere. A decline is recorded and auditable; a missing tag is not.
-`decline` is only legal before the first verdict, so this is the moment.
+to dodge it. Deleting an honest `@monotonic` tag so a rule you doubt cannot fire leaves the model
+quietly not-claiming something, and the reason nowhere. A decline is recorded and auditable; a
+missing tag is not. This matters most for `monotonic`, which is template-adopted only — `propose`
+and `regenerate` refuse it — so the loop can never argue with it. `decline` is only legal before
+the first verdict, so this is the moment.
 ```
 
-- [ ] **Step 3: Verify the skill's claims match the code**
+- [ ] **Step 3: Replace the stale `SingleActive_Biller` example**
+
+`SKILL.md:97` uses `SingleActive_Biller` to illustrate "never present a template as a bare name" — but `9bc1ed5` deleted the arm that produced it, so the skill now teaches with a name the engine cannot emit, and its worked example ("at most one Biller may be active at any time — a second one is illegal") describes a rule that no longer exists. Swap in a template that does: `conservationBill` — "a bill's `amountPaid` and `amountDue` must add up to its `total`, exactly, at every moment — a bill showing 40 paid and 40 due on a 100 total is illegal". Same lesson (name → forbidden concrete case, in the user's nouns), a rule the engine actually adopts.
+
+- [ ] **Step 4: Verify the skill's claims match the code**
 
 ```bash
 grep -n "decline\|money-sign-undecided\|@unsigned" .claude/skills/elicit-spec/SKILL.md
@@ -816,7 +853,7 @@ cd lattice && grep -n "'decline'" src/cli.ts && grep -n "money-sign-undecided" s
 ```
 Expected: every command and diagnostic the skill names exists. The skill is instructions to a model that cannot verify them at runtime — a stale claim there is a silent failure.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add .claude/skills/elicit-spec/SKILL.md

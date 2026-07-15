@@ -45,11 +45,14 @@ elicitation:
   `--force-remove` hand-edit ceremony. It works; it requires hand-editing `spec.lat` after the
   fact.
 - **Templates misfire on shape.** `Biller` (states `onboarding/active/suspended/offboarded`, no ref
-  fields) trips template #7 into `count where inState(standing,{active}) <= 1` — at most one active
-  biller on the entire platform. Whether the same shape yields a *settled rule* or a *declinable
-  seed* depends on whether the aggregate happens to have a ref field (`templates.ts:60`), which is
-  not a domain distinction. The only escape available was withholding an honest `@active` tag,
-  leaving the model deformed with no record of why.
+  fields) tripped template #7 into `count where inState(standing,{active}) <= 1` — at most one
+  active biller on the entire platform — because it happened to lack a ref field. The only escape
+  available was withholding an honest `@active` tag, leaving the model deformed with no record of
+  why. **This specific misfire was fixed on main by `9bc1ed5` while this design was being written**,
+  by deleting the no-refs arm rather than by making it escapable. The evidence still stands for the
+  general claim — shape-matching cannot see domain truth, and a template that fires on a coincidence
+  needs somewhere to be rejected — but the motivating instance is gone, which weakens the case for
+  the mechanism and is part of why the review stays advisory.
 
 These cut both ways, and the design follows them rather than the initial instinct: the review
 mechanism is **advisory**, because prose has caught everything so far and the hard gate is
@@ -212,9 +215,13 @@ Existing sessions are unaffected: they carry their own adopted names plus `renam
 3. **Advisory review may prove too weak.** It rests on Phase 0b, which is ~6 commits old and has a
    one-session track record. If a false template reaches an emitted spec, revisit the hard gate. The
    evidence today does not support paying for it.
-4. **Template misfire is not addressed, only made escapable.** #7's global-vs-seed split still keys
-   off whether an aggregate happens to have a ref field. Fixing triggers was considered and
-   deferred: it attacks the cause but leaves no escape when shape-matching misfires anyway.
+4. ~~**Template misfire is not addressed, only made escapable.**~~ **Resolved on main before this
+   slice started** — `9bc1ed5` drops tpl-7's no-refs arm entirely, on the same reasoning this design
+   reached from the other side: singleton-ness is a claim about how many instances *exist* and is
+   not recoverable from field shape. `SingleActive_Biller` can no longer be produced, and §10.2
+   row 7 ("an `@active` state on a child collection") now describes the code. The escape hatch
+   (decline) is still worth building — shape-matching will misfire again elsewhere — but the
+   specific misfire that motivated it is gone at the trigger, which is the better fix.
 
 ## Not in this slice
 
