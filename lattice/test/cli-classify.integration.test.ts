@@ -29,5 +29,5 @@ describe('classify --name (integration, real quint/Apalache) on the committed re
     expect(r.error).toBeUndefined();
     expect(Array.isArray(r.classified)).toBe(true);
     expect(r.classified.length).toBeGreaterThan(0);
-  }, 120_000);
+  }, 300_000);  // ~80s unloaded; generous flat budget (like golden/trace-b.test.ts) so machine load can't blow the margin
 });
