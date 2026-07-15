@@ -48,8 +48,8 @@ describe('lifecycle', () => {
     const db = paidTrial();
     activate(db, 'sub-1');
     // second billing cycle: a fresh open invoice that fails
-    db.prepare(`INSERT INTO invoices (id, subscription_id, license_fee_amount, usage_amount, total_due, settlement_state)
-                VALUES ('sub-1-inv-2','sub-1',5000,0,5000,'open')`).run();
+    db.prepare(`INSERT INTO invoices (id, subscription_id, license_fee_amount) VALUES ('sub-1-inv-2','sub-1',5000)`).run();
+    finalizeInvoice(db, 'sub-1-inv-2');
     recordPaymentFailure(db, 'sub-1-inv-2', 2_100);
     expect(getSubscription(db, 'sub-1').lifecycle_state).toBe('past_due');
     expect((db.prepare('SELECT COUNT(*) c FROM dunning_attempts').get() as any).c).toBe(0); // initial decline != attempt
@@ -62,8 +62,8 @@ describe('lifecycle', () => {
   it('exhaustion after max_retries cancels the subscription and writes off the invoice', () => {
     const db = paidTrial(); // maxRetries: 2
     activate(db, 'sub-1');
-    db.prepare(`INSERT INTO invoices (id, subscription_id, license_fee_amount, usage_amount, total_due, settlement_state)
-                VALUES ('sub-1-inv-2','sub-1',5000,0,5000,'open')`).run();
+    db.prepare(`INSERT INTO invoices (id, subscription_id, license_fee_amount) VALUES ('sub-1-inv-2','sub-1',5000)`).run();
+    finalizeInvoice(db, 'sub-1-inv-2');
     recordPaymentFailure(db, 'sub-1-inv-2', 2_100);       // initial decline: 0 attempts, not a retry
     expect(runDunning(db, 2_200, () => false)).toEqual({ attempted: 1, exhausted: 0 }); // attempt 1
     expect(runDunning(db, 2_300, () => false)).toEqual({ attempted: 1, exhausted: 0 }); // attempt 2
