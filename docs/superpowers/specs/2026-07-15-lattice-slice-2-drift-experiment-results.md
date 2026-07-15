@@ -189,7 +189,7 @@ including process startup ~1.2–1.5s).
 
 ### c03 — emit outside the transaction
 
-**Verdict: MISSED** (the pre-registered detail signal did not fire — a real but different Tier-2
+**Verdict: CAUGHT-VIOLATION (with pre-registration phrasing error — human ruling 2026-07-15)** (the pre-registered detail signal did not fire — a real but different Tier-2
 violation fired instead; recorded honestly per protocol, not re-scoped).
 
 - Branch: `drift/c03-emit-outside-tx` (forked from work-branch tip after the c02 doc commit,
@@ -250,7 +250,7 @@ not `trialing` with 1). Proposed scoring for §7.1: **caught-violation with a pr
 phrasing error**, recorded distinctly from a clean catch; the alternative (strict MISSED) stands
 in this section's verdict line until the human rules at Task 8. Follow-up options (post-slice,
 never mid-experiment): per-command capture granularity, or a dedicated rejected-then-quiesce
-fixture in the corpus.
+fixture in the corpus. Human ruling (2026-07-15): class-catch — scored caught-with-phrasing-error; the registration error stays on record.
 
 ### c04 — weakened guard
 
@@ -653,7 +653,7 @@ fixture in the corpus.
 |-------|---------|------------------------------------------|
 | c01 skipped-emit | CAUGHT-VIOLATION | Tier 2, `machine Subscription.status` |
 | c02 wrong-event | CAUGHT-VIOLATION | Tier 2, `machine Subscription.status` |
-| c03 emit-outside-tx | **ADJUDICATION PENDING (human)** | Tier 2, `machine Subscription.status` — real violation fired, registered detail substring did not |
+| c03 emit-outside-tx | CAUGHT-VIOLATION (with pre-registration phrasing error — human ruling 2026-07-15) | Tier 2, `machine Subscription.status` — real violation fired, registered detail substring did not |
 | c04 weakened-guard | CAUGHT-VIOLATION | Tier 1, `activePaidInFull` |
 | c05 win-back | CAUGHT-VIOLATION | Tier 2, `machine Subscription.status` |
 | c06 state-rename | CAUGHT-LOUD | binder abort, `Subscription.status is null/undefined` |
@@ -665,13 +665,12 @@ fixture in the corpus.
 | c12 proration-total | CAUGHT-VIOLATION | Tier 1, `totalDueAtMostParts` |
 | c13 stale-read-model | CAUGHT-VIOLATION | crosscheck, `crosscheck account_summary` |
 
-**Tally: 9 caught-violation + 3 caught-loud = 12/13 clean catches on the registered signal, 1/13
-(c03) adjudication-pending.** Every one of the 12 clean catches names the correct spec element
+**Tally: 10 caught-violation + 3 caught-loud = 13/13 (12 clean on registered signal + 1 caught-with-phrasing-error, human-ruled) ✅.** Every one names the correct spec element
 (machine region, invariant name, or binder field) and carries a witness/anchor a developer can
 locate without additional context (see each class's `VIOLATION` or abort line above) — the §7.1
-"locatable diagnostic" bar is met for all 12.
+"locatable diagnostic" bar is met for all 13.
 
-**c03 — the one open item.** The registered DETAIL SUBSTRING (`do not include observed final
+**c03 — human ruling (2026-07-15).** The registered DETAIL SUBSTRING (`do not include observed final
 'trialing'` / `all 1 event(s) consumed`) did not appear in the conform output. What did appear: a
 real Tier-2 violation, on the pre-registered spec element (`machine Subscription.status`), from the
 pre-registered drift edit, on the pre-registered witness (`sub-1`) —
@@ -681,20 +680,11 @@ outcome above) is that `conform-capture.ts` snapshots only once per test, in `af
 exercising test chains a rejected `activate` call into a successful one on the same subscription, so
 the only snapshot taken shows the union of both calls (quiescent state `active`, 2 events) rather
 than the isolated rejection state (`trialing`, 1 stray event) the class-3 registration predicted.
-Two scorings remain open, one sentence each:
-
-- **Strict signal-miss (❌):** the pre-registered detail substring is the contract; it never
-  matched, so per the "zero tuning / verbatim MISSED" protocol this class is a miss regardless of
-  what else fired.
-- **Class-catch with a phrasing error (✅):** the drift WAS flagged at the registered tier
-  (Tier 2), the registered spec element (`machine Subscription.status`), and the registered witness
-  (`sub-1`) — only the registration's predicted *fixture quiescent state* was wrong, not the
-  harness's catching power, so this counts as a catch with a pre-registration bug, not a harness
-  gap.
-
-**§7.1 totals, pending the ruling: 12/13 (strict) or 13/13 (class-catch).** Under the design's own
-rule — "any structurally uncatchable class is a design finding for the human — never quietly
-re-scoped" — c03 is escalated verbatim rather than resolved unilaterally in this document.
+The human ruling (2026-07-15): **class-catch** — c03 is scored as caught-with-phrasing-error, not
+a harness gap. The drift WAS flagged at the registered tier (Tier 2), the registered spec element
+(`machine Subscription.status`), and the registered witness (`sub-1`) — only the registration's
+predicted *fixture quiescent state* was wrong, not the harness's catching power. The phrasing error
+stays on record in this document for post-slice analysis of test-capture granularity.
 
 **c13 — coverage the impl suite structurally could not provide.** c13's impl suite ran fully green
 (24/24, impl-exit=0) while `conform --report` independently caught 2 violations
