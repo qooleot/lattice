@@ -45,11 +45,11 @@ Every row in the table above is enforced as the `naming-convention` diagnostic �
 flags the style deviation. This is deliberate: case style is a readability convention the team can
 choose to enforce strictly (e.g. in review) without it blocking the parser or the solvers.
 
-## Machine-authored names are normalized, not warned
+## Candidate invariant names are normalized, not warned
 
-The warning above governs `.lat` text, which a human wrote. Names this codebase generates itself
-arrive by different roads, and neither one passes through the parser, so no `naming-convention`
-warning could ever fire on them.
+The warning above governs `.lat` text, which a human wrote. Candidate invariant names this codebase
+generates itself arrive by two roads, and neither passes through the parser, so no
+`naming-convention` warning could ever fire on them.
 
 One road is `engine propose`: it reads candidate invariants as JSON. Left unchecked, a name like
 `TotalDue_At_Most_Parts` reaches the ledger, gets adopted, and can then only be corrected through
@@ -68,11 +68,19 @@ The other road is template matching: `matchTemplates` builds invariant names suc
 template catalog, and folds them the same way at its own return, before either `adopt` or `seeds`
 is seen outside the module.
 
-The split is about authorship, not construct kind or which module does the folding. In `.lat` the
-identifier is the author's and the convention stays advisory — rewriting their file would overstep.
-A candidate name or a template-matched name is machine-authored with nothing referencing it yet,
-and camelCase is a pure function of the words, so there is no judgment to defer to anyone and no
-reason to spend a round-trip asking.
+Those two roads are the whole of the folding: it covers candidate invariant names, not every name
+the codebase mints. Auto-derived transition guards are the standing exception — `cli.ts` mints
+`guard_<transition>_<shape>` at a single point and keeps it verbatim, so the underscore form is what
+lands in the ledger and what `explain --name` answers to. Nothing is lost by leaving it alone: a
+guard is never printed as a standalone `invariant` block — it renders only through its transition's
+`requires` — so it never reaches the parser either, and no `naming-convention` warning can fire on
+it.
+
+Where folding does apply, the split is about authorship, not construct kind or which module does the
+folding. In `.lat` the identifier is the author's and the convention stays advisory — rewriting
+their file would overstep. A candidate name or a template-matched name is machine-authored with
+nothing referencing it yet, and camelCase is a pure function of the words, so there is no judgment
+to defer to anyone and no reason to spend a round-trip asking.
 
 Two candidates in one batch folding onto the same name is the one case that *is* judgment — an
 ambiguity no normalizer can settle — and `propose` refuses the batch with `name-collision`. The

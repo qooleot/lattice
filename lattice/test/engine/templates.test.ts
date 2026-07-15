@@ -47,7 +47,7 @@ describe('matchTemplates', () => {
   it('#7 adopts NO cardinality for a refless @active aggregate', () =>
     expect(adopt.some(a => a.candidate.kind === 'cardinality')).toBe(false));
 
-  it('#7 adopts no SingleActive_* for a refless @active aggregate in a multi-tenant shape', () => {
+  it('#7 adopts no singleActive* for a refless @active aggregate in a multi-tenant shape', () => {
     const billerModel: DomainModel = {
       context: 'BillPayments', ticksPerDay: 24, enums: [], values: [], entities: [],
       aggregates: [{ kind: 'aggregate', name: 'Biller', fields: [
@@ -58,7 +58,7 @@ describe('matchTemplates', () => {
       events: [], services: []
     };
     const r = matchTemplates(billerModel);
-    expect(r.adopt.map(a => a.name)).not.toContain('SingleActive_Biller');
+    expect(r.adopt.map(a => a.name)).not.toContain('singleActiveBiller');
     expect(r.adopt.some(a => a.candidate.kind === 'cardinality')).toBe(false);
   });
   it('#8 monotonic from @monotonic tag', () =>

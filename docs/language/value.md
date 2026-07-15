@@ -63,11 +63,12 @@ parsed. The two engines encode a value differently, matching how each represents
   bookkeeping — `period.start`, `period.end` — regardless of which engine produced them.
 
 A value's own `invariant` blocks (e.g. `wellOrdered { start < end }` on `Period`) are **type-carried
-laws**: the moment a field is typed with the value, that law is auto-adopted at that use site, on
-both the implied and template channels, with provenance `ValueLaw_<Owner>_<field>_<invariant>` —
-for the `term : Period` field on `Lease` above, `ValueLaw_Lease_term_wellOrdered`. These are
-real solver-checked invariants, not documentation — golden trace D exercises a value law adopted
-and checked end-to-end with real solvers.
+laws**: the moment a field is typed with the value, that law is auto-adopted at that use site, named
+`val<Value><Owner><Field><Invariant>` — for the `term : Period` field on `Lease` above,
+`valPeriodLeaseTermWellOrdered`. There is one channel, not two: the implied derivation instantiates
+the law at every use site, and template matching adopts that output verbatim rather than deriving a
+second copy. These are real solver-checked invariants, not documentation — golden trace D exercises
+a value law adopted and checked end-to-end with real solvers.
 
 **Remaining limits**, still deliberately closed pending evidence:
 

@@ -4,10 +4,12 @@
  * Capitalization interior to a segment survives, so `NonNegative_Invoice_totalDue` folds to
  * `nonNegativeInvoiceTotalDue` rather than flattening to `nonnegativeinvoicetotaldue`.
  *
- * Applied at every boundary where this codebase authors a name itself: cli.ts's `propose`, for
- * agent-submitted candidates on their way into the session, and templates.ts's `matchTemplates`,
- * for template-matched invariant names on their way out. Never applied to hand-written `.lat`
- * text — there the convention stays a warning, because the identifier is the author's and
+ * Applied where CANDIDATE INVARIANT names are authored: cli.ts's `propose`, for agent-submitted
+ * candidates on their way into the session, and templates.ts's `matchTemplates`, for
+ * template-matched invariant names on their way out. Not every machine-authored name folds —
+ * cli.ts's `guardCandidateInvariant` mints `guard_<transition>_<shape>` unfolded, and that
+ * underscore form is what reaches the ledger and `explain --name`. Never applied to hand-written
+ * `.lat` text — there the convention stays a warning, because the identifier is the author's and
  * rewriting it would overstep. See docs/language/naming-conventions.md.
  */
 export function toCamelName(n: string): string {
