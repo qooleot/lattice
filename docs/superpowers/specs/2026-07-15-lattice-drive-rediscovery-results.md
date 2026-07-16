@@ -333,7 +333,33 @@ probe attempt of the campaign — no need to wait for the end-of-sequence sweep 
 `activePaidInFull`, was not exercised — the direct probe fired first).
 
 ### c05 — terminal resurrection (win-back)
-**Verdict: PENDING**
+**Verdict: MISSED**
+
+Branch mechanics: `git checkout -b drive/c05 drift/c05-win-back`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` — same single ledger.jsonl conflict, union-resolved and validated.
+`git diff drift/c05-win-back -- implementations/subscriptions/src` was empty after the merge — the
+drift edit (the win-back `canceled → active` cross-aggregate side effect on `settle`) survived
+intact.
+
+Seeds tried: 11, 12, 13 (all three pre-authorized seeds).
+
+| seed | verdict | commands (accepted/rejected/superset) | guards probed | re-attributions | duration |
+|------|---------|-----------------------------------------|------------------|--------------------|----------|
+| 11 | CLEAN | 53 (23/0/1) | 29 across 1 (`activate`) | 1 | 0.1s |
+| 12 | CLEAN | 53 (23/0/0) | 30 across 1 (`activate`) | 2 | 0.1s |
+| 13 | CLEAN | 45 (17/0/0) | 28 across 0 | 2 | 0.1s |
+
+Registered substring `do not include observed final 'active'` does not appear in any of the three
+logs — grepped directly, zero matches. Exit code 0 on all three runs.
+
+Recorded honestly per the zero-tuning rule: a third MISS, and — same pattern as c01/c02 — the
+per-seed command-trace statistics are again identical to c01's/c02's at every seed. The registered
+route for c05 requires a specific ordering (`cancel` a subscription while it has an open invoice,
+then drive `settle` on that same invoice) that is itself downstream of the invoice reaching `open`
+(a `finalize`), which is a deeper multi-step scenario than either c01's or c02's routes. Consistent
+with the c01/c02 note: this looks like the walk's exploration at these three specific seeds simply
+not reaching the necessary precondition chain within 200×30, rather than anything specific to the
+win-back drift itself — flagged, not tuned around.
 
 ### c06 — state-name drift
 **Verdict: PENDING**
