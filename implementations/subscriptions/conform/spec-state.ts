@@ -30,3 +30,28 @@ export interface SpecOverrides {
 }
 
 export function defineOverrides(o: SpecOverrides): SpecOverrides { return o }
+
+export interface DriveGen { int(min: number, max: number): number; id(): string; pick<T>(xs: T[]): T; clock(): number }
+export type DriveOutcome = { accepted: true } | { accepted: false; rejected: string };
+export interface SpecDrivers {
+  transitions: {
+    activate(db: unknown, row: SubscriptionSpecState, gen: DriveGen): void;
+    expireTrial(db: unknown, row: SubscriptionSpecState, gen: DriveGen): void;
+    paymentFailed(db: unknown, row: SubscriptionSpecState, gen: DriveGen): void;
+    recover(db: unknown, row: SubscriptionSpecState, gen: DriveGen): void;
+    cancel(db: unknown, row: SubscriptionSpecState, gen: DriveGen): void;
+    dunningExhausted(db: unknown, row: SubscriptionSpecState, gen: DriveGen): void;
+    finalize(db: unknown, row: InvoiceSpecState, gen: DriveGen): void;
+    settle(db: unknown, row: InvoiceSpecState, gen: DriveGen): void;
+    voidDraft(db: unknown, row: InvoiceSpecState, gen: DriveGen): void;
+    voidOpen(db: unknown, row: InvoiceSpecState, gen: DriveGen): void;
+    writeOff(db: unknown, row: InvoiceSpecState, gen: DriveGen): void;
+  };
+  superset?: Record<string, (db: unknown, row: SubscriptionSpecState | InvoiceSpecState, gen: DriveGen) => void>;
+  create: {
+    Subscription?(db: unknown, id: string, gen: DriveGen): void;
+    Invoice?(db: unknown, id: string, gen: DriveGen): void;
+  };
+}
+
+export function defineDrivers(d: SpecDrivers): SpecDrivers { return d }

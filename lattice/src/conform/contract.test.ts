@@ -22,4 +22,13 @@ describe('renderContract', () => {
     expect(src).toContain('export function defineOverrides(o: SpecOverrides): SpecOverrides { return o }');
     expect(src).not.toContain('import '); // self-contained
   });
+
+  it('emits driver typing: one transitions member per machine transition, DriveGen, defineDrivers', () => {
+    expect(src).toContain('export interface SpecDrivers');
+    expect(src).toContain('activate(db: unknown, row: SubscriptionSpecState, gen: DriveGen): void;');
+    expect(src).toContain('settle(db: unknown, row: InvoiceSpecState, gen: DriveGen): void;');
+    expect(src).toContain('export function defineDrivers(d: SpecDrivers): SpecDrivers { return d }');
+    expect(src).toContain('export interface DriveGen');
+    expect(src).toContain(`Subscription?(db: unknown, id: string, gen: DriveGen): void;`);
+  });
 });
