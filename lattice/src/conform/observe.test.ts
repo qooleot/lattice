@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type Database from 'better-sqlite3';
 import { bindSchema } from './bind.js';
-import { observeEntities } from './observe.js';
+import { observeEntities, observeScoped } from './observe.js';
 import { tinyDb, tinyModel } from './fixtures.js';
 
 const overrides = {
@@ -81,5 +81,17 @@ describe('observeEntities', () => {
     // 'status' is a region member (bound via override here) — must project under the
     // evaluator's witness-key convention '<region>.state', not the bare region name.
     expect(a2.fields['status.state']).toBe('openState');
+  });
+});
+
+describe('observeScoped', () => {
+  it('projects one row plus its ref closure (one hop)', () => {
+    const db = seeded(); // existing helper: account a1 with entries + parent_id column
+    db.prepare(`INSERT INTO accounts (id, owner_name, state, parent_id) VALUES ('a2','Bob','openState','a1')`).run();
+    const manifest = bindSchema(db, tinyModel, overrides);
+    const scoped = observeScoped(db, tinyModel, manifest, overrides, 'Account', 'a2');
+    expect(scoped.map(e => e.id)).toEqual(['a2', 'a1']);       // target first, then ref target
+    expect(scoped[0]!.fields.parent).toBe('a1');
+    expect(() => observeScoped(db, tinyModel, manifest, overrides, 'Account', 'ghost')).toThrow(/ghost/);
   });
 });
