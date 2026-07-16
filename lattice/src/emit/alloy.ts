@@ -34,13 +34,16 @@ function emitOwnerSig(m: DomainModel, o: AggregateDef | EntityDef): string {
   const fields: string[] = [];
   for (const f of o.fields) {
     if (f.key) continue;
+    // Alloy's native multiplicity is exactly this language's optionality: `lone` is zero-or-one.
+    // Required refs stay `one`, which is why refsResolve remains vacuous here (see its emitter).
+    const mult = f.optional ? 'lone' : 'one';
     if (f.type.kind === 'ref') {
       const target = f.type.target;
       if (isQualifiedRef(f.type)) continue;   // cross-context ref (spec §4.2) — the target sig is never declared here
-      fields.push(`  ${f.name}: one ${target}`);
+      fields.push(`  ${f.name}: ${mult} ${target}`);
     }
-    else if (f.type.kind === 'enum') fields.push(`  ${f.name}: one ${f.type.enum}`);
-    else if (f.type.kind === 'prim' && isIntPrim(f.type.prim)) fields.push(`  ${f.name}: one Int`);
+    else if (f.type.kind === 'enum') fields.push(`  ${f.name}: ${mult} ${f.type.enum}`);
+    else if (f.type.kind === 'prim' && isIntPrim(f.type.prim)) fields.push(`  ${f.name}: ${mult} Int`);
     // Value fields (design §3.5): a keyless, flat structural type flattens to underscore-joined
     // sig relations — `period: Period{start,end}` becomes `period_start: one Int, period_end: one
     // Int` — never a nested sig (values have no identity for Alloy to quantify over).
@@ -132,7 +135,7 @@ function predToAlloy(m: DomainModel, ownerName: string, p: Predicate, agg: strin
       return `(${l} ${ops[p.op]} ${r})`;
     }
     case 'inState': return inStateExpr(agg, v, p.region, p.states);
-    case 'present': throw new Error('present() has no Alloy encoding yet — lands with the optional-field Alloy encoding task');
+    case 'present': return `some ${v}.${p.path.join('.')}`;
     case 'and': return '(' + p.args.map(a => predToAlloy(m, ownerName, a, agg, v)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToAlloy(m, ownerName, a, agg, v)).join(' or ') + ')';
     case 'not': return `(not ${predToAlloy(m, ownerName, p.arg, agg, v)})`;
