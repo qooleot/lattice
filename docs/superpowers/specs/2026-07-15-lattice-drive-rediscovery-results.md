@@ -362,7 +362,39 @@ not reaching the necessary precondition chain within 200×30, rather than anythi
 win-back drift itself — flagged, not tuned around.
 
 ### c06 — state-name drift
-**Verdict: PENDING**
+**Verdict: MISSED**
+
+Branch mechanics: `git checkout -b drive/c06 drift/c06-state-rename`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` — clean auto-merge, no conflicts this time (unlike c01–c05: the
+ledger.jsonl divergence pattern on this branch pair didn't collide on the same lines; git merged
+it automatically, 21 lines added, all validated as parseable JSON). `git diff drift/c06-state-rename
+-- implementations/subscriptions/src` was empty, and `git diff drift/c06-state-rename --
+implementations/subscriptions/conform/overrides.ts` was also empty — the drift edit (the
+`STATE_MAP` renamed-away `delinquent`/`past_due` key in `overrides.ts`) survived intact. (The
+non-empty `conform/` diff seen against other conform files, e.g. the new `drive.ts`/`spec-state.ts`,
+is expected plan-1-added context per the recipe's own carve-out — those files didn't exist on the
+pre-plan-1 drift branch at all.)
+
+Seeds tried: 11, 12, 13 (all three pre-authorized seeds).
+
+| seed | verdict | commands (accepted/rejected/superset) | guards probed | re-attributions | duration |
+|------|---------|-----------------------------------------|------------------|--------------------|----------|
+| 11 | CLEAN | 53 (23/0/1) | 29 across 1 (`activate`) | 1 | 0.1s |
+| 12 | CLEAN | 53 (23/0/0) | 30 across 1 (`activate`) | 2 | 0.3s |
+| 13 | CLEAN | 45 (17/0/0) | 28 across 0 | 2 | 0.2s |
+
+Registered stderr substring `is null/undefined for row` does not appear in any of the three logs —
+grepped directly, zero matches. Exit code 0 (not 2) on all three runs — the campaign never aborted
+loud, meaning no row was ever scoped-observed in (or driven into) `past_due`.
+
+Recorded honestly per the zero-tuning rule and per the class checklist's own pre-registered honesty
+clause for this exact scenario ("if no sequence reaches past_due under seeds 11–13, that is a
+MISSED to record honestly"). Same pattern as c01/c02/c05: per-seed command-trace statistics are
+identical to those classes' at every seed. `paymentFailed` requires a subscription first to reach
+`active` (one command away from there), and the c01 investigation already noted `activate` does not
+appear to be driven to a full LEGAL acceptance within 200×30 at these three seeds — this is
+consistent with that same root cause rather than anything specific to the state-rename drift. Not
+tuned around; escalated as MISSED.
 
 ### c07 — partial write on settle
 **Verdict: PENDING**
