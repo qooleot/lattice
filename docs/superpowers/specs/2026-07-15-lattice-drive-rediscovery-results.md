@@ -1277,7 +1277,56 @@ the run (no working-tree changes from this run — the abort happens before any 
 write).
 
 ### c12 — out-of-spec feature corrupts covered state
-**Verdict: PENDING (campaign #2)**
+**Verdict: REDISCOVERED**
+
+Branch mechanics: `git checkout -b drive/c12 drift/c12-proration-total`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `3864511`) — one conflict, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved as union (both sides' lines concatenated,
+no lines dropped, all validated as parseable JSON post-resolution). `git diff
+drift/c12-proration-total -- implementations/subscriptions/src` was empty after the merge — the
+drift edit survived intact (`changeSeats` gained an `open`-invoice branch that writes
+`total_due = total_due + prorationAmount` directly, replacing the prior draft-only guard,
+`implementations/subscriptions/src/subscription-service.ts`). `rm -rf
+implementations/subscriptions/.conform` before the run; absent both before and after.
+
+Seed tried: 21 (first pre-authorized seed — caught on first try).
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed 21`. Exit code 1 (FAILED, matches expected verdict REDISCOVERED).
+
+Verbatim stdout (head + first two violation pairs; log continues with 2 more repeats of the same
+two-invariant pair as the driver keeps probing `activate` before reporting FAILED):
+```
+drive: 282 sequences — FAILED (seed 21)
+replay: lattice conform --target ../implementations/subscriptions --drive --seed 21
+commands: 2838 (810 accepted, 0 rejected, 159 superset ops)
+guards probed at event time: 1869 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 67
+driver skips (impl preconditions, audited): 0
+duration 0.6s
+narrative:
+  create Subscription#d-subscription-1 (seed=0) -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe finalize on Invoice#d-subscription-1-inv-1 (rowPick=0, seed=0) legality=legal -> accepted
+  superset changeSeats on Subscription#d-subscription-1 (rowPick=0, seed=11017610) -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+VIOLATION totalDueAtMostParts (invariant totalDueAtMostParts) — witnesses [d-subscription-1-inv-1] — violated by 1/1 Invoice row(s) — anchors [elicited (w1, w2); w1; w2; w3; w4; w5] — source drive:17
+VIOLATION crosscheck account_summary (crosscheck account_summary) — witnesses [d-subscription-1] — open_balance 2087 != recomputed 3166 — anchors [target crosscheck (out-of-spec read model, design §6 class 13)] — source drive:17
+```
+8 total `VIOLATION` lines in the full log (4 repeats of the same `totalDueAtMostParts` /
+`crosscheck account_summary` pair, `source drive:17` through `drive:20`, as the driver continues
+probing the already-violated row before halting).
+
+Registered verdict-keying signal fires exactly: Tier 1, `totalDueAtMostParts`, witness the
+drifted open invoice (`d-subscription-1-inv-1`) — the narrative shows exactly the registered
+route: `finalize` on the invoice (legal, accepted — invoice now `open`), then `changeSeats`
+(superset op, accepted) taking the drift's direct `total_due` mutation path on that now-open
+invoice. Registered collateral `crosscheck account_summary` also fires (`open_balance 2087 !=
+recomputed 3166`), exactly as anticipated; `activePaidInFull` collateral did not fire in this run
+(not required — registered as "may also fire", not guaranteed). `.conform` confirmed absent after
+the run.
 
 ### c13 — stale read model
 **Verdict: PENDING (campaign #2)**
