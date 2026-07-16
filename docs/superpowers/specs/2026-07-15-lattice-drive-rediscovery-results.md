@@ -947,7 +947,70 @@ reachable at campaign #1's 200×30, is reached within 59 of 1600 budgeted sequen
 `.conform` confirmed absent after the run.
 
 ### c06 — state-name drift
-**Verdict: PENDING (campaign #2)**
+**Verdict: MISSED**
+
+Branch mechanics: `git checkout -b drive/c06 drift/c06-state-rename`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `e608123`) — clean auto-merge, no conflicts this
+time (unlike c01–c05). `git diff drift/c06-state-rename -- implementations/subscriptions/src` was
+empty after the merge — the drift edit survived intact. The drift itself: `'past_due'` renamed to
+`'delinquent'` consistently across `implementations/subscriptions/src/{billing-service.ts,
+dunning.ts, subscription-service.ts, schema.sql}` (impl-internal representation only — the
+conform/observe layer's binding still expects the literal `'past_due'`). `rm -rf
+implementations/subscriptions/.conform` before the run; absent both before and after.
+
+Seeds tried: 21, 22, 23 (all three pre-authorized seeds — all CLEAN, no LOUD abort, no violation;
+per "stopping after 3 clean seeds = MISSED").
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed <21|22|23>`. Exit code 0 on all three runs.
+
+Verbatim stdout, all three seeds:
+```
+drive: 1600 sequences — CLEAN
+commands: 11688 (2608 accepted, 0 rejected, 211 superset ops)
+guards probed at event time: 8869 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 337
+driver skips (impl preconditions, audited): 6
+duration 3.1s
+```
+```
+drive: 1600 sequences — CLEAN
+commands: 12161 (2782 accepted, 0 rejected, 193 superset ops)
+guards probed at event time: 9186 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 369
+driver skips (impl preconditions, audited): 5
+duration 2.7s
+```
+```
+drive: 1600 sequences — CLEAN
+commands: 12189 (2728 accepted, 0 rejected, 187 superset ops)
+guards probed at event time: 9274 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 380
+driver skips (impl preconditions, audited): 3
+duration 2.9s
+```
+
+Every field (commands/accepted/superset, guard-probe volume, re-attributions, driver skips) is
+byte-identical, per seed, to the corresponding row of §5's 5-seed false-positive control on the
+*clean* implementation (seed 21: 11688/2608/0/211, 337 reattr, 6 skips; seed 22:
+12161/2782/0/193, 369 reattr, 5 skips; seed 23: 12189/2728/0/187, 380 reattr, 3 skips) — the drift
+produced observably indistinguishable command-generation behavior from the clean impl at all three
+seeds. No `is null/undefined for row` stderr, no exit code 2, no violation, at any seed.
+
+Recorded honestly per the pre-briefed caveat: this class's amended route (registered at §4 of the
+campaign-#2 table) needs a `past_due`/now-`delinquent` row to exist before the observe/bind layer
+can trip over the renamed literal — and that state only arises in-sequence, via `rollover`'s
+internal coin-flip decline (`implementations/subscriptions/src/subscription-service.ts:94-111`)
+or via the (now largely-skipped) direct `paymentFailed` driver. The driver-skip counts present in
+all three runs (6/5/3) are `paymentFailed`'s pre-registered skip (§2), not evidence either way
+about whether `rollover`'s internal decline path fired — and the byte-identical match to the clean
+control's numbers is the strongest available signal that no row reached the renamed state along
+any of the three driven runs: had `lifecycle_state` ever flipped to `'delinquent'`, the observer
+would attempt to read the (now-absent) `'past_due'` state on `settle`/`cancel`/report and abort
+loud, which did not happen. Escalated as MISSED, verbatim, not patched — this is a reachability
+gap in the driven walk for this specific route (rollover's decline coin-flip did not land, or the
+row never got a subsequent settle/cancel/report to trip the bind), not a re-scoping of the
+expected LOUD signal. `.conform` confirmed absent after all three runs.
 
 ### c07 — partial write on settle
 **Verdict: PENDING (campaign #2)**
