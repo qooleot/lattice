@@ -23,11 +23,12 @@ context Billing {
     balance      : Money
     pricingMode  : UsagePricing
     history      : List<Int>
+    cancelledOn  : Date?
   }
 }
 ```
 
-A field is `<camelId> : <type> [key] [const] [@<tag>]*`. `<type>` is one of:
+A field is `<camelId> : <type>[?] [key] [const] [@<tag>]*`. `<type>` is one of:
 
 - **Primitives:** `Int`, `Text`, `Date`, `Duration`, `Money`, `Id`.
 - **An enum name** — any [enum](enum.md) declared in the same context.
@@ -41,7 +42,14 @@ A field is `<camelId> : <type> [key] [const] [@<tag>]*`. `<type>` is one of:
 A bare identifier resolves in this order: primitive → declared value → declared entity/aggregate
 (`ref`) → enum (the fallback, `unresolved-enum` if it matches nothing declared).
 
-`key` (unquoted, after the type) marks the field as the owner's identity field — see
+A trailing `?` (immediately after the type, before `key`/`const`/tags) marks the field
+**optional**: the owner may exist with no value for it at all. Optionality is a property of the
+*field*, not a type of its own — `Money?` is not a distinct type, it is a `Money` field that may be
+absent — so it composes with everything above except keys and lists (see Semantic Rules). What
+absence *means* for a rule is never inferred: an invariant reading an optional field must say,
+with `present()`, which it means — see [invariant](invariant.md).
+
+`key` (unquoted, after the type and any `?`) marks the field as the owner's identity field — see
 [entity](entity.md)/[aggregate](aggregate.md) for the `missing-key` rule. `const` (unquoted, after
 `key` if both are present) follows next; `@`-tags follow that — see [tags](tags.md).
 
@@ -94,6 +102,28 @@ context. It is accepted by the grammar and by per-file validation, but it is str
   `uncovered-cross-context-ref`. A per-file load does not check this — only workspace compilation
   does, since it requires seeing the map and the exposing context's declarations.
 
+## `Text?`/`Id?` is structural only
+
+`?` on a `Text` or `Id` field is accepted by the grammar and by validation, and it is real to
+generation and to the prose — but it is structural only, for the same reason cross-context refs
+are: the underlying field is already invisible to both solvers.
+
+- `Text`/`Id` fields carry no solver encoding at all. Quint's `fieldQType` returns `null` for any
+  non-`Int`-family primitive, and Alloy's sig emitter only pushes a prim field when `isIntPrim` —
+  so a `Text`/`Id` field is dropped from the solver-facing model whether or not it is optional.
+  There is no field for a companion presence flag to sit beside.
+- It cannot appear in any invariant path. A path ending at a `Text`/`Id` field is already rejected
+  with `unrepresentable-path` (see [invariant](invariant.md)), and `?` does not change that — so
+  `present(label)` on `label : Text?` is rejected exactly like `label > 0` is. The
+  `absence-undecided` gate never fires on such a field, because no invariant can read it in the
+  first place.
+- It is excluded from [derived invariants](derived-invariants.md) — but so is every `Text`/`Id`
+  field, optional or not. The only family optionality changes is the `Money` one.
+
+So `?` on `Text`/`Id` is documentation of intent, not a constraint: nothing the solvers check, and
+nothing an invariant can appeal to. `Money?`, `Int?`, `Date?`, `Duration?`, enum, and `ref` fields
+are the ones where optionality carries semantic weight.
+
 ## Semantic Rules
 
 - An unqualified `ref Target` must name a real entity or aggregate declared in the same context
@@ -103,6 +133,9 @@ context. It is accepted by the grammar and by per-file validation, but it is str
 - A value-typed field must name a declared value (`unresolved-value`) — see [value](value.md).
 - An enum-typed field must name a declared enum (`unresolved-enum`).
 - `List<T>` recurses: the element type `T` is validated by the same rules.
+- A `key` field cannot be optional (`optional-key`) — identity is never absent.
+- A `List<T>` field cannot be optional (`optional-list`) — an absent list and an empty list are the
+  same fact; `List<T>` already means zero or more.
 - A field named `state` is always rejected (`reserved-field-name`), regardless of type — `state`
   is reserved for lifecycle-state path accessors.
 
