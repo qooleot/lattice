@@ -1013,7 +1013,58 @@ row never got a subsequent settle/cancel/report to trip the bind), not a re-scop
 expected LOUD signal. `.conform` confirmed absent after all three runs.
 
 ### c07 — partial write on settle
-**Verdict: PENDING (campaign #2)**
+**Verdict: REDISCOVERED**
+
+Branch mechanics: `git checkout -b drive/c07 drift/c07-partial-write`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `e608123`) — one conflict, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved as union (both sides' lines concatenated,
+no lines dropped, all validated as parseable JSON post-resolution). `git diff
+drift/c07-partial-write -- implementations/subscriptions/src` was empty after the merge — the
+drift edit survived intact. `rm -rf implementations/subscriptions/.conform` before the run; absent
+both before and after.
+
+Seed tried: 21 (first pre-authorized seed — caught on first try). Campaign #1 measured this route
+"borderline… reliably reachable at the 1600-sequence budget" (investigation §3); confirmed here.
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed 21`. Exit code 1 (FAILED, matches expected verdict REDISCOVERED).
+
+Verbatim stdout (head + first two violation pairs; log continues with 8 more repeats of the same
+two-invariant pair as the driver keeps probing `activate` against the same already-violated rows):
+```
+drive: 42 sequences — FAILED (seed 21)
+replay: lattice conform --target ../implementations/subscriptions --drive --seed 21
+commands: 1259 (334 accepted, 0 rejected, 10 superset ops)
+guards probed at event time: 915 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 15
+driver skips (impl preconditions, audited): 0
+duration 0.2s
+narrative:
+  create Subscription#d-subscription-1 (seed=0) -> accepted
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe finalize on Invoice#d-subscription-1-inv-1 (rowPick=0, seed=0) legality=legal -> accepted
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition settle on Invoice#d-subscription-1-inv-1 (rowPick=0, seed=0) legality=legal -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=legal -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+VIOLATION neverOverpaidAndPaidExact (invariant neverOverpaidAndPaidExact) — witnesses [d-subscription-1-inv-1] — violated by 1/1 Invoice row(s) — anchors [elicited (w1, w2, w3); w1; w2; w3; w4; w5] — source drive:12
+VIOLATION activePaidInFull (invariant activePaidInFull) — witnesses [d-subscription-1] — violated by 1/1 Subscription row(s) — anchors [hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5; w1; w2; w3; w4; w5] — source drive:13
+VIOLATION neverOverpaidAndPaidExact (invariant neverOverpaidAndPaidExact) — witnesses [d-subscription-1-inv-1] — violated by 1/1 Invoice row(s) — anchors [elicited (w1, w2, w3); w1; w2; w3; w4; w5] — source drive:13
+```
+
+Registered signal fires: Tier 1, `neverOverpaidAndPaidExact`, witness the settled invoice
+(`d-subscription-1-inv-1`) — exactly the registered element+witness, first appearing at `source
+drive:12`, immediately after the driven `settle` (narrative line 15, `legality=legal -> accepted`)
+that the partial-write drift under-records. `finalize`+`settle` on the same invoice fires within
+42 of 1600 budgeted sequences at seed 21, directly confirming the amended-budget reasoning
+(investigation §3: 104/1612 settle-acceptances at comparable volume). Collateral: `activePaidInFull`
+(Tier 1) also violates on the same Subscription row on every repeat — labeled collateral, not the
+registered signal, but consistent (the under-recorded settle leaves the subscription's paid-in-full
+invariant violated too, once `activate` is later legally accepted on line 16). `.conform` confirmed
+absent after the run.
 
 ### c08 — widened uniqueness (two drafts)
 **Verdict: PENDING (campaign #2)**
