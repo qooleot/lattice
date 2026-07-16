@@ -901,9 +901,14 @@ describe('the Payment.paymentMethod fix (quint path — Alloy never enforced ref
   };
 
   it('refsResolve no longer names the optional ref, so the initial state is legal', () => {
-    const r = impliedInvariants(payment).find(i => i.name === 'refsResolvePayment');
+    const d = impliedInvariants(payment);
+    // Anchor FIRST: prove the derivation actually ran over this model. Without this, the
+    // absence assertion below passes vacuously if impliedInvariants returns [] for any reason
+    // (a renamed derivation, a model the walker skips) — an unfalsifiable guard, which is the
+    // exact defect class this codebase keeps producing.
+    expect(d.map(i => i.name)).toContain('nonNegativePaymentAmount');
     // every ref on Payment is optional, so no refsResolve rule exists at all
-    expect(r).toBeUndefined();
+    expect(d.find(i => i.name === 'refsResolvePayment')).toBeUndefined();
   });
 });
 ```
