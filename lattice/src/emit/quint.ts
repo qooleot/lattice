@@ -172,6 +172,7 @@ export function predToQuint(m: DomainModel, p: Predicate, self: string, ownerNam
       return `((${allExist}) implies ${cmp})`;
     }
     case 'inState': return '(' + p.states.map(s => `${self}.${p.region}_state == "${s}"`).join(' or ') + ')';
+    case 'present': throw new Error('present() has no Quint encoding yet — lands with the optional-field Quint encoding task');
     case 'and': return '(' + p.args.map(a => predToQuint(m, a, self, ownerName)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToQuint(m, a, self, ownerName)).join(' or ') + ')';
     case 'not': return `(not(${predToQuint(m, p.arg, self, ownerName)}))`;

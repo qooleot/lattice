@@ -21,6 +21,7 @@ export function prefixPredicate(p: Predicate, prefix: Path): Predicate {
   switch (p.kind) {
     case 'cmp': return { ...p, left: prefixTerm(p.left, prefix), right: prefixTerm(p.right, prefix) };
     case 'inState': return p;   // values carry no machine (design §3.5) — inState never appears in a value invariant
+    case 'present': return { ...p, path: [...prefix, ...p.path] };
     case 'and': return { ...p, args: p.args.map(a => prefixPredicate(a, prefix)) };
     case 'or': return { ...p, args: p.args.map(a => prefixPredicate(a, prefix)) };
     case 'not': return { ...p, arg: prefixPredicate(p.arg, prefix) };

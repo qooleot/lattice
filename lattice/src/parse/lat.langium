@@ -148,10 +148,13 @@ Negation infers Predicate:
     {infer NotPred} '!' arg=Negation | Primary;
 
 Primary infers Predicate:
-    '(' Predicate ')' | StatePred | Comparison;
+    '(' Predicate ')' | StatePred | PresentPred | Comparison;
 
 StatePred:
     'state' region=ID 'in' '{' states+=ID (',' states+=ID)* '}';
+
+PresentPred:
+    'present' '(' path=PathExpr ')';
 
 Comparison:
     left=Expr op=('=='|'!='|'<'|'<='|'>'|'>=') right=Expr;

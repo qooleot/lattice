@@ -141,6 +141,7 @@ function mapPred(p: G.Predicate, enums: Map<string, string[]>, params: Set<strin
         { '==': 'eq', '!=': 'ne', '<': 'lt', '<=': 'le', '>': 'gt', '>=': 'ge' };
       return { kind: 'cmp', op: ops[c.op]!, left: mapTerm(c.left, enums, params), right: mapTerm(c.right, enums, params) };
     }
+    case 'PresentPred': return { kind: 'present', path: mapPath((p as G.PresentPred).path) };
     default: throw new Error(`unmapped predicate ${(p as any).$type}`);
   }
 }

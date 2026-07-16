@@ -81,6 +81,7 @@ export function expressibleAdopted(engine: 'alloy' | 'quint', adopted: Candidate
     switch (p.kind) {
       case 'cmp': return termHasNow(p.left) || termHasNow(p.right);
       case 'inState': return false;
+      case 'present': return false;   // a path reference, never `now`
       case 'and': case 'or': return p.args.some(predHasNow);
       case 'not': return predHasNow(p.arg);
       case 'implies': return predHasNow(p.left) || predHasNow(p.right);

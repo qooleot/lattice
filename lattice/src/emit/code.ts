@@ -31,6 +31,7 @@ export function predToText(p: Predicate): string {
   switch (p.kind) {
     case 'cmp': return `${termToText(p.left)} ${OPS[p.op]} ${termToText(p.right)}`;
     case 'inState': return `state ${p.region} in {${p.states.join(', ')}}`;
+    case 'present': return `present(${p.path.join('.')})`;
     case 'and': return p.args.map(a => wrap(a, 3)).join(' && ');
     case 'or': return p.args.map(a => wrap(a, 2)).join(' || ');
     case 'not': return `! ${wrap(p.arg, 4)}`;

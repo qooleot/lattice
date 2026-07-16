@@ -23,6 +23,7 @@ export function predToTs(p: Predicate, rowVar: string): string {
   switch (p.kind) {
     case 'cmp': return `${term(p.left, rowVar)} ${TS_OPS[p.op]} ${term(p.right, rowVar)}`;
     case 'inState': return `[${p.states.map(s => `'${s}'`).join(', ')}].includes(${rowVar}.${p.region})`;
+    case 'present': return `${rowVar}.${p.path.join('.')} !== undefined`;
     case 'and': return p.args.map(a => `(${predToTs(a, rowVar)})`).join(' && ');
     case 'or': return p.args.map(a => `(${predToTs(a, rowVar)})`).join(' || ');
     case 'not': return `!(${predToTs(p.arg, rowVar)})`;

@@ -95,7 +95,7 @@ diagnostic that fails the load (`loadLatText` returns `ok: false`). This is stri
 `naming-convention`: keywords collide with the grammar itself, so a name reusing one isn't just
 poor style — the printer could not even re-emit it as valid syntax. See
 [`RESERVED_WORDS`](../../lattice/src/ast/reserved.ts) for the complete, hand-maintained list
-(kept in lockstep with the grammar by a sync test): `aggregate`, `anticorruption`, `by`, `conformist`, `conserve`, `const`, `contains`, `context`, `contextMap`, `count`, `creates`, `downstream`, `emits`, `entity`, `enum`, `event`, `exposes`, `fairness`, `from`, `in`, `invariant`, `key`, `leads`, `lifecycle`, `List`, `monotonic`, `now`, `of`, `on`, `openHost`, `partnership`, `performs`, `publishedLanguage`, `read-only`, `ref`, `refs`, `requires`, `resolve`, `roles`, `service`, `sharedKernel`, `state`, `states`, `sum`, `terminal`, `ticksPerDay`, `to`, `transition`, `under`, `unique`, `upstream`, `value`, `when`, `where`, `while`, `with`.
+(kept in lockstep with the grammar by a sync test): `aggregate`, `anticorruption`, `by`, `conformist`, `conserve`, `const`, `contains`, `context`, `contextMap`, `count`, `creates`, `downstream`, `emits`, `entity`, `enum`, `event`, `exposes`, `fairness`, `from`, `in`, `invariant`, `key`, `leads`, `lifecycle`, `List`, `monotonic`, `now`, `of`, `on`, `openHost`, `partnership`, `performs`, `present`, `publishedLanguage`, `read-only`, `ref`, `refs`, `requires`, `resolve`, `roles`, `service`, `sharedKernel`, `state`, `states`, `sum`, `terminal`, `ticksPerDay`, `to`, `transition`, `under`, `unique`, `upstream`, `value`, `when`, `where`, `while`, `with`.
 
 ## Semantic Rules
 

@@ -204,6 +204,7 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
     switch (p.kind) {
       case 'cmp': checkTerm(p.left, at); checkTerm(p.right, at); break;
       case 'inState': checkOwner(p.owner, at); checkStates(p.region, p.states, at); break;
+      case 'present': checkPath(p.path, at); break;
       case 'and': case 'or': p.args.forEach((a, i) => checkPred(a, `${at}.${p.kind}[${i}]`)); break;
       case 'not': checkPred(p.arg, at); break;
       case 'implies': checkPred(p.left, `${at}.if`); checkPred(p.right, `${at}.then`); break;
@@ -241,6 +242,8 @@ function predNeedsArith(p: Predicate): boolean {
   switch (p.kind) {
     case 'cmp': return [p.left, p.right].some(termNeedsArith) || ['lt', 'le', 'gt', 'ge'].includes(p.op);
     case 'inState': return false;
+    // definedness is structural (an Alloy partial relation), not arithmetic — routes like inState
+    case 'present': return false;
     case 'and': case 'or': return p.args.some(predNeedsArith);
     case 'not': return predNeedsArith(p.arg);
     case 'implies': return predNeedsArith(p.left) || predNeedsArith(p.right);

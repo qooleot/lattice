@@ -50,6 +50,10 @@ function evalPred(p: Predicate, self: CaseEntity, s: CaseState): boolean {
       }
     }
     case 'inState': return p.states.includes(String(self.fields[`${p.region}.state`]));
+    // The one predicate that reads absence as a FACT rather than as an unknown: `cmp` treats a
+    // missing operand as unknown and returns true (line 45), which is why an invariant over an
+    // optional field needs this to say anything at all.
+    case 'present': return evalTerm({ kind: 'field', owner: 'self', path: p.path }, self, s) !== undefined;
     case 'and': return p.args.every(a => evalPred(a, self, s));
     case 'or': return p.args.some(a => evalPred(a, self, s));
     case 'not': return !evalPred(p.arg, self, s);

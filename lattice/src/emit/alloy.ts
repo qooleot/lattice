@@ -132,6 +132,7 @@ function predToAlloy(m: DomainModel, ownerName: string, p: Predicate, agg: strin
       return `(${l} ${ops[p.op]} ${r})`;
     }
     case 'inState': return inStateExpr(agg, v, p.region, p.states);
+    case 'present': throw new Error('present() has no Alloy encoding yet — lands with the optional-field Alloy encoding task');
     case 'and': return '(' + p.args.map(a => predToAlloy(m, ownerName, a, agg, v)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToAlloy(m, ownerName, a, agg, v)).join(' or ') + ')';
     case 'not': return `(not ${predToAlloy(m, ownerName, p.arg, agg, v)})`;

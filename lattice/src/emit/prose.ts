@@ -16,6 +16,7 @@ export function predEn(p: Predicate): string {
   switch (p.kind) {
     case 'cmp': { const ops = { eq: 'is', ne: 'is not', lt: '<', le: '≤', gt: '>', ge: '≥' }; return `${termEn(p.left)} ${ops[p.op]} ${termEn(p.right)}`; }
     case 'inState': return `it is ${p.states.join(' or ')}`;
+    case 'present': return `${p.path.join('.')} is present`;
     case 'and': return p.args.map(predEn).join(' and ');
     case 'or': return p.args.map(predEn).join(' or ');
     case 'not': return `not (${predEn(p.arg)})`;

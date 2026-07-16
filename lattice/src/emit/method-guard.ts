@@ -56,6 +56,7 @@ export function predToQuintParam(
       return `((${allExist}) implies ${cmp})`;
     }
     case 'inState': return '(' + p.states.map(s => `${self}.${p.region}_state == "${s}"`).join(' or ') + ')';
+    case 'present': throw new Error('present() has no Quint encoding yet — lands with the optional-field Quint encoding task');
     case 'and': return '(' + p.args.map(a => predToQuintParam(m, a, self, ownerName, paramVars)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToQuintParam(m, a, self, ownerName, paramVars)).join(' or ') + ')';
     case 'not': return `(not(${predToQuintParam(m, p.arg, self, ownerName, paramVars)}))`;
