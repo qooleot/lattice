@@ -3,8 +3,8 @@ import { validateModel } from '../../src/ast/validate.js';
 import { loadLatText } from '../../src/parse/fromLangium.js';
 import type { DomainModel, Field } from '../../src/ast/domain.js';
 
-const model = (fields: Field[]): DomainModel => ({
-  context: 'Opt', ticksPerDay: 24, enums: [], values: [], entities: [],
+const model = (fields: Field[], values: DomainModel['values'] = []): DomainModel => ({
+  context: 'Opt', ticksPerDay: 24, enums: [], values, entities: [],
   aggregates: [{ kind: 'aggregate', name: 'Thing',
     fields: [{ name: 'thingId', type: { kind: 'prim', prim: 'Id' }, key: true }, ...fields] }],
   events: [], services: []
@@ -27,6 +27,13 @@ describe('optional fields — structural rules', () => {
   it('rejects an optional list', () => {
     const m = model([{ name: 'xs', type: { kind: 'list', of: { kind: 'prim', prim: 'Int' } }, optional: true }]);
     expect(validateModel(m).map(d => d.code)).toContain('optional-list');
+  });
+
+  it('rejects an optional value-typed field', () => {
+    const m = model(
+      [{ name: 'window', type: { kind: 'value', value: 'Window' }, optional: true }],
+      [{ kind: 'value', name: 'Window', fields: [{ name: 'len', type: { kind: 'prim', prim: 'Int' } }] }]);
+    expect(validateModel(m).map(d => d.code)).toContain('optional-value');
   });
 });
 

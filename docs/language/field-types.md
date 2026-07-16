@@ -45,9 +45,9 @@ A bare identifier resolves in this order: primitive → declared value → decla
 A trailing `?` (immediately after the type, before `key`/`const`/tags) marks the field
 **optional**: the owner may exist with no value for it at all. Optionality is a property of the
 *field*, not a type of its own — `Money?` is not a distinct type, it is a `Money` field that may be
-absent — so it composes with everything above except keys and lists (see Semantic Rules). What
-absence *means* for a rule is never inferred: an invariant reading an optional field must say,
-with `present()`, which it means — see [invariant](invariant.md).
+absent — so it composes with everything above except keys, lists, and value types (see Semantic
+Rules). What absence *means* for a rule is never inferred: an invariant reading an optional field
+must say, with `present()`, which it means — see [invariant](invariant.md).
 
 `key` (unquoted, after the type and any `?`) marks the field as the owner's identity field — see
 [entity](entity.md)/[aggregate](aggregate.md) for the `missing-key` rule. `const` (unquoted, after
@@ -124,9 +124,12 @@ are: the underlying field is already invisible to both solvers.
   field, optional or not. The only family optionality changes is the `Money` one.
 
 So `?` on `Text`/`Id` is documentation of intent, not a constraint: nothing the solvers check, and
-nothing an invariant can appeal to. `Money?`, `Int?`, `Date?`, `Duration?`, enum, `value`, and
-`ref` fields are the ones where optionality carries semantic weight — `present(window)` on
-`window : Window?` is accepted, and Quint gives the field a real presence flag to answer it with.
+nothing an invariant can appeal to. `Money?`, `Int?`, `Date?`, `Duration?`, enum, and `ref` fields
+are the ones where optionality carries semantic weight — `present(owner)` on `owner : ref Other?`
+is accepted, Alloy gives the field a `lone` relation, and Quint gives it a real presence flag
+(`ownerPresent`), so both solvers agree on whether absence is reachable. A `value`-typed field is
+not on that list: `?` on one is rejected outright (`optional-value`, see Semantic Rules). So the
+list is exhaustive — every type `?` is *legal* on either carries semantic weight or is `Text`/`Id`.
 
 ## Semantic Rules
 
@@ -140,6 +143,9 @@ nothing an invariant can appeal to. `Money?`, `Int?`, `Date?`, `Duration?`, enum
 - A `key` field cannot be optional (`optional-key`) — identity is never absent.
 - A `List<T>` field cannot be optional (`optional-list`) — an absent list and an empty list are the
   same fact; `List<T>` already means zero or more.
+- A `value`-typed field cannot be optional (`optional-value`) — a value type flattens into its
+  sub-fields for the solvers (`window : Window` becomes Alloy's `window_len`, not a `window`
+  relation), so there is no single field for the optionality marker to attach to.
 - A field named `state` is always rejected (`reserved-field-name`), regardless of type — `state`
   is reserved for lifecycle-state path accessors.
 

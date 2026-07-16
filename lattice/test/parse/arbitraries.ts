@@ -47,9 +47,10 @@ export function fieldArb(name: string, enumNames: string[], valueNames: string[]
   }).map(({ type, isConst, isOptional, tags }) => {
     const f: Field = { name, type };
     if (isConst) f.const = true;
-    // `?` is illegal on a key field (optional-key) and on a list (optional-list); this generator
-    // never emits key fields here, so only the list case needs excluding.
-    if (isOptional && type.kind !== 'list') f.optional = true;
+    // `?` is illegal on a key field (optional-key), on a list (optional-list) and on a value-typed
+    // field (optional-value); this generator never emits key fields here, so only the list and
+    // value cases need excluding.
+    if (isOptional && type.kind !== 'list' && type.kind !== 'value') f.optional = true;
     if (tags) f.tags = tags;
     return f;
   });
