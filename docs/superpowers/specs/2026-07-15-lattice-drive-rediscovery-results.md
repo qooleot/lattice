@@ -1377,3 +1377,318 @@ verbatim in the same line (`open_balance 2087 != recomputed 0` and `lifetime_pai
 `legality=legal -> accepted`, terminal write for this subscription's account-summary refresh
 chain) leaves the read model stale, caught by the end-of-sequence crosscheck sweep within 42 of
 1600 budgeted sequences at seed 21. `.conform` confirmed absent after the run.
+
+---
+
+## 7. c09 root-cause investigation (measurement-only)
+
+Campaign #2's c09 outcome (§6 above) recorded a genuine MISS with one anomaly flagged plainly at
+seed 22 (a small statistical divergence from the clean control) but not explained further, per
+zero-tuning. This section closes that gap. Method: rebuilt `drive/c09-upgrade-activates` on a
+throwaway branch per the recipe (§"Branch mechanics" above), merged the current work-branch tip
+(`4c2d857`), confirmed the drift edit intact (`git diff drift/c09-upgrade-activates --
+implementations/subscriptions/src` empty), then added scratch `console.error` instrumentation at
+five points — `changePlan`'s carry-over block (`implementations/subscriptions/src/
+subscription-service.ts`), `rolloverPeriod`'s `needsBilling` line (c08 sibling), `recordPaymentFailure`'s
+active→past_due flip (`implementations/subscriptions/src/dunning.ts`, c06 sibling), every superset-op
+outcome and every legal-transition accept (`lattice/src/conform/drive/walk.ts`), and a raw-SQL dump
+of the `subscriptions` table inside `checkDb` (`lattice/src/conform/report.ts`) — then re-ran the
+pre-registered seeds 21/22/23 at `--sequences 1600 --length 30`, unmodified otherwise. **Nothing
+from this instrumentation was committed to the drift branch or the work branch**: after collecting
+the logs, all six touched files were reverted with `git checkout --` on the throwaway branch (`git
+status --short` empty, confirmed before switching branches), the branch was switched back to
+`claude/silly-tereshkova-a4e54b` at the same tip it started from, and `drive/c09-measure` was
+deleted (`git branch -D`). No source, test, or drift-branch content changed as a result of this
+investigation; only this results document does.
+
+**(a) Did any `changePlanOp` intention execute against an ACTIVE (or past_due) sub at seeds
+21/22/23? — Yes, exactly once, out of 98 total attempts across the three seeds.**
+
+`changePlan`'s first action is `cancelSubscription(db, subId)` on the OLD sub, which throws unless
+the old sub's state is `trialing`/`active`/`past_due` — so every attempt is either a full rejection
+(old state `canceled`/`expired`) or a full execution, and the carry-over block's own condition
+(`sub.lifecycle_state === 'active' || 'past_due'`, read before the cancel) is a strict subset of
+the execution-succeeding states. Measured old-state distribution across all `changePlanOp`
+attempts, all three seeds:
+
+| seed | trialing (executes, no carry-over) | active (executes, CARRY-OVER FIRES) | past_due (executes, CARRY-OVER FIRES) | canceled (rejected) | expired (rejected) | total attempts | successful executions |
+|------|----|----|----|----|----|----|----|
+| 21 | 12 | 0 | 0 | 12 | 6 | 30 | 12 |
+| 22 | 14 | **1** | 0 | 8 | 11 | 34 | 15 |
+| 23 | 15 | 0 | 0 | 10 | 9 | 34 | 15 |
+| **total** | **41** | **1** | **0** | **30** | **26** | **98** | **42** |
+
+Only 1 of 42 successful `changePlanOp` executions (2.4%) landed on an active/past_due old sub, and
+only at seed 22 — matching that seed's own small divergence from the clean control already flagged
+in §6's c09 outcome (accepted 2781 vs. clean's 2782, guard-probe attempts 9187 vs. 9186,
+re-attributions 370 vs. 369).
+
+**(b) The carry-over DID fire once (seed 22) — the successor DID land active-with-open-unpaid, and
+it was NOT caught. This is a genuine oracle/sweep-cadence gap, root-caused to source, not a
+reachability gap.**
+
+Traced verbatim from the seed-22 instrumented log (line-adjacent, single-threaded execution, no
+interleaving between sequences):
+
+```
+[C09-MEASURE] changePlan subId=d-subscription-1 newId=d-gen-1000540-311953 oldState=active
+[C09-MEASURE] CARRYOVER-FIRED newId=d-gen-1000540-311953 oldState=active successorInvoiceTotalDue=8189 successorInvoiceUsage=0
+[C09-MEASURE] SUPERSET op=changePlanOp target=d-subscription-1 outcome=accepted err=
+[C09-MEASURE] TRANSITION name=cancel target=d-gen-1000540-311953 from=active legal=accepted
+[C09-MEASURE] SUPERSET op=dunningSweep target=d-gen-1000540-311953 outcome=accepted err=
+[C09-MEASURE] runCheck source=drive:27 accepted=5 supersetOps=2
+[C09-MEASURE] RAW-DB source=drive:27 rows=[{"id":"d-subscription-1","lifecycle_state":"canceled",...},
+  {"id":"d-gen-1000540-311953","lifecycle_state":"canceled","current_invoice_id":"d-gen-1000540-311953-inv-1"}]
+[C09-MEASURE] SWEEP source=drive:27 totalSubs=2 activeSubs=0 ids=[]
+```
+
+The successor (`d-gen-1000540-311953`) is created active, with its (drift-finalized) first invoice
+open and totally unpaid (`total_due=8189`, no `recordPayment` ever called) — an `activePaidInFull`
+violation exists at this exact instant. But the **very next intention in the same sequence** is a
+plain, spec-legal `cancel` transition targeting that same successor row (`from=active`, no guard on
+`cancel`, accepted) — the walk has no notion of "don't touch a row I just corrupted"; it treats the
+newly-created successor as just another live `Subscription` row to probe. That `cancel` moves the
+row to `canceled` before this sequence's end-of-sequence Tier-1 sweep runs (`source drive:27` —
+`checkDb` runs at most once per sequence in practice here, since mean accepted commands/sequence
+(~1.6-1.8, from the §5 control's `accepted/1600`) is far below the default `checkEvery=10`, so the
+in-loop cadence essentially never fires and the *only* check most sequences get is the
+end-of-sequence sweep). The raw-SQL dump captured at that exact `checkDb` call confirms the
+successor's `lifecycle_state` is `"canceled"`, not `"active"` — `activePaidInFull`'s applicability
+condition (`state status in {active}`) genuinely no longer holds by the time the sweep runs, so the
+sweep is *correct* given what it observes; the violation existed and disappeared entirely within
+one sequence, between two sweep-eligible checkpoints.
+
+This is confirmed as the general pattern, not a one-off: across all three seeds combined, `checkDb`
+ran 1611 + 1606 + 1601 = **4818 total Tier-1 sweeps**, and **not one of them ever observed a single
+`Subscription` row with `status = active`** (`activeSubs=0` on every single sweep, all three
+seeds) — despite `activate` being legally driven to acceptance an estimated ~70+ times per seed
+(the investigation's own ~4.6%/sequence figure, `d2-coverage-investigation.md` §3). `active` is a
+high-churn, transient state in this walk: sequences are long (20-30 intentions, the `--length 30`
+budget), so once a row becomes active there are typically many more intentions left in the same
+sequence with a real chance of hitting another legal transition (`cancel`) or superset op
+(`changePlanOp`, whose own first action is an unconditional `cancel`) against that exact row before
+the sequence naturally ends. The Tier-1 sweep, batched to sequence boundaries (design §2: "Full-tier
+sweeps at sequence end... `--check-every` between") by deliberate design (O(1)-query-per-step cost
+model), is structurally blind to a violation that is introduced and then legally resolved within
+that same batching window. This is real and reproducible, not a probing artifact — the shrinking
+mechanism (per-step full checks) is never reached because the coarse sweep it depends on to find
+the failure never sees anything wrong here in the first place.
+
+**(c) Sibling hypotheses, spot-quantified, all three seeds:**
+
+- **c08 (rollovers-on-active / `needsBilling`):** `rolloverPeriod` requires `sub.lifecycle_state ===
+  'active'` as its own first-line guard, before `needsBilling` (the two-drafts precondition) is
+  even computed. Measured: 36 (seed 21) + 28 (seed 22) + 20 (seed 23) = **84 total `rollover`
+  superset-op attempts across the three seeds, 84/84 (100%) rejected at that guard**, every
+  rejection message of the form `rollover: <id> is <state>` with `state ∈ {trialing, canceled,
+  expired}` — never `active`. Full per-state breakdown recorded for seeds 21 and 23 (14
+  `trialing`/8 `canceled`/14 `expired` = 36, and 12 `trialing`/6 `canceled`/2 `expired` = 20,
+  respectively); seed 22's 28 rejections were confirmed all-`rejected` by the same guard but the
+  per-state breakdown was not separately retained. `needsBilling` was evaluated **zero times** in
+  4800 driven sequences across three seeds — the c08 precondition chain never even starts, for the
+  identical root reason as c09's reachability half: `active` essentially never persists to the
+  moment a *different* superset op (here, `rollover`) gets to act on the same row.
+- **c06 (past_due occurrences):** `recordPaymentFailure`'s `active → past_due` flip
+  (`implementations/subscriptions/src/dunning.ts`) fired **zero times** across all three seeds (0
+  hits on a dedicated instrumentation line placed directly inside the `if (sub.lifecycle_state ===
+  'active')` branch) — consistent with `rollover` never reaching its decline branch (0/84, above)
+  and the direct `paymentFailed` driver being skip-audited whenever there is no open invoice (the
+  common case once `active`, since reaching `active` already required the current invoice to be
+  `paid`). `past_due` was not observed to be reached by any mechanism in any of the three seeds'
+  4800 sequences.
+
+**Bottom line for the verdict:** c09 is a demonstrated, root-caused **oracle/sweep-cadence gap** —
+the corrupting state is reachable (proven, seed 22) and was reached, but the harness's
+sequence-granularity Tier-1 checkpoint missed it because a later, itself-fully-legal command in the
+same sequence resolved it first. c06 and c08 remain **reachability gaps** as registered — their
+shared precondition (`active` persisting long enough for a *different* subsequent command to act on
+it) was never observed to hold at all in 4800 driven sequences across three seeds each, so nothing
+downstream of it (past_due flips for c06, `needsBilling` for c08) could be exercised. Per
+zero-tuning, no further seeds or flags were used to resolve this beyond what was pre-authorized;
+this is reported as the discriminating measurement, not a fix.
+
+---
+
+## Verdict (design §5 criteria — human ruling required on Criterion 1)
+
+This section assesses campaign #2 (§6 above, work-branch tip `e608123`→`5322cb3` per-class,
+document tip `4c2d857`) plus §7's c09 investigation against
+`docs/superpowers/specs/2026-07-15-lattice-adversarial-generation-design.md` §5. All figures below
+are read directly from §§1-7 of this document; none are re-derived from unrecorded runs.
+
+### Criterion 1 — Drift rediscovery 13/13: **NOT MET AS REGISTERED — 10/13**
+
+| class | verdict | seed(s) | discriminating evidence |
+|---|---|---|---|
+| c01 skipped-emit | REDISCOVERED | 21 | Tier 2 substring exact match, 5 VIOLATION lines |
+| c02 wrong-event | REDISCOVERED | 21 | Tier 2 substring exact match, 2 VIOLATION lines |
+| c03 emit-outside-tx | REDISCOVERED | 21 | both registered substrings, fires on seq 1 (depth-independent) |
+| c04 weakened-guard | REDISCOVERED (Route B) | 21 | direct probe-accept, seq 1, first probe of the campaign |
+| c05 win-back | REDISCOVERED | 21 | multi-hop chain confirmed reachable at seq 59/1600 |
+| **c06 state-rename** | **MISSED — reachability gap** | 21,22,23 | §7(c): 0/84 rollover attempts ever passed the active-state guard; 0 past_due flips in 4818 sweeps/3 seeds |
+| c07 partial-write | REDISCOVERED | 21 | Tier 1 exact witness, seq 42/1600 |
+| **c08 two-drafts** | **MISSED — reachability gap** | 21,22,23 | §7(c): `needsBilling` evaluated 0/4800 sequences — same active-state bottleneck as c06 |
+| **c09 upgrade-activates** | **MISSED — oracle/sweep-cadence gap** | 21,22,23 | §7(a)(b): 1/98 changePlanOp attempts DID land on an active sub (seed 22); successor DID land active-unpaid; NOT caught because a same-sequence, spec-legal `cancel` on that row resolved it before the end-of-sequence sweep (raw-DB confirmed) |
+| c10 column-rename | REDISCOVERED-LOUD | 21 | bind abort, exit 2, depth-independent |
+| c11 stale-override | REDISCOVERED-LOUD | 21 | observe abort, exit 2, depth-independent |
+| c12 proration-total | REDISCOVERED | 21 | Tier 1 + crosscheck collateral, seq 282/1600 |
+| c13 stale-read-model | REDISCOVERED | 21 | crosscheck both substrings, seq 42/1600 |
+
+**10/13 REDISCOVERED(-LOUD), 3/13 MISSED.** Criterion 1 as registered ("13/13... a rediscovery
+failure is recorded and escalated, never re-scoped") is **NOT MET**. Per the registration's own
+rule, these three misses are escalated here for a human ruling, not re-scoped or patched. §7's
+investigation gives the misses two *different* characters — c09 is a real, root-caused mechanism
+gap (state reached, violation existed, checkpoint missed it); c06/c08 are unconfirmed reachability
+(the shared precondition was never observed to hold at all) — which the human ruling may want to
+weigh differently. Options for the human's consideration (not adjudicated here):
+
+- **Accept as a registered limitation and record a follow-up.** Document the sweep-cadence gap
+  (c09) and the `active`-state reachability ceiling (c06/c08) as known, bounded gaps of this
+  generator design at its current budget; no further campaign work required to ship.
+- **A registered campaign #3 with a coverage-metric budget** (e.g. "run until N actives-driven is
+  observed" rather than a fixed sequence count) — directly targets the reachability half (c06/c08)
+  and would let c09's oracle gap re-surface (or not) at a measured, pre-registered `active`-state
+  exposure level instead of an arbitrary sequence count.
+- **A targeted-steering design amendment** — e.g. bias the walk's row-selection or command-mix
+  toward rows that recently reached a state a still-unexercised invariant cares about, and/or add a
+  post-step (not just per-sequence) Tier-1 check for invariants known to be state-churn-sensitive —
+  would address c09's mechanism directly and might incidentally help c06/c08's reachability too, at
+  the cost of new generator complexity and a new thing to keep zero-tuned.
+
+This document does not pick one; that choice is the human's per the registration's own escalation
+rule.
+
+### Criterion 2 — Guard probing both directions: **MET**
+
+- Clean impl → 0 false accepts: the §5 control's 5 seeds attempted **45,362 total illegal probes**
+  (8869+9186+9274+8833+9200), of which 43,575 were rejected and 1,787 were accepted-but-explained
+  by a legal sibling transition (re-attributions) — `45362 − 43575 − 1787 = 0` unexplained accepts,
+  0 violations, on every seed. ✅
+- `drift/c04-weakened-guard` → caught directly: Route B fires on the very first probe of the
+  campaign (seed 21, sequence 1), substring `accepted a spec-illegal command` naming `activate`
+  verbatim (§6 c09... c04 outcome). ✅
+
+### Criterion 3 — Zero false positives: **MET**
+
+- Campaign #2 control: 5 seeds × 1600 sequences = 8000 sequences, **0 violations**, all 5 runs
+  CLEAN, no STOP triggered (§5). ✅
+- Campaign #1 control (retained, not superseded): 5 seeds × 200 sequences = 1000 sequences, **0
+  violations**, also CLEAN (§2). ✅
+
+### Criterion 4 — Determinism + shrinking: **MET (design guarantee) — spot-checked, not exhaustively re-run**
+
+Every failure in this document replays via a fixed `--seed N` on a deterministic PRNG
+(`mulberry32`, no `Date.now()`, per design §6's "drivers receive a monotonic `clock()`... real time
+never leaks into sequences") — the CLI prints the literal `replay: lattice conform ... --seed N`
+command for every FAILED run. Shrunk lengths observed (narrative-line count = minimal reproducing
+command sequence):
+
+| class | sequences run before FAILED/LOUD | shrunk narrative length | total VIOLATION lines |
+|---|---|---|---|
+| c01 | 323 | 13 intentions | 5 |
+| c02 | 753 | 20 intentions | 2 |
+| c03 | 1 | 11 intentions | 12 (2 shown + 10 more of the same shape, per §6) |
+| c04 | 1 | 10 intentions | 1 |
+| c05 | 59 | ~20 intentions | 3 |
+| c07 | 42 | 10 intentions | ~19 (3 shown + "8 more repeats" of a 2-line pair, per §6) |
+| c10 | 0 (bind abort, pre-loop) | n/a | n/a (LOUD, exit 2) |
+| c11 | 0 (observe abort, pre-loop) | n/a | n/a (LOUD, exit 2) |
+| c12 | 282 | 7 intentions | 8 |
+| c13 | 42 | 8 intentions | 9 |
+
+**Byte-identical re-run recorded:** campaign #1's accidental seed-1 duplicate (§2's "Evidence
+quirk") is the one case in this document where the SAME seed was actually executed twice against
+the same clean state — both runs report identical `probesAttempted: 24, probesRejected: 21,
+reattributions: 3, violationCount: 0`, confirming the determinism guarantee empirically, not just
+by construction. No campaign #2 REDISCOVERED class was independently re-executed a second time in
+this document (one run per seed, per protocol) — determinism there rests on the seed+PRNG design
+property (also pinned by dedicated `walk.test.ts` fixtures per the repair report) plus this one
+concrete duplicate, not on redundant re-runs of every class.
+
+### Criterion 5 — Runtime ≤ 60s: **MET**
+
+Maximum observed `durationMs` (harness-internal, load-independent) across every run recorded in
+this document: **8.097s** (§5 control, seed 21, 1600 sequences) — roughly **1/7.4 of the 60s
+budget**, despite running at 8× the sequence volume the criterion was originally registered against
+(200×30). The largest individual MISSED-class run was c09 seed 21 at 3.7s (§6); the largest
+REDISCOVERED-class run was c02 seed 21 at 1.6s (753 of 1600 sequences before FAILED). Every other
+recorded duration in this document is ≤ 3.1s.
+
+### Kill-criteria assessment
+
+- **No irreducible false positives.** Two findings surfaced on the clean impl during plan 1 and
+  were **adjudicated as semantics fixes, not tuned-around false positives** — both are human rulings
+  recorded at the top of this document ("Post-plan amendments"): (a) the finalize/settle `requires`
+  drop (spec amendment `1fbf530` — the guards were mis-filed, structurally unsatisfiable edge
+  conditions, not a real spec constraint); (b) the probe-oracle post-accept re-attribution rule
+  (`fb16f44`/`62c7e83`/`91b61c2` — one impl entry point serving multiple spec transitions is a
+  named, honest limitation, not a false positive being suppressed). Since both rulings landed,
+  every subsequent clean-impl run — campaign #1's 5×200 (§2), campaign #2's 5×1600 (§5) — has been
+  0 violations. No false positive has needed tuning-around at any point after these two rulings. ✅
+- **The three misses are NOT "passive mode caught what driving structurally cannot."** The design's
+  kill criterion is about *structural capability*, not raw catch-rate — and passive mode's own
+  catches for these exact three classes (`docs/superpowers/specs/
+  2026-07-15-lattice-slice-2-drift-experiment-results.md`, c06/c08/c09 sections) each required a
+  **hand-written test fixture deliberately constructed to exercise the exact scenario**: c06's
+  fixture directly drives a failed rollover charge to `past_due`; c08's fixture directly drives a
+  rollover-then-failed-charge sequence; c09's fixture is literally named `changePlan supersedes:
+  cancels old (event), creates new on the new plan, never mutates plan_code` and calls `changePlan`
+  on a subscription an engineer already knew to put in the active state first. None of those three
+  passive catches demonstrate anything about what a *generic, undirected* walk can or cannot reach
+  — they demonstrate what a human who already knows the bug can construct. §7's measurement is the
+  actual answer to the structural-capability question the kill criterion asks: for c09, the walk
+  **did** reach the exact corrupting state undirected (seed 22, no hint, no fixture) — proving this
+  is budget-bounded rarity plus a real oracle-cadence gap, not a structural incapability. For
+  c06/c08, §7 could not confirm reachability at all in 4800 sequences/seed — genuinely unresolved
+  between "budget-bounded rarity" and "harder to reach undirected than these three seeds' budget
+  allows," but in neither case is "passive fixture caught it, driving structurally cannot" an
+  accurate description of what was actually measured. **Kill criterion not triggered.**
+
+### The `paymentFailed` skip audit + forward pointers
+
+**Skip audit totals.** Every `driverSkips` figure printed anywhere in this document is summed here
+for a single audited total: control (§5) 6+5+3+1+5=20, c01 0, c02 1, c03 0, c04 25, c05 0, c06
+6+5+3=14, c07 0, c08 6+5+3=14, c09 6+5+3=14, c12 0, c13 0 (c10/c11 abort before any driver runs) —
+**88 total driver-skip events recorded across every campaign #2 run in this document.** Every one
+is the pre-registered `paymentFailed` skip (§2: "no open invoice — a payment cannot fail when
+nothing is owed"); none were counted as a command, an accept, a reject, or a violation, per the
+mechanism's own design and the dedicated `walk.test.ts` fixtures proving a weakened guard cannot
+hide behind this path.
+
+**Forward pointers (ensures brief), recorded here, not resolved here:**
+
+- **Command-vs-event semantics** (carried from §2): whether `paymentFailed` should be a
+  spec-driveable command at all, versus only ever arising as a side effect of a billing/dunning
+  process the single-aggregate `Subscription` machine can't see. Unresolved; the drive-skip is an
+  audit trail for today's impl-strictness gap, not an adjudication of the spec's modeling choice.
+- **Existential ref guards.** The pre-state oracle's scoped-observe closure
+  (`lattice/src/conform/observe.ts`'s `observeScoped`) is bounded to exactly **one** ref hop by
+  deliberate design ("the spec's guards traverse at most one ref hop... not a general-purpose graph
+  walk"). No guard in this spec needs more (`activePaidInFull` reaches through `latestInvoice`, one
+  hop) so this campaign never exercised the bound as a gap — but a future guard requiring
+  existential quantification over a *collection* of refs (e.g. "any invoice ever past due") or a
+  two-hop chain would not be evaluated correctly by the current oracle. Flagged forward, not
+  exercised.
+- **The reachability-vs-oracle-gap discriminator question.** §7 answered this question empirically
+  for c09 using ad hoc scratch-branch instrumentation (five `console.error` points, a throwaway
+  branch, manual log correlation) — effective, but not a repeatable harness feature. The same
+  question is genuinely open for c06/c08. Flagged forward: should the harness itself expose
+  per-invariant reachability telemetry (e.g., "N times this aggregate entered an invariant's
+  applicability state, M of those survived to the next checkpoint") so this class of discrimination
+  doesn't require rebuilding a throwaway branch and hand-instrumenting source every time a class is
+  missed?
+
+### Summary
+
+This document's claims are strictly limited to what was measured and recorded above. Campaign #2
+rediscovers 10 of 13 pre-registered drift classes verbatim, with zero false positives and zero
+false accepts across every clean-impl run recorded (campaign #1 and campaign #2 controls
+combined: 9000 sequences, 0 violations; ~45k illegal probes, 0 unexplained accepts), deterministic
+replay by construction (one empirical byte-identical duplicate on record), and a maximum observed
+runtime of 8.097s against a 60s budget. The three misses are recorded honestly and root-caused
+where §7's measurement made that possible: c09 is a demonstrated oracle/sweep-cadence gap (the
+corrupting state was reached and then lost to a coarse per-sequence checkpoint), c06 and c08 remain
+unconfirmed reachability gaps (their shared precondition was never observed to hold in 4800
+sequences/seed each). Criterion 1 is NOT met as registered; the misses are escalated, not
+re-scoped, per the registration's own rule, with three options recorded for a human ruling and none
+selected here. No kill criterion was triggered.
