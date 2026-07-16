@@ -1245,7 +1245,36 @@ before any command counter. `.conform` confirmed absent after the run (no workin
 all from this run — the abort happens before any session/ledger write).
 
 ### c11 — stale override
-**Verdict: PENDING (campaign #2)**
+**Verdict: REDISCOVERED-LOUD**
+
+Branch mechanics: `git checkout -b drive/c11 drift/c11-stale-override`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `8d163ec`) — clean auto-merge, no conflicts.
+`git diff drift/c11-stale-override -- implementations/subscriptions/src` was empty after the merge
+— the drift edit (schema.sql + billing-service.ts + read-model.ts renaming `invoice_payments.amount`
+to `amount_cents`) survived intact. Per the recipe's explicit c11 carve-out, verified directly
+rather than assumed: the merged `conform/overrides.ts` still contains `SELECT COALESCE(SUM(amount),
+0) ... FROM invoice_payments` (the drift branch's stale override querying the renamed-away `amount`
+column) — the auto-merge did not silently pull in a work-branch-side rewrite of this file, so the
+staleness IS the drift, present verbatim as intended. `rm -rf
+implementations/subscriptions/.conform` before the run; absent both before and after.
+
+Seed tried: 21 (first pre-authorized seed — aborts loud immediately, depth-independent, as
+registered; no need for 22/23).
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed 21`. Exit code 2.
+
+Verbatim stdout/stderr:
+```
+no such column: amount
+```
+
+Registered stderr substring `no such column: amount` fires exactly, verbatim. Matches the
+registered route precisely: the first scoped observe of an Invoice row evaluates the
+`Invoice.amountPaid` override, which throws immediately against the renamed-away column — exit 2,
+before any command-level legality check runs, depth-independent. `.conform` confirmed absent after
+the run (no working-tree changes from this run — the abort happens before any session/ledger
+write).
 
 ### c12 — out-of-spec feature corrupts covered state
 **Verdict: PENDING (campaign #2)**
