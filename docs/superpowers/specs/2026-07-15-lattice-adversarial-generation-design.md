@@ -47,12 +47,14 @@ path. No solver in the loop; failures replay from a seed and shrink to a minimal
   transitions sharing an entry point can be masked by its legal sibling. Post-state checking = the
   driven DB serialized as a standard snapshot and pushed through the unchanged slice-2 path
   (Tier 1 + Tier 2 + crosschecks) — total reuse, no new checking machinery. **Amendment 2026-07-16
-  (human ruling, c09 root-cause finding):** after every accepted legal transition, re-attributed
-  probe, or accepted superset op, the oracle additionally re-checks the touched aggregate's own
-  Tier-1 invariants immediately (`walk.ts`'s `stepCheck`, scoped to that aggregate's rows + one-hop
-  ref closure) — closing the measured gap where a violation the end-of-sequence/checkEvery sweep
-  would have caught was instead created and legally erased by the very next command within the same
-  batching window.
+  (human ruling, c09 root-cause finding; scope widened same day):** after every accepted legal
+  transition, re-attributed probe, or accepted superset op, the oracle additionally re-checks the
+  Tier-1 invariants of ALL bound aggregates immediately (`walk.ts`'s `stepCheck` — full row sets +
+  one-hop ref closure; drivers routinely mutate aggregates other than the one their intention
+  names, so single-aggregate scoping merely relocates the gap; see the fork-4 row for the declared
+  mutation-footprint seam for large/remote targets) — closing the measured gap where a violation
+  the end-of-sequence/checkEvery sweep would have caught was instead created and legally erased by
+  the very next command within the same batching window.
 
 **Target-side (`implementations/subscriptions/conform/drive.ts`):** the typed driver map —
 `transitions` (one entry per spec transition: how to induce it here), `superset` (ops the spec
