@@ -114,15 +114,19 @@ are: the underlying field is already invisible to both solvers.
   There is no field for a companion presence flag to sit beside.
 - It cannot appear in any invariant path. A path ending at a `Text`/`Id` field is already rejected
   with `unrepresentable-path` (see [invariant](invariant.md)), and `?` does not change that — so
-  `present(label)` on `label : Text?` is rejected exactly like `label > 0` is. The
-  `absence-undecided` gate never fires on such a field, because no invariant can read it in the
-  first place.
+  `present(label)` on `label : Text?` is rejected exactly like `label > 0` is. The two checks are
+  independent and both run over the same body, so they can stack: `label > 0` reports
+  `unrepresentable-path` **and** `absence-undecided`, because the absence gate consults only the
+  field's optionality, never its representability. `present(label)` reports `unrepresentable-path`
+  alone. The rejection stands either way — where the gate does fire here, it is redundant, not
+  load-bearing.
 - It is excluded from [derived invariants](derived-invariants.md) — but so is every `Text`/`Id`
   field, optional or not. The only family optionality changes is the `Money` one.
 
 So `?` on `Text`/`Id` is documentation of intent, not a constraint: nothing the solvers check, and
-nothing an invariant can appeal to. `Money?`, `Int?`, `Date?`, `Duration?`, enum, and `ref` fields
-are the ones where optionality carries semantic weight.
+nothing an invariant can appeal to. `Money?`, `Int?`, `Date?`, `Duration?`, enum, `value`, and
+`ref` fields are the ones where optionality carries semantic weight — `present(window)` on
+`window : Window?` is accepted, and Quint gives the field a real presence flag to answer it with.
 
 ## Semantic Rules
 

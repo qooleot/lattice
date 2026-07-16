@@ -124,15 +124,28 @@ solver query. A `present(f)` covers a read of `f`:
   accepted, and coverage from an enclosing `&&` reaches nested predicates;
 - in a **consequent**, when the antecedent contains it: `present(f) => f > 0`.
 
-A `present()` under **`||`** or **`!`** covers nothing — `present(f) || f > 0` still reports
-`absence-undecided`. Neither connective can establish the value is there for the read that follows,
-so neither is credited.
+The rule for **`||`** and **`!`** is about **direction, not containment**: neither connective
+*exports* a `present()` it contains to anything outside itself — not to an `&&` sibling, not to an
+`implies` consequent. That is why `present(f) || f > 0` still reports `absence-undecided`: the
+`||`'s own `present(f)` is not credited to the sibling read, since either side may be read when the
+other is false. `(present(f) || amount > 0) && f > 0` and `(present(f) || amount > 0) => f > 0`
+report it for the same reason, and `!` exports nothing either — `!present(f) && f > 0` reports it.
 
-The gate is reported for the invariant's **body**. Some [invariant forms](invariant-forms.md) have
-no predicate to attach a guard to, and reject an optional path outright with `absence-undecided`
-rather than offering a form: `unique`'s `by` paths, `monotonic`'s `field`, `conservation`'s `parts`
-and `total`, and `sumOverCollection`'s summed child field and `total`. For these, make the field
-required or drop it from the rule.
+Neither connective *blocks* coverage, though. A `present(f)` inside an `||` or `!` still covers the
+reads within its own `&&` or `implies`, and coverage established outside passes down through both
+unchanged: `!(present(f) && f > 0)` and `(present(f) && f > 0) || amount > 0` are both accepted.
+
+The gate is reported for the invariant's **body** — and only there. A `where` guard is checked for
+shape but not for absence, so a guard that itself compares an optional path draws no diagnostic.
+Some [invariant forms](invariant-forms.md) reject an optional path outright with
+`absence-undecided` rather than offering a form: `unique`'s `by` paths, `monotonic`'s `field`,
+`conservation`'s `parts` and `total`, and `sumOverCollection`'s summed child field and `total`. For
+these, make the field required or drop it from the rule.
+
+The gate does not reach every predicate the language has. `leadsTo`'s `from`/`to` and
+`cardinality`'s `where` are predicates, yet an optional path read in one of them draws no
+diagnostic at all — neither gated nor rejected. Whether that gap is deliberate has not been
+decided; do not read the silence as a guarantee.
 
 ### The gate reaches a path's *end*, not its middle
 
