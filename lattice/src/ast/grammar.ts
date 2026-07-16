@@ -296,6 +296,8 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
       const cf = child.fields.find(x => x.name === c.field);
       if (!cf || cf.key || cf.type.kind !== 'prim' || !SOLVER_INT_PRIMS.includes(cf.type.prim))
         out.push({ code: 'ill-typed', message: `sum field ${c.child}.${c.field} must be a numeric (Int/Money/Date/Duration) non-key field`, at: 'field' });
+      else if (cf.optional)
+        out.push({ code: 'absence-undecided', message: `sum field ${c.child}.${c.field} is optional — a sumOverCollection cannot say what absence means; make the field required`, at: 'field' });
       checkPath(c.total, 'total');   // numeric own path; reuses key-path/unrepresentable-path guards
       if (isOptionalPath(c.total)) out.push({ code: 'absence-undecided', message: `total path ${c.total.join('.')} is optional — a sumOverCollection cannot say what absence means; make the field required`, at: 'total' });
       break;

@@ -45,3 +45,32 @@ describe('absence-undecided', () => {
     expect(validateCandidate(u, m).map(d => d.code)).toContain('absence-undecided');
   });
 });
+
+const invoiceModel = (lineFields: any[]): DomainModel => ({
+  context: 'Opt', ticksPerDay: 24, enums: [], values: [], entities: [], events: [], services: [],
+  aggregates: [{ kind: 'aggregate', name: 'Invoice', fields: [
+    { name: 'invId', type: { kind: 'prim', prim: 'Id' }, key: true },
+    { name: 'total', type: { kind: 'prim', prim: 'Money' } },
+    { name: 'lines', type: { kind: 'list', of: { kind: 'ref', target: 'InvoiceLine' } } }],
+    entities: [{ kind: 'entity', name: 'InvoiceLine', fields: lineFields }] }],
+});
+const sumCandidate = (m: DomainModel): Candidate => ({
+  kind: 'sumOverCollection', aggregate: 'Invoice', collection: 'lines', child: 'InvoiceLine',
+  field: 'amount', op: 'eq', total: ['total']
+});
+
+describe('absence-undecided — sumOverCollection child field', () => {
+  it('rejects an optional child field summed across the collection', () => {
+    const m2 = invoiceModel([
+      { name: 'lineId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' }, optional: true }]);
+    expect(validateCandidate(sumCandidate(m2), m2).map(d => d.code)).toContain('absence-undecided');
+  });
+
+  it('does not fire for a required child field', () => {
+    const m2 = invoiceModel([
+      { name: 'lineId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' } }]);
+    expect(validateCandidate(sumCandidate(m2), m2).map(d => d.code)).not.toContain('absence-undecided');
+  });
+});
