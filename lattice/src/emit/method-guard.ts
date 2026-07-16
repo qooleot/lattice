@@ -56,7 +56,11 @@ export function predToQuintParam(
       return `((${allExist}) implies ${cmp})`;
     }
     case 'inState': return '(' + p.states.map(s => `${self}.${p.region}_state == "${s}"`).join(' or ') + ')';
-    case 'present': throw new Error('present() has no Quint encoding yet — lands with the optional-field Quint encoding task');
+    // Mirrors predToQuint's 'present' arm verbatim (quint.ts) — pathToQuint's last hop always
+    // renders `${prefix}.${lastSeg}`, so appending `Present` reaches the companion flag beside
+    // the field. Params never appear in a present() path (present() takes a Path, not a Term), so
+    // this needs no param-aware variant.
+    case 'present': return `${pathToQuint(m, p.path, self, ownerName)}Present`;
     case 'and': return '(' + p.args.map(a => predToQuintParam(m, a, self, ownerName, paramVars)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToQuintParam(m, a, self, ownerName, paramVars)).join(' or ') + ')';
     case 'not': return `(not(${predToQuintParam(m, p.arg, self, ownerName, paramVars)}))`;

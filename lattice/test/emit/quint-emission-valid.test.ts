@@ -100,6 +100,40 @@ describe('emission typecheck-validity gate (quint typecheck, no solver)', () => 
     expect(r.ok, r.stderr).toBe(true);
   });
 
+  // (c2) optional fields + present() — the `${f}Present: bool` companion encoding. Shape tests
+  // (quint-optional.test.ts) assert the flag appears; only this gate answers whether the emission is
+  // valid quint. It is the layer that catches a present() whose rendered path names a flag that was
+  // never declared: pathToQuint walks a ref hop through a map-get (`methods.get(x.method).feePresent`
+  // — flag on the TARGET record) and a value hop as a plain dotted accessor (`x.window.endPresent` —
+  // flag INSIDE the nested record), so all three sites must declare it. Covers all three at once.
+  it('(c2) optional fields: astToQuint emits typecheck-clean quint for present() over own/ref-hop/value-hop paths', async () => {
+    const optModel: DomainModel = {
+      context: 'Opt', ticksPerDay: 24, enums: [],
+      values: [{ kind: 'value', name: 'Window', fields: [
+        { name: 'start', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'end', type: { kind: 'prim', prim: 'Int' }, optional: true }] }],
+      entities: [{ kind: 'entity', name: 'Method', fields: [
+        { name: 'methodId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'fee', type: { kind: 'prim', prim: 'Money' }, optional: true }] }],
+      aggregates: [{ kind: 'aggregate', name: 'Payment', fields: [
+        { name: 'paymentId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'method', type: { kind: 'ref', target: 'Method' }, optional: true },
+        { name: 'window', type: { kind: 'value', value: 'Window' } },
+        { name: 'amount', type: { kind: 'prim', prim: 'Money' } }],
+        machine: { regions: [{ name: 'intent', initial: 'pending', states: [{ name: 'pending' }, { name: 'done' }] }], transitions: [] } }],
+      events: [], services: [],
+    };
+    const body: Candidate = { kind: 'statePredicate', aggregate: 'Payment',
+      body: { kind: 'and', args: [
+        { kind: 'present', path: ['method'] },              // own optional ref
+        { kind: 'present', path: ['method', 'fee'] },       // ref hop into the target's optional field
+        { kind: 'present', path: ['window', 'end'] },       // value hop into an optional sub-field
+      ] } };
+    const em = astToQuint(optModel, { kind: 'probe-permit', hi: body, exclusions: [], maxSteps: 1 });
+    const r = await typechecks(em.source);
+    expect(r.ok, r.stderr).toBe(true);
+  });
+
   // (d) the committed REAL model — parsed straight from specs/subscriptions/spec.lat via the same
   // loadLatText() the `apply`/`docs` CLI paths use, so this test tracks the canonical source (not a
   // hand-transcribed fixture that can silently drift, as test/fixtures.ts's subscriptionsModel did).
