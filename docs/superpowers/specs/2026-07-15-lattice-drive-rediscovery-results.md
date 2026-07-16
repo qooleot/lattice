@@ -1067,7 +1067,74 @@ invariant violated too, once `activate` is later legally accepted on line 16). `
 absent after the run.
 
 ### c08 — widened uniqueness (two drafts)
-**Verdict: PENDING (campaign #2)**
+**Verdict: MISSED**
+
+Branch mechanics: `git checkout -b drive/c08 drift/c08-two-drafts`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `99a1863`) — one conflict, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved as union (both sides' lines concatenated,
+no lines dropped, all validated as parseable JSON post-resolution). `git diff
+drift/c08-two-drafts -- implementations/subscriptions/src` was empty after the merge — the drift
+edit survived intact (the deleted `if (needsBilling) finalizeInvoice(...)` / charge block in
+`rolloverPeriod`, `implementations/subscriptions/src/subscription-service.ts`). `rm -rf
+implementations/subscriptions/.conform` before the run; absent both before and after.
+
+Seeds tried: 21, 22, 23 (all three pre-authorized seeds — all CLEAN, no violation; per "stopping
+after 3 clean seeds = MISSED").
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed <21|22|23>`. Exit code 0 on all three runs.
+
+Verbatim stdout, all three seeds:
+```
+drive: 1600 sequences — CLEAN
+commands: 11688 (2608 accepted, 0 rejected, 211 superset ops)
+guards probed at event time: 8869 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 337
+driver skips (impl preconditions, audited): 6
+duration 2.0s
+```
+```
+drive: 1600 sequences — CLEAN
+commands: 12161 (2782 accepted, 0 rejected, 193 superset ops)
+guards probed at event time: 9186 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 369
+driver skips (impl preconditions, audited): 5
+duration 2.8s
+```
+```
+drive: 1600 sequences — CLEAN
+commands: 12189 (2728 accepted, 0 rejected, 187 superset ops)
+guards probed at event time: 9274 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 380
+driver skips (impl preconditions, audited): 3
+duration 2.0s
+```
+
+Registered element `oneDraftInvoicePerSubscription` (Tier 1, set-level) does not appear in any of
+the three logs — grepped directly (`oneDraftInvoicePerSubscription\|VIOLATION`), zero matches.
+Exit code 0 (not 1) on all three runs.
+
+Every field (commands/accepted/superset, guard-probe volume, re-attributions, driver skips) is
+byte-identical, per seed, to the corresponding row of §5's 5-seed false-positive control on the
+*clean* implementation (seed 21: 11688/2608/0/211, 337 reattr, 6 skips; seed 22:
+12161/2782/0/193, 369 reattr, 5 skips; seed 23: 12189/2728/0/187, 380 reattr, 3 skips) — same
+pattern already seen at c06: the drift produced observably indistinguishable command-generation
+behavior from the clean impl at all three seeds (expected, since the walk's command choice is
+seed+spec-driven, not observation-driven, and this drift changes neither the spec-legality surface
+nor the set of commands the walk will attempt).
+
+Recorded honestly per the zero-tuning rule: the registered route requires a driven `rollover`
+(superset op, `supersetAggregates.rollover = 'Subscription'`) to land on a subscription whose
+*current* invoice is still `draft` (`needsBilling` in the pre-drift code) at the moment of the
+call — `rolloverPeriod`'s own precondition, not gated by the walk's per-step legality oracle (the
+walk only classifies superset ops as attempted/accepted, it does not know whether the drift's
+specific double-draft condition was hit inside). Since the drift only changes internal behavior
+when `needsBilling` is true and command volume/ordering is otherwise byte-identical to clean, this
+run does not distinguish "the precondition was never hit across all three seeds' 1600×30 budget"
+from "it was hit but `oneDraftInvoicePerSubscription` happened not to be violated by that
+particular pairing" — no further investigation performed here, per zero-tuning (no extra flags, no
+extra seeds beyond the three pre-authorized, no source changes, no verbose/report-mode reruns).
+Escalated as MISSED, verbatim, not patched. `.conform` confirmed absent after all three runs.
 
 ### c09 — cross-aggregate activation
 **Verdict: PENDING (campaign #2)**
