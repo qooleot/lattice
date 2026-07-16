@@ -468,3 +468,246 @@ flags, no extra seeds beyond the three pre-authorized, no source changes).
 
 ### c13 — stale read model
 **Verdict: PENDING**
+
+---
+
+## Campaign #2 (instrument repaired)
+
+Campaign #1 above (the "instrument-defect record") is retained **verbatim**, unedited — 2/7
+REDISCOVERED, 5/7 MISSED, with the open reachability question it raised
+("does `activate` ever get legally accepted within 200×30 at seeds 11/12/13?"). That question was
+answered by `.superpowers/sdd/d2-coverage-investigation.md` (measurement-only, no fixes) and
+resolved by `.superpowers/sdd/d2-instrument-repair-report.md` (four measured fixes + one
+human-ruled opt-out, implemented). This section registers campaign #2 against the repaired
+instrument, at work-branch tip `ab3ea4d` (fork point for all `drive/cNN` throwaway branches).
+
+### 1. Amendment record
+
+Two commits land the repair between campaign #1 and campaign #2:
+
+- **`a803a71` — `fix(conform/drive): length floor, create/superset targeting, paymentFailed
+  drive-skip`.** Four fixes, each justified by a quantitative finding in the investigation doc:
+  1. **Length floor.** `lattice/src/conform/drive/campaign.ts`'s `runCampaign` now builds the
+     intention array with `fc.array(intentionArb(...), { minLength: Math.max(1,
+     Math.floor(opts.length * 2 / 3)), maxLength: opts.length })` instead of no `minLength` at
+     all. The investigation measured a mean generated length of 4.4–5.1 against a configured
+     `--length 30` with fast-check's default size schedule — 94–95% of sequences executed zero
+     commands. This is the direct fix for the reachability question campaign #1 flagged and never
+     resolved: c01/c02/c05/c06/c07 all MISSED with byte-identical per-seed command-trace stats,
+     consistent with `activate` structurally never getting past the length bias.
+  2. **Create restriction.** `intentionArb` gained a required `createable: string[]` parameter;
+     `createArb` now samples only aggregates the target's driver map can actually create
+     (`Object.keys(drivers.drivers.create)`) instead of every plan aggregate uniformly. Fixes the
+     measured ~50–56% of the `create` budget wasted on `Invoice` (which has no create driver —
+     created only internally by `Subscription`'s create driver).
+  3. **Superset binding.** `intentionArb` gained an optional `supersetTargets: Record<string,
+     string>` (op name → aggregate); a mapped superset op now always gets its declared aggregate
+     instead of an independent random draw. `implementations/subscriptions/conform/drive.ts`
+     exports `supersetAggregates` for all six superset ops
+     (`recordUsage`/`changeSeats`/`rollover`/`changePlanOp` → `Subscription`,
+     `partialPayment` → `Invoice`, `dunningSweep` → `Subscription`). Fixes the measured 33–59%
+     (pooled ~50%) of superset attempts wasted on a mismatched aggregate.
+  4. **Driver-skip mechanism** (see §2 below — registered separately since it is itself a
+     pre-registered, human-ruled protocol element, not just an instrument bug fix).
+- **`ab3ea4d` — `chore(ledger): conformance evidence lines from the drive-repair sanity runs`.**
+  Append-only ledger evidence from the repair's own verification (seed 21/400-sequence sanity run,
+  `driverSkips: 1`, CLEAN — plus one earlier seed-11 entry from the same session).
+
+**Human rulings referenced:** the repair report's own framing — "four approved fixes + one
+approved opt-out mechanism" — records that items 1–3 above and the driver-skip mechanism (§2) were
+each reviewed and approved before landing, not unilaterally decided. The finalize/settle
+`requires`-drop (amendment (a), campaign #1) and the probe-oracle re-attribution rule (amendment
+(b), campaign #1) both carry forward unchanged into campaign #2 — neither was touched by `a803a71`.
+
+### 2. The pre-registered `paymentFailed` skip
+
+The investigation's §4a finding was a genuine hazard: naively fixing the length bias (item 1 above)
+alone would flip the 5×200 false-positive control from CLEAN to FAILED, because
+`paymentFailed` is spec-legal unconditionally from `active` (`specs/subscriptions/spec.lat:36`,
+no `requires` clause) but the real `recordPaymentFailure`
+(`implementations/subscriptions/src/dunning.ts:16`) throws unless the subscription's *current*
+invoice is still `open` — an implicit cross-aggregate precondition (current invoice's settlement
+state) the spec's single-aggregate `Subscription` machine cannot express and the walk's oracle
+cannot see (it only scoped-observes the targeted aggregate). Reaching `active` at all already
+requires `paidInvoiceCount >= 1`, i.e. the current invoice was already settled to `paid` — so a
+legally-generated `paymentFailed` on a freshly-`active` row can genuinely have nothing open to
+fail.
+
+This was adjudicated (option (c) of the repair report's three options: driver-harness limitation,
+not a spec-text gap or an impl bug) and implemented as a **driver-skip**, not a spec change or an
+impl change:
+
+- **Mechanism** (`lattice/src/conform/drive/walk.ts`): a driver may throw
+  `Error('drive-skip: <reason>')`. Honored **only** in the LEGAL branch's catch (the branch that
+  runs when the walk's own pre-state oracle already determined the intention was spec-legal) — on
+  a `drive-skip:`-prefixed throw there, `stats.driverSkips++`, a narrative line is pushed, and
+  **no violation is recorded**, and the step is **not** counted as `commands`/`accepted`/`rejected`.
+  The illegal/probe branch's catch is a separate, untouched code path that does not inspect the
+  error message — a `drive-skip:`-prefixed throw from an illegal probe is counted as an ordinary
+  rejected probe, indistinguishable from any other rejection. This was pinned by a dedicated
+  fixture (two new `walk.test.ts` tests) proving the signal cannot mask a weakened-guard catch: a
+  drift that weakens `activate`'s guard cannot hide behind `drive-skip` because the skip path is
+  categorically unreachable from the illegal-probe branch.
+- **Applied driver**, `implementations/subscriptions/conform/drive.ts`'s `paymentFailed`: it now
+  checks whether the subscription's current invoice exists **and** has `settlement_state = 'open'`
+  before calling `recordPaymentFailure`; if not, it throws, verbatim:
+
+  ```
+  'drive-skip: no open invoice — a payment cannot fail when nothing is owed (pre-registered impl-strictness finding, campaign #2)'
+  ```
+
+  — the reason string itself names this campaign, because the skip was pre-registered here before
+  campaign #2's runs, not discovered mid-run and patched around.
+- **Always-printed audited line:** `formatCampaign` now prints `driver skips (impl preconditions,
+  audited): N` unconditionally, even at `N = 0` — the same "reported never hidden" discipline
+  already used for `probe re-attributions`. `DriveStats.driverSkips` also reaches the session
+  ledger (`LedgerEntry.driverSkips`), not just the console, so skip evidence is auditable
+  after the fact from `.lattice-session-subscriptions/ledger.jsonl` alone.
+- **The command-vs-event semantics question** — whether `paymentFailed` ought to be modeled as a
+  spec-level command the walk drives directly at all, versus an event that only ever arises as a
+  side effect of a billing/dunning process (rollover, dunning sweep) acting on an aggregate the
+  single-aggregate `Subscription` machine can't see — is **not resolved by this mechanism**. The
+  drive-skip is a harness-side audit trail for the impl-strictness gap as it exists today; it does
+  not adjudicate whether the spec's `paymentFailed` transition is mis-modeled as a command. That
+  question is recorded here as **folded into the ensures brief** (deferred, out of scope for this
+  campaign's zero-tuning discipline; not re-opened or re-scoped mid-campaign).
+
+### 3. Amended budget + protocol
+
+- **Rediscovery seeds:** 21, 22, 23 per class (stop at first catch; 3 clean seeds across all three
+  = MISSED) — replaces campaign #1's 11/12/13 (chosen fresh so campaign #2 is not silently
+  re-running the exact seeds that produced campaign #1's length-biased MISSes under the old
+  instrument).
+- **Command:** `--sequences 1600 --length 30` — replaces campaign #1's `--sequences 200 --length
+  30`. The 1600 figure follows the investigation's §3 root-cause measurement directly: `activate`
+  was confirmed reachable at a ~4.6% per-sequence hit rate (74/1612 acceptances) once the length
+  floor was in place, an order of magnitude above the 200-sequence budget that produced 0/600
+  reachability across three seeds. 1600 sequences give each seed comparable exploratory power to
+  that measurement while staying cheap (the §5 control below measures actual wall time).
+- **Branch mechanics:** identical recipe to campaign #1's — "Branch mechanics (copied verbatim from
+  `.superpowers/sdd/d2-protocol.md`)" section above governs unchanged; not re-copied here.
+- **Zero-tuning rules:** unchanged from campaign #1 — a class the driver cannot rediscover at all
+  three seeds is recorded MISSED verbatim and escalated, never re-scoped; false positives on the
+  clean impl STOP the plan (BLOCKED); no test suites; `.conform` wiped before each run.
+
+### 4. Expectations — carried forward from campaign #1's registration
+
+Same 13 signals/routes as campaign #1's expectations table (§1 above), reproduced here for
+campaign #2 because the routes are what campaign #2's runs will be graded against — not
+re-derived, not re-scoped. One route's reasoning changes materially at the new depth, noted
+inline; all others are unedited carries.
+
+| # | slug | expected verdict | expected signal (element + substring) | expected discovery route |
+|---|------|-------------------|-----------------------------------------|----------------------------|
+| c01 | skipped-emit | REDISCOVERED | Tier 2, `machine Subscription.status`, substring `do not include observed final 'active'` | any driven sequence that reaches `activate` on a trialing row (now confirmed reachable at depth — investigation §3, ~4.6%/sequence): the deleted emit leaves the row's outbox one event short, so the end-of-sequence Tier-2 trace dead-ends short of `active`. |
+| c02 | wrong-event | REDISCOVERED | Tier 2, `machine Subscription.status`, substring `stuck at event #2 (SubscriptionActivated` | any driven `activate` followed by `cancel` on the same row: `cancel` emits the wrong event type, producing a second `SubscriptionActivated` instead of `SubscriptionCanceled` — end-of-sequence Tier-2 check. Strictly downstream of c01's route (needs `activate` to succeed, then one more hop). |
+| c03 | emit-outside-tx | REDISCOVERED | Tier 2, `machine Subscription.status`; substring `do not include observed final 'trialing'` or `all 1 event(s) consumed` (either scores REDISCOVERED, per campaign #1's ruling) | the driver's illegal probe on `activate` from `trialing` (guard-violated): already confirmed REDISCOVERED at seed 11 in campaign #1 — this route does not depend on the length-bias fix (it fires on the very first probe of a sequence) and is carried forward unchanged. |
+| c04 | weakened-guard | REDISCOVERED via EITHER route | Route A: Tier 1, `activePaidInFull`. Route B: substring `accepted a spec-illegal command`, naming transition `activate`, anchors `transition activate` | already confirmed REDISCOVERED (Route B) at seed 11 in campaign #1, on the first probe of the campaign — carried forward unchanged; depth-independent. |
+| c05 | win-back | REDISCOVERED | Tier 2, `machine Subscription.status`, substring `do not include observed final 'active'` (Subscription-region, reachable state `{canceled}` terminal) | `cancel` a subscription while it has an open invoice, then drive `settle` on that same invoice — requires the invoice to reach `open` (`finalize`) first, a multi-hop chain campaign #1 could not confirm reachable at 200×30. At 1600×30 with the length floor, `finalize`+`settle` chains are directly measured reachable (investigation §3: 104/1612 settle-acceptances at comparable volume) — the ordering constraint (cancel before settle) is not separately measured but is no longer gated behind the same length-bias root cause that explained all five campaign #1 MISSes. |
+| c06 | state-rename | REDISCOVERED-LOUD | binder/observe abort, stderr substring `is null/undefined for row` | **route reasoning changes at depth** — campaign #1 registered "`paymentFailed` is a one-command path from `active`," reachable directly via the transition driver. Post-repair, that direct route is now largely closed off by the `paymentFailed` drive-skip (§2): a freshly-`active` row's current invoice is normally already `paid` (activation itself required a prior settle), so the walk's own `paymentFailed` driver will skip-not-transition on it, exactly the intended audited behavior. The row now more plausibly reaches `past_due` via a **different** mechanism, traced to source: `rolloverPeriod` (`implementations/subscriptions/src/subscription-service.ts:94-111`, driven by the `rollover` superset op) internally calls `recordPaymentFailure` directly on the just-closed invoice when its synthetic `charge()` callback declines (`implementations/subscriptions/conform/drive.ts`'s `rollover` superset entry: `charge: () => int(gen, 0, 1) === 1`, i.e. a coin flip) — this is an impl-internal call, not routed through the walk's `paymentFailed` driver at all, so it is never subject to the drive-skip check and can flip a row to `past_due` as a side effect of a driven `rollover`. `dunningSweep`'s sweeps over existing `past_due` rows are a secondary contributor once a row is already there. Net: `past_due` is now expected reachable "via failed rollovers/dunning at volume" rather than via a direct `paymentFailed` command — same expected signal, different expected route, registered honestly before the run rather than discovered and rationalized after. |
+| c07 | partial-write | REDISCOVERED | Tier 1, `neverOverpaidAndPaidExact`, witness the settled invoice | any driven `settle` (full-balance `recordPayment`) on the drift's non-settling branch — already measured reachable at comparable volume in the investigation (§3: 104/1612 settle-acceptances, "borderline… reliably reachable at the 1600-sequence budget"), directly supporting the amended budget choice for this route specifically. |
+| c08 | two-drafts | REDISCOVERED | Tier 1, `oneDraftInvoicePerSubscription`, set-level violation | unchanged from campaign #1's registration — depends on `rollover`'s superset volume, which the superset-binding fix (§1 item 3) improves (no longer ~50% wasted on the wrong aggregate) independent of the length floor. |
+| c09 | upgrade-activates | REDISCOVERED | Tier 1, `activePaidInFull`, witness the successor subscription (plus crosscheck collateral) | unchanged; `changePlanOp` superset volume benefits from the same superset-binding fix. |
+| c10 | column-rename | REDISCOVERED-LOUD | binder abort, stderr substring `unbound spec fields`, naming `Subscription` … `seats` | unchanged — fires at campaign start (`bindSchema`, before the intention loop), depth-independent. |
+| c11 | stale-override | REDISCOVERED-LOUD | stderr substring `no such column: amount` | unchanged — fires at first scoped Invoice observe, depth-independent. |
+| c12 | proration-total | REDISCOVERED | Tier 1, `totalDueAtMostParts`, witness the drifted open invoice | unchanged; depends on `changeSeats` on an already-open invoice — benefits from both the length floor (reaching `open`) and the create/superset fixes. |
+| c13 | stale-read-model | REDISCOVERED | crosscheck, `crosscheck account_summary`, substrings `lifetime_paid` and/or `open_balance` mismatches | unchanged; depends on a driven `settle`, same reachability improvement as c07. |
+
+### 5. The 5-seed false-positive control at the new depth
+
+Protocol: work-branch tip `ab3ea4d`, `rm -rf implementations/subscriptions/.conform` once before
+the set (confirmed empty/absent both before and after all 5 runs — drive mode still writes no
+passive snapshot artifacts at this depth either), then for each seed:
+
+```
+npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences 1600 --length 30 --seed <N>
+```
+
+**Result: 5/5 CLEAN. No STOP triggered.**
+
+| seed | verdict | commands (accepted/rejected/superset) | probes attempted/rejected | guarded transitions | re-attributions | driver skips | duration (harness) | duration (wall) |
+|------|---------|-----------------------------------------|------------------------------|------------------------|--------------------|-----------------|------------------------|--------------------|
+| 21 | CLEAN | 11688 (2608 / 0 / 211) | 8869 / 8532 | activate | 337 | 6 | 8.1s (8097ms) | 10.59s |
+| 22 | CLEAN | 12161 (2782 / 0 / 193) | 9186 / 8817 | activate | 369 | 5 | 4.2s (4207ms) | 6.90s |
+| 23 | CLEAN | 12189 (2728 / 0 / 187) | 9274 / 8894 | activate | 380 | 3 | 4.3s (4320ms) | 6.24s |
+| 24 | CLEAN | 11693 (2655 / 0 / 205) | 8833 / 8498 | activate | 335 | 1 | 4.4s (4420ms) | 5.98s |
+| 25 | CLEAN | 12199 (2785 / 0 / 214) | 9200 / 8834 | activate | 366 | 5 | 3.1s (3085ms) | 4.58s |
+
+Notes:
+- All five exit code 0, `violationCount: 0` in every ledger entry — no STOP, no BLOCKED.
+- Command volume is roughly 200–300× campaign #1's (11688–12199 vs. 34–72 at seeds 1–5, §2 above)
+  at the same target — direct confirmation the length-floor + create/superset fixes convert the
+  overwhelming majority of generated intentions into executed commands instead of `no-rows`/
+  `no-driver` skips.
+- `guardedTransitionsProbed` is `activate` on every seed, still the only guarded transition —
+  amendment (a) (finalize/settle `requires`-drop) continues to hold at this depth, confirmed
+  empirically again.
+- Per seed, `probesAttempted − probesRejected == reattributions` exactly (seed 21: 8869−8532=337;
+  22: 9186−8817=369; 23: 9274−8894=380; 24: 8833−8498=335; 25: 9200−8834=366) — every illegal probe
+  the clean impl accepted was fully explained by a legal sibling transition, 0 unexplained accepts,
+  0 violations, on every seed, at ~24–29× campaign #1's probe volume. Amendment (b) (re-attribution
+  rule) holds cleanly at depth.
+- **Driver skips are present and nonzero on every seed (1–6) — and none of them are violations.**
+  This is the whole point of the mechanism (§2): every one of these is the `paymentFailed`
+  drive-skip firing (`no open invoice` — a freshly-`active` row's current invoice already `paid`,
+  the same impl-strictness gap the investigation predicted at depth). Because the skip fires from
+  the LEGAL branch and is honored there, it is counted in `driverSkips`, printed on the always-on
+  audited line, and folded into the session ledger — but it is **not** counted as a `command`, not
+  as `probesAttempted`/`probesRejected`, and critically not as a `violation`. Grepped directly
+  across all five logs: zero `VIOLATION` lines, zero occurrences of `impl rejected a spec-legal
+  command` (the violation phrasing the unguarded throw would have produced pre-repair). Confirms
+  the §4a false-positive the investigation predicted would appear at depth is instead caught and
+  reported as an audited skip, exactly as designed — not a violation, not hidden, not silently
+  dropped.
+- `.conform` did not exist in `implementations/subscriptions/` before the set or after any of the 5
+  runs.
+- Runtime: harness-internal `durationMs` ranges 3085–8097ms across all five seeds — the original
+  60s budget (criterion 5) was registered against a 200×30 campaign, not this amended 1600×30
+  budget, so it is not re-asserted verbatim here; reported honestly as roughly 8× more sequences at
+  roughly 40–95× campaign #1's wall time, still comfortably sub-11s end-to-end including Node/tsx
+  startup.
+
+Ledger evidence: 5 new lines appended to `.lattice-session-subscriptions/ledger.jsonl` (seeds
+21–25 in order), each `kind: "conformance"`, `mode: "drive"`, `sequences: 1600`, `violationCount:
+0`, each carrying the new `driverSkips` field, committed alongside this document.
+
+### 6. Campaign #2 outcomes
+
+### c01 — skipped emit
+**Verdict: PENDING (campaign #2)**
+
+### c02 — wrong event type
+**Verdict: PENDING (campaign #2)**
+
+### c03 — emit outside the transaction
+**Verdict: PENDING (campaign #2)**
+
+### c04 — weakened guard
+**Verdict: PENDING (campaign #2)**
+
+### c05 — terminal resurrection (win-back)
+**Verdict: PENDING (campaign #2)**
+
+### c06 — state-name drift
+**Verdict: PENDING (campaign #2)**
+
+### c07 — partial write on settle
+**Verdict: PENDING (campaign #2)**
+
+### c08 — widened uniqueness (two drafts)
+**Verdict: PENDING (campaign #2)**
+
+### c09 — cross-aggregate activation
+**Verdict: PENDING (campaign #2)**
+
+### c10 — schema rename breaks auto-binding
+**Verdict: PENDING (campaign #2)**
+
+### c11 — stale override
+**Verdict: PENDING (campaign #2)**
+
+### c12 — out-of-spec feature corrupts covered state
+**Verdict: PENDING (campaign #2)**
+
+### c13 — stale read model
+**Verdict: PENDING (campaign #2)**
