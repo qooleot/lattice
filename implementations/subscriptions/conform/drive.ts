@@ -68,16 +68,29 @@ const transitions: Record<string, Fn> = {
     if (after.lifecycle_state === before.lifecycle_state) throw new Error('expireTrial: no-op (not expired)');
   },
 
+  // Induced via recordPaymentFailure's side effect on the subscription. The impl silently
+  // no-ops the lifecycle flip unless the sub is 'active' (dunning.ts: `if (sub.lifecycle_state
+  // === 'active')`), so a driver that only forwarded the call would report false accepts for
+  // probes from trialing/past_due — the same silent-no-op class as expireTrial: check the target
+  // row's own lifecycle actually moved, throw when it didn't.
   paymentFailed: (db, id, gen) => {
     const d = DB(db);
-    const sub = d.prepare('SELECT current_invoice_id FROM subscriptions WHERE id = ?')
-      .get(id) as { current_invoice_id: string | null } | undefined;
+    const sub = d.prepare('SELECT current_invoice_id, lifecycle_state FROM subscriptions WHERE id = ?')
+      .get(id) as { current_invoice_id: string | null; lifecycle_state: string } | undefined;
     if (!sub || !sub.current_invoice_id) throw new Error(`paymentFailed: subscription '${id}' has no current invoice`);
     recordPaymentFailure(d, sub.current_invoice_id, gen.clock());
+    const after = (d.prepare('SELECT lifecycle_state FROM subscriptions WHERE id = ?')
+      .get(id) as { lifecycle_state: string }).lifecycle_state;
+    if (after === sub.lifecycle_state) throw new Error('paymentFailed: no-op (lifecycle unchanged)');
   },
 
-  recover: (db, id, gen) => { // side effect of settling the open invoice
+  // Induced via settling the open invoice (billing-service.ts's settle() flips past_due ->
+  // active as a side effect). Paying off an invoice of a NON-past_due sub succeeds in the impl
+  // but is not a 'recover' — pre-check the target row so the oracle gets its reject signal
+  // instead of a false accept (silent-no-op class, mirrors the dunningExhausted recipe).
+  recover: (db, id, gen) => {
     const d = DB(db);
+    if (getSubscription(d, id).lifecycle_state !== 'past_due') throw new Error('recover: not past_due');
     const inv = d.prepare(`SELECT id, total_due FROM invoices WHERE subscription_id = ? AND settlement_state = 'open'`)
       .get(id) as { id: string; total_due: number } | undefined;
     if (!inv) throw new Error('recover: no open invoice');
@@ -98,6 +111,9 @@ const transitions: Record<string, Fn> = {
       }
       runDunning(d, gen.clock(), () => false);
     }
+    // Bound hit with the row still past_due (e.g. its open invoice was voided out from under the
+    // dunning sweep, which only targets open invoices): a bounded-out no-op, not an accept.
+    throw new Error('dunningExhausted: still past_due after sweep bound (no-op)');
   },
 
   finalize: (db, id) => finalizeInvoice(DB(db), id),
