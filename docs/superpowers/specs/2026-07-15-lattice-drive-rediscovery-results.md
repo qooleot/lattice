@@ -1656,7 +1656,43 @@ measurement), and this run confirms that shortfall holds for the drift branch to
 depth. Not escalated as a structural MISS; not re-scoped or re-budgeted beyond the registered rung.
 
 #### c08 — widened uniqueness (two drafts)
-**Verdict: PENDING**
+**Verdict: MISSED-COVERAGE-BOUNDED**
+
+Branch mechanics: `git checkout -b drive/c08 drift/c08-two-drafts`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `ddbbfe9`) — one conflict, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved as union (both sides' lines concatenated,
+no lines dropped; all 202 resulting lines validated as parseable JSON post-resolution, `python3
+json.loads` over every line, 0 failures). `git diff drift/c08-two-drafts --
+implementations/subscriptions/src` was empty after the merge — the drift edit (the deleted
+`if (needsBilling) finalizeInvoice(...)` / charge block in `rolloverPeriod`) survived intact. `rm
+-rf implementations/subscriptions/.conform` before the runs; absent throughout.
+
+Seeds tried: 31, 32, 33 (all three registered seeds — all CLEAN, no violation).
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+12800 --length 30 --seed <31|32|33>`. Exit code 0 on all three runs.
+
+| seed | verdict | commands (accepted/rejected/superset) | driver skips | state coverage (Subscription.status) | duration |
+|------|---------|----------------------------------------|-----------------|-----------------------------------------|----------|
+| 31 | CLEAN | 95974 (21466/0/1732) | 23 | active:292 canceled:32577 expired:31149 trialing:41727 | 11.0s |
+| 32 | CLEAN | 95552 (21587/0/1689) | 21 | active:288 canceled:31957 expired:32287 trialing:40861 | 11.0s |
+| 33 | CLEAN | 94186 (21051/0/1713) | 26 | active:386 canceled:31850 expired:30649 trialing:40802 | 10.9s |
+
+Registered element `oneDraftInvoicePerSubscription` does not appear in any of the three logs —
+grepped directly (`oneDraftInvoicePerSubscription\|VIOLATION`), zero matches. Every field is
+byte-identical, per seed, to c06's corresponding row above and to the registration's own clean-impl
+budget-setting measurement at the same rung — the same "observably indistinguishable from clean"
+pattern already seen in campaign #2 for this class, now reproduced at 8× the campaign #2 depth.
+
+Recorded per the class's registered coverage-bounded status: **MISSED-COVERAGE-BOUNDED**. The
+registration measured `active≥25` reliably met from 3200 sequences on (this run, at 12800, shows
+288-386 active occurrences per seed — far past the threshold) but never separately confirmed whether
+`rollover` actually landed on one of those active rows at the exact moment its current invoice was
+still `draft` (`needsBilling`) — the walk's per-step legality oracle does not expose that internal
+precondition, so identical command-trace statistics to the clean control are consistent with either
+"the precondition was never hit" or "hit but not violated by that pairing," exactly as campaign #2
+recorded. Not escalated as a structural MISS; not re-scoped or re-budgeted beyond the registered
+rung.
 
 #### c09 — cross-aggregate activation (post-w6 route: crosscheck account_summary)
 **Verdict: PENDING**
