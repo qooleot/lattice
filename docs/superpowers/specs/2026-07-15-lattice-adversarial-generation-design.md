@@ -3,7 +3,13 @@
 - **Date:** 2026-07-15
 - **Status:** Plan 1 (walk+drivers) landed 2026-07-16 — clean-impl validation green after two
   adjudicated findings (probe re-attribution ruling; finalize/settle guard amendment 1fbf530);
-  rediscovery campaign = plan 2.
+  rediscovery campaign = plan 2. **Final: 11/13 drift classes rediscovered across three campaigns**
+  (`docs/superpowers/specs/2026-07-15-lattice-drive-rediscovery-results.md`, Final Verdict) — the 2
+  remaining misses (c06, c08) are MISSED-COVERAGE-BOUNDED, a measured budget ceiling (0/12 `pastDue`
+  observations across a 4-rung ladder to 12,800 sequences), not a structural gap; criteria 2-5 all
+  MET; no kill criterion triggered. Two clean-impl findings surfaced across the series and both
+  landed as human-ruled spec amendments: the finalize/settle `requires` drop (`1fbf530`) and the
+  `activePaidInFull` retirement (w6 finalize-on-active ruling, `eb375d9`).
 - **Parent:** [`2026-07-14-lattice-slice-2-conformance-design.md`](2026-07-14-lattice-slice-2-conformance-design.md)
   (the passive harness this extends), [`docs/plan.md`](../../plan.md) §11.6 tier 2 ("generated
   command sequences… explores the interleavings and orderings hand-written tests never generate"),

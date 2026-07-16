@@ -21,6 +21,10 @@ with guard probing and shrinking to close the guard-evaluation gap). All 13 pre-
 experiments caught (one with a pre-registration phrasing error, human-adjudicated) against a
 hand-maintained engineer-shaped implementation — see
 [`docs/superpowers/specs/2026-07-15-lattice-slice-2-drift-experiment-results.md`](docs/superpowers/specs/2026-07-15-lattice-slice-2-drift-experiment-results.md).
+The drive-mode rediscovery campaign (undirected driving, no test suites) closes 11/13 of those same
+classes across three campaigns, zero false positives across 81,000 clean-impl sequences; the 2
+remaining misses are a measured budget ceiling (MISSED-COVERAGE-BOUNDED), not a structural gap —
+see [`docs/superpowers/specs/2026-07-15-lattice-drive-rediscovery-results.md`](docs/superpowers/specs/2026-07-15-lattice-drive-rediscovery-results.md).
 Not yet done: the app/UI — briefs in `docs/superpowers/specs/`. A real elicited spec lives at
 `specs/subscriptions/spec.lat`.
 
