@@ -797,7 +797,52 @@ skips (impl preconditions, audited): 1`) — audited data per the campaign's zer
 violation. `.conform` confirmed absent after the run.
 
 ### c03 — emit outside the transaction
-**Verdict: PENDING (campaign #2)**
+**Verdict: REDISCOVERED**
+
+Branch mechanics: `git checkout -b drive/c03 drift/c03-emit-outside-tx`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `e608123`) — one conflict, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved as union (both sides' lines concatenated,
+no lines dropped, all validated as parseable JSON post-resolution). `git diff
+drift/c03-emit-outside-tx -- implementations/subscriptions/src` was empty after the merge — the
+drift edit survived intact. `rm -rf implementations/subscriptions/.conform` before the run; absent
+both before and after.
+
+Seed tried: 21 (first pre-authorized seed — caught on first try, and on the very first driven
+sequence, consistent with this route's depth-independence carried forward from campaign #1).
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed 21`. Exit code 1 (FAILED, matches expected verdict REDISCOVERED).
+
+Verbatim stdout (head + first violations; log continues with 10 more VIOLATION lines of the same
+shape as the driver keeps probing `activate` after the first catch):
+```
+drive: 1 sequences — FAILED (seed 21)
+replay: lattice conform --target ../implementations/subscriptions --drive --seed 21
+commands: 702 (106 accepted, 0 rejected, 54 superset ops)
+guards probed at event time: 542 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 46
+driver skips (impl preconditions, audited): 0
+duration 0.1s
+narrative:
+  create Subscription#d-subscription-1 (seed=0) -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  ... (7 more illegal-rejected/probe-rejected activate attempts) ...
+  superset recordUsage on Subscription#d-subscription-1 (rowPick=0, seed=0) -> accepted
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [d-subscription-1] — no legal path: Subscription 'd-subscription-1' region 'status' — all 1 event(s) consumed, reachable state(s) {active, pastDue, canceled} do not include observed final 'trialing'; events=[SubscriptionActivated] — anchors [transition activate] — source drive:9
+VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [d-subscription-1] — no legal path: Subscription 'd-subscription-1' region 'status' — stuck at event #2 (SubscriptionActivated, outbox seq 2) from state(s) {active, pastDue, canceled}; events=[SubscriptionActivated, SubscriptionActivated] — anchors [transition activate] — source drive:10
+```
+
+Both registered substrings (either scores REDISCOVERED per campaign #1's ruling) appear: `all 1
+event(s) consumed` and `do not include observed final 'trialing'` both fire verbatim on the first
+VIOLATION line (`source drive:9`), against the expected witness (`d-subscription-1`). Fires on the
+driver's very first illegal probe of `activate` from `trialing` — this route does not depend on
+the length-bias fix and is depth-independent, exactly as registered. Note the drive stopped after
+1 sequence (`drive: 1 sequences — FAILED`) since the walk halts on first violation; the trailing
+`stuck at event #2 (SubscriptionActivated...` lines are the same underlying drift (emit-outside-tx
+leaves a duplicated/leaked event on retried illegal probes) continuing to fire as the driver
+exhausts the rest of that one sequence's probes before reporting FAILED — collateral of the same
+class, not a second signal. `.conform` confirmed absent after the run.
 
 ### c04 — weakened guard
 **Verdict: PENDING (campaign #2)**
