@@ -225,6 +225,7 @@ export async function runDrive(targetDir: string, opts: DriveCliOpts):
         sequences: result.sequencesRun, seed: opts.seed,
         probesAttempted: result.stats.probesAttempted, probesRejected: result.stats.probesRejected,
         guardedTransitionsProbed: result.stats.guardedTransitionsProbed,
+        reattributions: result.stats.reattributions,
         ...(result.clean ? {} : { shrunk: result.failure!.narrative }),
       },
     });

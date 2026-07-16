@@ -17,11 +17,24 @@
 // doesn't import lattice's `DriverModule`/`Fn` types either — it just satisfies that shape
 // structurally, exactly like crosschecks.ts does for `CrosscheckModule`.
 //
-// `expireTrial` and `dunningExhausted` are induced via bulk JOBS (expireTrials/runDunning act on
-// every eligible row, not just the targeted one) — each converts a no-effect-on-THIS-row call into
-// a throw so the walk's oracle gets a real accept/reject signal, checked against the target row's
-// own before/after state (a bulk return count > 0 can come from unrelated rows, so it's not a safe
-// no-op signal on its own).
+// COMPILE TRIPWIRE (F2 fix, D1 final review): the design also claimed this hand-written map stays
+// "typed against the generated contract → compile-breaks on spec regen" (design §2, fork 3). A
+// literal `defineDrivers({ transitions, superset, create })` wrap can't do that honestly: EVERY
+// entry in the generated `SpecDrivers` (transitions/superset/create alike) types `gen` as the rich
+// `DriveGen` (`int`/`pick`/`id`/`clock`), never the real `DriveGenImpl` (`seed`/`clock`/`rand`)
+// this file and walk.ts actually agree on — the two `gen` shapes share only `clock()` and are
+// assignable in neither direction, so wrapping the whole map would mean casting every driver body
+// to lie about its own parameter type, exactly the "forcing casts everywhere" the review asked to
+// avoid instead of a real tripwire. What IS real and worth keeping: `transitions`' KEY SET must
+// match `SpecDrivers.transitions` — that's the part a spec regen (a transition renamed/removed)
+// actually changes, and `Record<keyof SpecDrivers['transitions'], Fn>` below checks exactly that,
+// with `Fn` staying the real, working signature (no cast). Same move for `create` (its `row` param
+// in the generated contract is ALREADY `id: string` — only `gen` differs — but `Partial<...>`
+// since not every aggregate needs a create driver here; see `create`'s own comment). `superset`
+// gets neither: `SpecDrivers.superset` is an open `Record<string, ...>` with no named keys to pin
+// (superset ops are impl-specific extras beyond the spec's named transitions, deliberately
+// ungenerated — design §3 fork 3), so there is nothing honest to check there; left as plain `Fn`,
+// residual gap reported here rather than hidden behind a cast to a type that checks nothing.
 import type Database from 'better-sqlite3';
 import {
   createSubscription, activate, cancelSubscription, expireTrials, recordUsage, changeSeats,
@@ -29,6 +42,7 @@ import {
 } from '../src/subscription-service.js';
 import { finalizeInvoice, recordPayment, voidInvoice, writeOffInvoice } from '../src/billing-service.js';
 import { recordPaymentFailure, runDunning } from '../src/dunning.js';
+import type { SpecDrivers } from './spec-state.js';
 
 const DB = (db: unknown) => db as Database.Database;
 
@@ -50,7 +64,10 @@ function paidAmount(db: Database.Database, invoiceId: string): number {
 
 type Fn = (db: unknown, id: string, gen: DriveGenImpl) => void;
 
-const transitions: Record<string, Fn> = {
+// Key-set tripwire (see file header): every name `SpecDrivers.transitions` requires must be
+// present here, and no stale name may linger — rename or remove a spec transition and this line
+// fails `tsc`, not just walk.ts's runtime "no transition driver for '<name>'" throw.
+const transitions: Record<keyof SpecDrivers['transitions'], Fn> = {
   activate: (db, id) => activate(DB(db), id),
   cancel: (db, id) => cancelSubscription(DB(db), id),
 
@@ -130,6 +147,9 @@ const transitions: Record<string, Fn> = {
   writeOff: (db, id) => writeOffInvoice(DB(db), id),
 };
 
+// No tripwire possible here (residual mismatch, reported honestly — see file header):
+// `SpecDrivers.superset` is an open `Record<string, ...>` with no fixed key set to check against,
+// so there's nothing for `keyof` to pin. Plain local `Fn` map.
 const superset: Record<string, Fn> = {
   recordUsage: (db, id, gen) => recordUsage(DB(db), id, int(gen, 1, 50), int(gen, 0, 200)),
   changeSeats: (db, id, gen) => changeSeats(DB(db), id, int(gen, 1, 20), int(gen, -500, 2000)),
@@ -145,7 +165,12 @@ const superset: Record<string, Fn> = {
   }),
 };
 
-const create: Record<string, Fn> = {
+// Same key-set tripwire as `transitions` (see file header): `SpecDrivers.create`'s `row` param is
+// ALREADY `id: string` for both aggregates (only `gen` differs, same mismatch as everywhere else),
+// but `Partial<...>` because its members are optional — not every aggregate needs a create driver
+// (Invoice rows are created internally by `createSubscription`'s own transaction, not by a direct
+// driver entry point).
+const create: Partial<Record<keyof SpecDrivers['create'], Fn>> = {
   // Creates the first Invoice internally (createSubscription's own transaction) — real and
   // reachable: drive mode discovers rows live from the db, not from executor-side bookkeeping.
   Subscription: (db, id, gen) => createSubscription(DB(db), {

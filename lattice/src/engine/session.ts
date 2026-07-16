@@ -68,7 +68,7 @@ export type LedgerEntry =
       residual: { autoBound: number; overridden: number; total: number };
       optOuts: { invariant: string; reason: string }[]; crosschecks: string[]; durationMs: number;
       drive?: { sequences: number; seed: number; probesAttempted: number; probesRejected: number;
-        guardedTransitionsProbed: string[]; shrunk?: string[] } };
+        guardedTransitionsProbed: string[]; reattributions: number; shrunk?: string[] } };
 
 /** Calendar day of an ISO timestamp — the human-facing date in provenance and refusal text. */
 export const isoDay = (at: string): string => at.slice(0, 10);

@@ -278,4 +278,56 @@ describe('runDrive', () => {
       rmSync(tmpDir, { recursive: true });
     }
   });
+
+  it("appends one drive-mode conformance ledger entry per run, carrying `reattributions` " +
+    '(F1, D1 final review — "reported never hidden" must reach the ledger, not just the console)', async () => {
+    const implDir = resolve(__dirname, '../../..', 'implementations/subscriptions');
+    const realSessionPath = resolve(__dirname, '../../..', '.lattice-session-subscriptions');
+    if (!existsSync(join(implDir, 'conform', 'drive.ts'))) return; // no drive.ts in this checkout — nothing to assert
+
+    const tmpDir = mkdtempSync(join(tmpdir(), 'conform-drive-ledger-test-'));
+    try {
+      // own session COPY, same reasoning as runConform's ledger test above: runDrive appends to
+      // the ledger too, and pointing at the real committed session would pollute it.
+      mkdirSync(join(tmpDir, 'session'), { recursive: true });
+      for (const f of ['state.json', 'model.json', 'ledger.jsonl']) {
+        copyFileSync(join(realSessionPath, f), join(tmpDir, 'session', f));
+      }
+      mkdirSync(join(tmpDir, 'conform'), { recursive: true });
+      copyFileSync(join(implDir, 'conform', 'overrides.ts'), join(tmpDir, 'conform', 'overrides.ts'));
+      copyFileSync(join(implDir, 'conform', 'spec-state.ts'), join(tmpDir, 'conform', 'spec-state.ts'));
+      copyFileSync(join(implDir, 'conform', 'drive.ts'), join(tmpDir, 'conform', 'drive.ts'));
+      // drive.ts imports service modules by relative path ('../src/...') — the copy above needs
+      // that same relative layout, not the whole impl tree, so symlink just src/ alongside it.
+      const { symlinkSync } = await import('node:fs');
+      symlinkSync(join(implDir, 'src'), join(tmpDir, 'src'), 'dir');
+      writeFileSync(join(tmpDir, 'conform', 'conform.config.json'), JSON.stringify({
+        session: join(tmpDir, 'session'), snapshots: '.conform/snapshots', optOuts: [],
+        schema: join(implDir, 'src', 'schema.sql'), // absolute — path.resolve() ignores targetDir for absolute paths
+      }));
+
+      const { readConformance } = await import('../engine/session.js');
+      const forThisRun = () => readConformance(join(tmpDir, 'session')).filter(e => e.target === resolve(tmpDir));
+
+      // seed 1 is the clean-impl validation's own pinned seed (D1.T7) — deterministically CLEAN,
+      // so this run's `reattributions` value is a fixed, reproducible fact, not seed-dependent
+      // flakiness. voidDraft/voidOpen share voidInvoice (design §2 human ruling 2026-07-16), so a
+      // real drive run against the real target is expected to re-attribute at least once.
+      const { exitCode } = await runDrive(tmpDir, { sequences: 50, length: 20, seed: 1, checkEvery: 5, probeRate: 0.3 });
+      expect(exitCode).toBe(0);
+
+      const entries = forThisRun();
+      expect(entries).toHaveLength(1);
+      const entry = entries[0]!;
+      expect(entry).toMatchObject({ kind: 'conformance', mode: 'drive', target: resolve(tmpDir) });
+      expect(entry.drive).toBeDefined();
+      expect(typeof entry.drive!.reattributions).toBe('number');
+      expect(entry.drive!.reattributions).toBeGreaterThan(0);
+
+      await runDrive(tmpDir, { sequences: 50, length: 20, seed: 1, checkEvery: 5, probeRate: 0.3 });
+      expect(forThisRun()).toHaveLength(2); // append-only, one per run
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
 });

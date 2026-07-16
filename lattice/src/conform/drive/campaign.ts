@@ -82,9 +82,18 @@ export function formatCampaign(r: CampaignResult): string {
   const guardLine = `guards probed at event time: ${s.probesAttempted} attempts across ` +
     `${s.guardedTransitionsProbed.length} guarded transitions` +
     (s.guardedTransitionsProbed.length ? ` (${s.guardedTransitionsProbed.join(', ')})` : '');
+  // Design §2 Oracle, human ruling 2026-07-16: "Honest limitation, reported never hidden" — a
+  // probe re-attributed to a legal sibling sharing the same entry point (e.g. voidDraft/voidOpen
+  // both wrapping voidInvoice) can mask real drift in that sibling. Always printed, even at 0, so
+  // CLEAN never reads as "no masking possible" when it actually means "masking occurred zero
+  // times this run" — the absence itself is a fact the report states, not a fact it omits.
+  const reattributionLine = s.reattributions > 0
+    ? `probe re-attributions (shared entry points; sibling-masking limitation applies): ${s.reattributions}`
+    : `probe re-attributions: 0`;
   const statLines = [
     `commands: ${s.commands} (${s.accepted} accepted, ${s.rejected} rejected, ${s.supersetOps} superset ops)`,
     guardLine,
+    reattributionLine,
     `duration ${(r.durationMs / 1000).toFixed(1)}s`,
   ];
 
