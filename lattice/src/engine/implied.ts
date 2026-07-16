@@ -73,8 +73,15 @@ export function impliedInvariants(m: DomainModel): CandidateInvariant[] {
   for (const o of owners) {
     for (const f of nonNegativeMoneyFields(o))
       out.push(mk(`nonNegative${cap(o.name)}${cap(f.name)}`,
-        { kind: 'statePredicate', aggregate: o.name, body: nonNegativeBody(f.name) }));
-    const sameContextRefFields = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type)).map(f => f.name);
+        { kind: 'statePredicate', aggregate: o.name,
+          // An absent amount is not a negative one. The assertion form would make every optional
+          // Money mandatory and defeat optionality, so the guard form is forced, not chosen.
+          body: f.optional
+            ? { kind: 'implies', left: { kind: 'present', path: [f.name] }, right: nonNegativeBody(f.name) }
+            : nonNegativeBody(f.name) }));
+    const sameContextRefFields = o.fields
+      .filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type) && !f.optional)
+      .map(f => f.name);
     if (sameContextRefFields.length > 0)
       out.push(mk(`refsResolve${cap(o.name)}`, { kind: 'refsResolve', aggregate: o.name, fields: sameContextRefFields }));
     const machine = o.kind === 'aggregate' ? o.machine : undefined;
