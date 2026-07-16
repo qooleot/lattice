@@ -31,3 +31,31 @@ describe('alloy — optional fields', () => {
 
   it('emits present(f) as `some`', () => expect(src).toMatch(/some\s+\w+\.approved/));
 });
+
+// present() over a value-typed field's sub-field must flatten the same way termToAlloy's field
+// arm does (alloyFieldPath) — emitOwnerSig never declares a `period.start` relation, only
+// `period_start`, so a naive path join here would be an Alloy parse error, not just a wrong result.
+const mValue: DomainModel = {
+  context: 'OptVal', ticksPerDay: 24, enums: [],
+  values: [{ kind: 'value', name: 'Window', fields: [
+    { name: 'start', type: { kind: 'prim', prim: 'Int' } },
+    { name: 'end', type: { kind: 'prim', prim: 'Int' }, optional: true }] }],
+  entities: [],
+  aggregates: [{ kind: 'aggregate', name: 'Plan', fields: [
+    { name: 'planId', type: { kind: 'prim', prim: 'Id' }, key: true },
+    { name: 'window', type: { kind: 'value', value: 'Window' } }] }],
+  events: [], services: []
+};
+
+const hiValue: Candidate = { kind: 'statePredicate', aggregate: 'Plan',
+  body: { kind: 'present', path: ['window', 'end'] } };
+
+describe('alloy — present() over a value sub-field', () => {
+  const q: AlloyQuery = { kind: 'probe-permit', hi: hiValue, exclusions: [], scope: 4 };
+  const src = astToAlloy(mValue, q);
+
+  it('flattens to the underscore-joined relation, not a dotted path', () => {
+    expect(src).toMatch(/some\s+x\.window_end\b/);
+    expect(src).not.toContain('x.window.end');
+  });
+});

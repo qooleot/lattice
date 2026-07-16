@@ -135,7 +135,10 @@ function predToAlloy(m: DomainModel, ownerName: string, p: Predicate, agg: strin
       return `(${l} ${ops[p.op]} ${r})`;
     }
     case 'inState': return inStateExpr(agg, v, p.region, p.states);
-    case 'present': return `some ${v}.${p.path.join('.')}`;
+    // Must go through alloyFieldPath, same as termToAlloy's field arm: a path through a
+    // value-typed field has no dotted relation in the emitted sig (emitOwnerSig flattens it to
+    // `<field>_<subfield>`), so a naive join here would reference a relation Alloy never declared.
+    case 'present': return `some ${alloyFieldPath(m, ownerName, v, p.path)}`;
     case 'and': return '(' + p.args.map(a => predToAlloy(m, ownerName, a, agg, v)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToAlloy(m, ownerName, a, agg, v)).join(' or ') + ')';
     case 'not': return `(not ${predToAlloy(m, ownerName, p.arg, agg, v)})`;
