@@ -4,7 +4,7 @@
 
 **Goal:** Validate `lattice conform --drive` against the design's pre-registered criteria: rediscover all 13 slice-2 drift classes on their existing `drift/*` evidence branches by DRIVING ALONE (no test suites, no fixtures), prove guard probing in both directions, establish the 5×200 zero-false-positive control, and render the tier-2b verdict.
 
-**Architecture:** Same evidentiary discipline as slice 2 plan 4: pre-register expectations BEFORE running; execute per-class on the existing drift branches (checkout → drive → record verbatim → return); zero tuning inside experiments; verdict against the criteria. New wrinkle: drift branches predate plan 1, so each class run cherry-picks the plan-1 harness commits onto a throwaway branch (`drive/cNN` off the drift branch) rather than re-creating drift.
+**Architecture:** Same evidentiary discipline as slice 2 plan 4: pre-register expectations BEFORE running; execute per-class on the existing drift branches (checkout → drive → record verbatim → return); zero tuning inside experiments; verdict against the criteria. New wrinkle: drift branches predate plan 1, so each class run MERGES the work branch into a throwaway branch (`drive/cNN` off the drift branch) rather than re-creating drift — the exact recipe is in Global Constraints.
 
 **Tech Stack:** Everything from plan 1; git.
 
