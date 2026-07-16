@@ -6,7 +6,7 @@
 import Database from 'better-sqlite3';
 import { tinyDb, tinyModel } from '../fixtures.js';
 import type { GenInput } from '../../generate/types.js';
-import type { GenPlan, PlanAggregate, PlanTransition } from '../../generate/plan.js';
+import type { GenPlan, PlanAggregate, PlanInvariant, PlanTransition } from '../../generate/plan.js';
 import type { Predicate } from '../../ast/invariant.js';
 import type { OverridesModule } from '../types.js';
 import type { CheckContext } from '../report.js';
@@ -162,3 +162,81 @@ export const skipDrivers: DriverModule = {
     },
   },
 };
+
+// --- c09 regression fixture (human ruling 2026-07-16, per-step scoped invariant check) ---------
+//
+// Reproduces the c09 root-cause pattern (docs/superpowers/specs/
+// 2026-07-15-lattice-drive-rediscovery-results.md §7) minimally: two new self-loop transitions on
+// Account ('debit'/'credit', both openState -> openState, no requires — data mutations, not
+// lifecycle moves) plus a `nonNegativeBalance` invariant. 'debit' (op A) drives the balance
+// negative — a genuine Tier-1 violation the instant it lands. 'credit' (op B) is itself a plain
+// spec-legal transition (no guard forbids it) that zeroes the balance back out. A sequence
+// [create, debit, credit] with checkEvery set high enough that the in-loop cadence never fires
+// means the ONLY full sweep is the unconditional end-of-sequence one — which runs AFTER credit
+// has already erased the violation, so it sees clean state and reports nothing. This is exactly
+// the c09 mechanism: "a violating state created by one command, legally erased by the next, before
+// any checkpoint ran." The per-step scoped check (walk.ts's stepCheck) closes the gap by
+// evaluating Account's own invariants immediately after 'debit' accepts, before 'credit' ever
+// runs.
+
+const debitTransition: PlanTransition = {
+  name: 'debit', region: 'status', from: ['openState'], to: 'openState',
+  anchors: { specElement: 'transition debit', provenance: [], witnessIds: [] },
+};
+const creditTransition: PlanTransition = {
+  name: 'credit', region: 'status', from: ['openState'], to: 'openState',
+  anchors: { specElement: 'transition credit', provenance: [], witnessIds: [] },
+};
+
+const nonNegativeBalance: PlanInvariant = {
+  name: 'nonNegativeBalance', aggregate: 'Account',
+  candidate: {
+    kind: 'statePredicate', aggregate: 'Account',
+    body: {
+      kind: 'cmp', op: 'ge',
+      left: { kind: 'field', owner: 'self', path: ['balance'] },
+      right: { kind: 'int', value: 0 },
+    },
+  },
+  anchors: { specElement: 'invariant nonNegativeBalance', provenance: [], witnessIds: [] },
+};
+
+const accountAggWithBalanceInvariant: PlanAggregate = {
+  name: 'Account',
+  fields: tinyModel.aggregates[0]!.fields,
+  regions: tinyModel.aggregates[0]!.machine!.regions,
+  transitions: [closeTransition, debitTransition, creditTransition],
+  invariants: [nonNegativeBalance],
+};
+
+/** Consumed ONLY by the c09-regression test in walk.test.ts. Kept in its own plan (not folded
+ *  into tinyPlanForWalk) so no existing test's invariant-free assumption changes. */
+export const tinyPlanWithBalanceInvariant: GenPlan =
+  { context: 'Tiny', aggregates: [accountAggWithBalanceInvariant], events: tinyModel.events };
+
+/** op A: an unconditional data mutation (no guard, self-loop transition) that drives the account's
+ *  balance negative — spec-legal (from openState, no requires) but data-violating. */
+function debit(db: Database.Database, id: string, amount: number): void {
+  db.prepare(`INSERT INTO account_entries (account_id, amount) VALUES (?, ?)`).run(id, -amount);
+}
+
+/** op B: the compensating, itself spec-legal mutation that zeroes the balance back out — this is
+ *  the "legally erased by the next command" half of the c09 pattern. */
+function credit(db: Database.Database, id: string, amount: number): void {
+  db.prepare(`INSERT INTO account_entries (account_id, amount) VALUES (?, ?)`).run(id, amount);
+}
+
+export const c09PatternDrivers: DriverModule = {
+  drivers: {
+    create,
+    transitions: {
+      debit: (db, id) => debit(db as Database.Database, id, 100),
+      credit: (db, id) => credit(db as Database.Database, id, 100),
+    },
+  },
+};
+
+export function c09Ctx(): CheckContext {
+  const input: GenInput = { model: tinyModel, adopted: [], ledger: [] };
+  return { input, plan: tinyPlanWithBalanceInvariant, overrides, crosschecks: null, optOuts: [] };
+}

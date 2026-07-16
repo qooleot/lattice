@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { executeSequence } from './walk.js';
 import type { DriverModule } from './walk.js';
-import { tinyCtx, tinyDrivers, buggyDrivers, strictDrivers, skipDrivers, mkTinyDb, tinyPlanWithSibling } from './fixtures.js';
+import {
+  tinyCtx, tinyDrivers, buggyDrivers, strictDrivers, skipDrivers, mkTinyDb, tinyPlanWithSibling,
+  c09Ctx, c09PatternDrivers,
+} from './fixtures.js';
 import { tinyModel } from '../fixtures.js';
 import type { Intention } from './intent.js';
 import type { GenPlan, PlanAggregate, PlanTransition } from '../../generate/plan.js';
@@ -144,6 +147,35 @@ describe('executeSequence', () => {
     expect(r.stats.probesAttempted).toBe(1);
     expect(r.stats.probesRejected).toBe(1);
     expect(r.narrative.some(line => line.includes('skipped'))).toBe(false);
+  });
+
+  it('c09 regression (human ruling 2026-07-16): a violating state created by one command and ' +
+    'legally erased by the very next command is caught by the per-step scoped check, not just ' +
+    'the end-of-sequence sweep', () => {
+    // seed=2 (even) => tinyDrivers-style create seeds balance 0. 'debit' (op A) then drives the
+    // balance to -100 — spec-legal (no guard on debit) but a live nonNegativeBalance violation
+    // the instant it lands. 'credit' (op B) is itself spec-legal and zeroes the balance back to 0
+    // before this sequence ends. checkEvery: 100 means the in-loop cadence never fires (only 3
+    // commands total) — the ONLY full sweep is the unconditional end-of-sequence one, which runs
+    // AFTER credit already erased the violation and so — absent the per-step check — would see
+    // clean state and report nothing (the exact c09 mechanism).
+    const debitIntent: Intention = { kind: 'transition', name: 'debit', aggregate: 'Account', rowPick: 0, seed: 10 };
+    const creditIntent: Intention = { kind: 'transition', name: 'credit', aggregate: 'Account', rowPick: 0, seed: 11 };
+    const r = executeSequence(mkTinyDb, c09PatternDrivers, c09Ctx(),
+      seq(create(2), debitIntent, creditIntent), { checkEvery: 100, clockStep: 60 });
+
+    // Post-fix: the per-step check after 'debit' (step 2) catches the transient violation.
+    expect(r.violations.length).toBeGreaterThan(0);
+    expect(r.violations.some(v => v.invariant === 'nonNegativeBalance')).toBe(true);
+    expect(r.violations.some(v => v.source === 'drive:2:step-check')).toBe(true);
+    // The end-of-sequence sweep itself (source 'drive:3', no ':step-check' suffix) finds nothing —
+    // confirming the violation really was gone by the time the coarse sweep ran, and that the
+    // per-step check is what closes the gap, not a change to the sweep itself.
+    expect(r.violations.some(v => v.source === 'drive:3')).toBe(false);
+
+    // Coverage counters (design amendment §2 of this ruling): both the pre-state read (debit's
+    // and credit's own legality checks) and the per-step check tally Account.status occurrences.
+    expect(r.stats.statesObserved['Account.status=openState']).toBeGreaterThan(0);
   });
 
   it('rowPick resolves against a live read, reaching a row created inside the driver (not tracked by any mirror)', () => {

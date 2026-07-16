@@ -27,6 +27,7 @@ function emptyStats(): DriveStats {
   return {
     commands: 0, accepted: 0, rejected: 0, probesAttempted: 0, probesRejected: 0,
     supersetOps: 0, guardedTransitionsProbed: [], reattributions: 0, driverSkips: 0,
+    statesObserved: {},
   };
 }
 
@@ -42,6 +43,7 @@ function accumulate(agg: DriveStats, guarded: Set<string>, s: DriveStats): void 
   agg.supersetOps += s.supersetOps;
   agg.reattributions += s.reattributions;
   agg.driverSkips += s.driverSkips;
+  for (const [k, n] of Object.entries(s.statesObserved)) agg.statesObserved[k] = (agg.statesObserved[k] ?? 0) + n;
   for (const t of s.guardedTransitionsProbed) guarded.add(t);
 }
 
@@ -88,6 +90,29 @@ export function runCampaign(mkDb: () => Database.Database, drivers: DriverModule
   };
 }
 
+// Groups the flat '<Aggregate>.<region>=<state>' counters into '<Aggregate>.<region>{state:N, ...}'
+// display groups, e.g. 'Subscription.status{active:9, canceled:340, ...} Invoice.settlement{...}'.
+// Sorted (group prefix, then state name) for deterministic output — insertion order would vary
+// run-to-run with fast-check's own exploration order.
+function formatStateCoverage(counts: Record<string, number>): string {
+  if (Object.keys(counts).length === 0) return '(none observed)';
+  const groups = new Map<string, [string, number][]>();
+  for (const [key, n] of Object.entries(counts)) {
+    const eq = key.indexOf('=');
+    const prefix = key.slice(0, eq);
+    const state = key.slice(eq + 1);
+    if (!groups.has(prefix)) groups.set(prefix, []);
+    groups.get(prefix)!.push([state, n]);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([prefix, states]) => {
+      const inner = states.sort(([a], [b]) => a.localeCompare(b)).map(([st, n]) => `${st}:${n}`).join(', ');
+      return `${prefix}{${inner}}`;
+    })
+    .join(' ');
+}
+
 export function formatCampaign(r: CampaignResult): string {
   const s = r.stats;
   const guardLine = `guards probed at event time: ${s.probesAttempted} attempts across ` +
@@ -107,11 +132,19 @@ export function formatCampaign(r: CampaignResult): string {
   // printed, even at 0, same "reported never hidden" reasoning as the re-attribution line above:
   // audited means visible in every run, not just the runs where it fired.
   const driverSkipLine = `driver skips (impl preconditions, audited): ${s.driverSkips}`;
+  // State coverage (human ruling 2026-07-16, c09 follow-up instrument, §7's forward pointer on
+  // reachability telemetry): the per-invariant reachability question §7 could only answer for
+  // c09 via an ad hoc scratch-branch console.error rig — this line is the repeatable harness
+  // feature that replaces it. Grouped '<Aggregate>.<region>{state:N, ...}' from the flat
+  // '<Aggregate>.<region>=<state>' counters (DriveStats.statesObserved); always printed, even
+  // when empty, same "reported never hidden" discipline as the lines above.
+  const coverageLine = `state coverage: ${formatStateCoverage(s.statesObserved)}`;
   const statLines = [
     `commands: ${s.commands} (${s.accepted} accepted, ${s.rejected} rejected, ${s.supersetOps} superset ops)`,
     guardLine,
     reattributionLine,
     driverSkipLine,
+    coverageLine,
     `duration ${(r.durationMs / 1000).toFixed(1)}s`,
   ];
 
