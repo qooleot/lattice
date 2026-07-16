@@ -211,14 +211,79 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
     }
   };
 
+  // An optional field's absence is a fact the model must account for, never a default it inherits:
+  // `cmp` returns true on a missing operand ("unknown facts don't convict", evaluate.ts), so a rule
+  // reading an optional path without a dominating present() is satisfied BY absence — right for
+  // `approvedAmount <= amount`, silently wrong for `succeeded => approvedAmount > 0`, and identical
+  // in the spec text either way. Dominance is syntactic and conservative on purpose; widen it only
+  // on evidence.
+  const isOptionalPath = (p: Path): boolean => {
+    const f = resolveFieldPath(m, c.aggregate, p);
+    return !!f?.optional;
+  };
+  const presentsIn = (p: Predicate): string[] => {
+    switch (p.kind) {
+      case 'present': return [p.path.join('.')];
+      case 'and': return p.args.flatMap(presentsIn);
+      default: return [];
+    }
+  };
+  const optionalPathsInTerm = (t: Term): Path[] => {
+    switch (t.kind) {
+      case 'field': return isOptionalPath(t.path) ? [t.path] : [];
+      case 'plus': return [...optionalPathsInTerm(t.left), ...optionalPathsInTerm(t.right)];
+      default: return [];
+    }
+  };
+  const checkAbsence = (p: Predicate, covered: Set<string>, at: string): void => {
+    switch (p.kind) {
+      case 'cmp': {
+        for (const path of [...optionalPathsInTerm(p.left), ...optionalPathsInTerm(p.right)])
+          if (!covered.has(path.join('.')))
+            out.push({ code: 'absence-undecided', message: `path ${path.join('.')} is optional — say what absence means: guard the rule with present(${path.join('.')}), or assert it with present(${path.join('.')}) && …`, at });
+        break;
+      }
+      case 'and': {
+        const inner = new Set([...covered, ...p.args.flatMap(presentsIn)]);
+        p.args.forEach((a, i) => checkAbsence(a, inner, `${at}.and[${i}]`));
+        break;
+      }
+      case 'implies':
+        checkAbsence(p.left, covered, `${at}.if`);
+        checkAbsence(p.right, new Set([...covered, ...presentsIn(p.left)]), `${at}.then`);
+        break;
+      case 'or': p.args.forEach((a, i) => checkAbsence(a, covered, `${at}.or[${i}]`)); break;
+      case 'not': checkAbsence(p.arg, covered, at); break;
+      case 'present': case 'inState': break;
+    }
+  };
+
   switch (c.kind) {
-    case 'statePredicate': if (c.where) checkPred(c.where, 'where'); checkPred(c.body, 'body'); break;
-    case 'unique': checkStates(c.whileStates.region, c.whileStates.states, 'whileStates'); c.by.forEach((p, i) => checkPath(p, `by[${i}]`)); break;
+    case 'statePredicate': {
+      if (c.where) checkPred(c.where, 'where');
+      checkPred(c.body, 'body');
+      checkAbsence(c.body, new Set(c.where ? presentsIn(c.where) : []), 'body');
+      break;
+    }
+    case 'unique':
+      checkStates(c.whileStates.region, c.whileStates.states, 'whileStates');
+      c.by.forEach((p, i) => {
+        checkPath(p, `by[${i}]`);
+        if (isOptionalPath(p)) out.push({ code: 'absence-undecided', message: `by[${i}] path ${p.join('.')} is optional — a unique-by cannot say what absence means; make the field required or drop it from the by-clause`, at: `by[${i}]` });
+      });
+      break;
     case 'refsResolve': break;
     case 'cardinality': if (c.where) checkPred(c.where, 'where'); if (c.atMost < 0) out.push({ code: 'bad-cardinality', message: 'atMost must be >= 0' }); break;
     case 'terminal': checkStates(c.region, [c.state], 'terminal'); break;
     case 'monotonic': checkPath(c.field, 'field'); break;
-    case 'conservation': c.parts.forEach((p, i) => checkPath(p, `parts[${i}]`)); checkPath(c.total, 'total'); break;
+    case 'conservation':
+      c.parts.forEach((p, i) => {
+        checkPath(p, `parts[${i}]`);
+        if (isOptionalPath(p)) out.push({ code: 'absence-undecided', message: `parts[${i}] path ${p.join('.')} is optional — a conservation law cannot say what absence means; make the field required or drop it from the parts`, at: `parts[${i}]` });
+      });
+      checkPath(c.total, 'total');
+      if (isOptionalPath(c.total)) out.push({ code: 'absence-undecided', message: `total path ${c.total.join('.')} is optional — a conservation law cannot say what absence means; make the field required`, at: 'total' });
+      break;
     case 'leadsTo': checkPred(c.from, 'from'); checkPred(c.to, 'to'); break;
     case 'sumOverCollection': {
       const a = m.aggregates.find(x => x.name === c.aggregate);
@@ -232,6 +297,7 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
       if (!cf || cf.key || cf.type.kind !== 'prim' || !SOLVER_INT_PRIMS.includes(cf.type.prim))
         out.push({ code: 'ill-typed', message: `sum field ${c.child}.${c.field} must be a numeric (Int/Money/Date/Duration) non-key field`, at: 'field' });
       checkPath(c.total, 'total');   // numeric own path; reuses key-path/unrepresentable-path guards
+      if (isOptionalPath(c.total)) out.push({ code: 'absence-undecided', message: `total path ${c.total.join('.')} is optional — a sumOverCollection cannot say what absence means; make the field required`, at: 'total' });
       break;
     }
   }
