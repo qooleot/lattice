@@ -44,6 +44,16 @@ describe('absence-undecided', () => {
       whileStates: { region: 'r', states: ['s'] }, by: [['approvedAmount']] };
     expect(validateCandidate(u, m).map(d => d.code)).toContain('absence-undecided');
   });
+
+  it('fires for an optional field in a monotonic candidate', () => {
+    const mono: Candidate = { kind: 'monotonic', aggregate: 'Refund', field: ['approvedAmount'] };
+    expect(validateCandidate(mono, m).map(d => d.code)).toContain('absence-undecided');
+  });
+
+  it('does not fire for a required field in a monotonic candidate', () => {
+    const mono: Candidate = { kind: 'monotonic', aggregate: 'Refund', field: ['amount'] };
+    expect(validateCandidate(mono, m).map(d => d.code)).not.toContain('absence-undecided');
+  });
 });
 
 const invoiceModel = (lineFields: any[]): DomainModel => ({

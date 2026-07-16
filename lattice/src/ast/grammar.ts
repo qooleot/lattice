@@ -218,6 +218,9 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
   // in the spec text either way. Dominance is syntactic and conservative on purpose; widen it only
   // on evidence.
   const isOptionalPath = (p: Path): boolean => {
+    // No `out` here: every caller of isOptionalPath already ran checkPath on the same path first,
+    // which pushed any cross-context-ref/unknown-path diagnostic through its own `out`. Passing
+    // `out` here would push that same diagnostic a second time.
     const f = resolveFieldPath(m, c.aggregate, p);
     return !!f?.optional;
   };
@@ -275,7 +278,10 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
     case 'refsResolve': break;
     case 'cardinality': if (c.where) checkPred(c.where, 'where'); if (c.atMost < 0) out.push({ code: 'bad-cardinality', message: 'atMost must be >= 0' }); break;
     case 'terminal': checkStates(c.region, [c.state], 'terminal'); break;
-    case 'monotonic': checkPath(c.field, 'field'); break;
+    case 'monotonic':
+      checkPath(c.field, 'field');
+      if (isOptionalPath(c.field)) out.push({ code: 'absence-undecided', message: `field path ${c.field.join('.')} is optional — a monotonic cannot say what absence means; make the field required or drop it from the field`, at: 'field' });
+      break;
     case 'conservation':
       c.parts.forEach((p, i) => {
         checkPath(p, `parts[${i}]`);
@@ -293,6 +299,12 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
         out.push({ code: 'sum-not-owned-collection', message: `${c.collection} is not an owned collection of ${c.aggregate} with child ${c.child}`, at: 'collection' });
         break;
       }
+      // Read `cf.optional` off the already-resolved child Field directly — do NOT swap this for
+      // `isOptionalPath([c.field])`. `ownerDef` (above) only walks top-level `m.aggregates`/
+      // `m.entities`; it cannot see `child`, which lives nested under the aggregate's own
+      // `entities`. isOptionalPath would resolve c.field against the AGGREGATE, not the child,
+      // get null, return false, and turn this gate off silently — no type error, just a candidate
+      // that should have been rejected sailing through.
       const cf = child.fields.find(x => x.name === c.field);
       if (!cf || cf.key || cf.type.kind !== 'prim' || !SOLVER_INT_PRIMS.includes(cf.type.prim))
         out.push({ code: 'ill-typed', message: `sum field ${c.child}.${c.field} must be a numeric (Int/Money/Date/Duration) non-key field`, at: 'field' });
