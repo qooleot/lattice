@@ -154,6 +154,12 @@ carries semantic weight or is `Text`/`Id`.
 - Neither can a **sub-field of a `value` declaration** (`optional-value` again, reported on the
   value): `value Window { end : Int? }` is rejected for the same reason one level down — the
   sub-field is already a flattened `one` relation with no multiplicity of its own to carry.
+- A field of an **entity nested inside an aggregate** cannot be optional (`optional-owned-child`),
+  whatever its type: `aggregate Invoice { entity Line { discount : Money? } }` is rejected. The
+  solver encodings give a child's field no multiplicity of its own — a child is one row of a bounded
+  collection, and both encodings fix every one of its fields as present — so absence is
+  unrepresentable there. The same field on a **top-level** entity or on the aggregate itself is
+  fine; only owned children are affected.
 - A field named `state` is always rejected (`reserved-field-name`), regardless of type — `state`
   is reserved for lifecycle-state path accessors.
 

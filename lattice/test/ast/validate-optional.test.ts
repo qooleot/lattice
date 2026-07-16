@@ -50,6 +50,35 @@ describe('optional fields — structural rules', () => {
     expect(validateModel(m).map(d => d.code)).toContain('optional-value');
   });
 
+  // Witnessed with real Alloy on `entity Line { discount : Money? }` in an owned collection:
+  // emitChildSigs hard-codes `one` for every child field, so `sat=false` — Alloy cannot draw a Line
+  // lacking its discount, a state the TS judge permits. `lone` there would trade that for a worse
+  // bug (Alloy's sum over an empty join contributes 0 and convicts where the judge skips the
+  // aggregate). Rejected rather than half-encoded, same as optional-list/optional-value.
+  it('rejects an optional field on an aggregate-owned nested child', () => {
+    const m = model([{ name: 'lines', type: { kind: 'list', of: { kind: 'ref', target: 'Line' } } }]);
+    m.aggregates[0]!.entities = [{ kind: 'entity', name: 'Line', fields: [
+      { name: 'lineId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'discount', type: { kind: 'prim', prim: 'Money' }, optional: true, tags: ['unsigned'] }] }];
+    expect(validateModel(m).map(d => d.code)).toContain('optional-owned-child');
+  });
+
+  it('accepts a required field on an aggregate-owned nested child', () => {
+    const m = model([{ name: 'lines', type: { kind: 'list', of: { kind: 'ref', target: 'Line' } } }]);
+    m.aggregates[0]!.entities = [{ kind: 'entity', name: 'Line', fields: [
+      { name: 'lineId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'discount', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] }] }];
+    expect(validateModel(m)).toEqual([]);
+  });
+
+  it('does not fire for an optional field on a top-level entity', () => {
+    const m = model([]);
+    m.entities = [{ kind: 'entity', name: 'Other', fields: [
+      { name: 'otherId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'note', type: { kind: 'prim', prim: 'Money' }, optional: true, tags: ['unsigned'] }] }];
+    expect(validateModel(m).map(d => d.code)).not.toContain('optional-owned-child');
+  });
+
   it('accepts a value type whose sub-fields are all required', () => {
     const m = model(
       [{ name: 'window', type: { kind: 'value', value: 'Window' } }],
@@ -79,5 +108,28 @@ describe('optional fields — surface round-trips', () => {
     expect(t.fields.find(f => f.name === 'note')!.optional).toBe(true);
     expect(t.fields.find(f => f.name === 'owner')!.optional).toBe(true);
     expect(t.fields.find(f => f.name === 'thingId')!.optional).toBeUndefined();
+  });
+
+  // The exact shape that witnessed the divergence against real Alloy (sat=false for a Line lacking
+  // its discount, which the TS judge permits). loadLatText runs validateModel, so the shape is
+  // refused at load — no emitter can be handed a model carrying it.
+  it('refuses an optional owned-child field at load, before any emitter sees it', async () => {
+    const src = `context Billing {
+  aggregate Invoice {
+    invId : Id key
+    total : Money @unsigned
+    lines : List<ref Line>
+    entity Line {
+      lineId   : Id key
+      amount   : Money @unsigned
+      discount : Money? @unsigned
+    }
+  }
+}
+`;
+    const r = await loadLatText(src);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('unreachable');
+    expect(r.diagnostics.map(d => d.code)).toContain('optional-owned-child');
   });
 });

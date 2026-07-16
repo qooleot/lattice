@@ -178,15 +178,15 @@ function candidateArb(agg: AggregateDef, enums: { name: string; values: string[]
   if (paths.length >= 3) arbs.push(fc.constant({ kind: 'conservation' as const, aggregate: agg.name,
     parts: [paths[0]!, paths[1]!], total: paths[2]! }));
   const owned = agg.fields.map(f => ({ f, child: ownedCollectionChild(agg, f) })).filter(x => x.child);
-  // sumOverCollection's `total` (own field) and `field` (child field) both reject an optional path
-  // outright — neither position has a predicate a present() could sit in (grammar.ts). These pools
-  // are therefore required-only, for the same reason `representable` above is. The child pool reads
-  // `optional` off the child entity's own fields: nestedArb builds them with fieldArb, which draws
-  // `?` freely.
+  // sumOverCollection's `total` (an own field) rejects an optional path outright — the position has
+  // no predicate a present() could sit in (grammar.ts) — so that pool is required-only, for the same
+  // reason `representable` above is. The child-field pool needs no such filter: nestedArb strips `?`
+  // from child fields because validateModel forbids it there (optional-owned-child) whatever the
+  // candidate does with them.
   const required = (f: Field) => !f.optional;
   const numPaths = agg.fields.filter(isNumericPrim).filter(required).map(f => [f.name]);
   if (owned.length && numPaths.length) {
-    const numChildFields = owned[0]!.child!.fields.filter(isNumericPrim).filter(required).map(f => f.name);
+    const numChildFields = owned[0]!.child!.fields.filter(isNumericPrim).map(f => f.name);
     if (numChildFields.length) arbs.push(fc.constantFrom<'eq' | 'le' | 'ge'>('eq', 'le', 'ge').map(op =>
       ({ kind: 'sumOverCollection' as const, aggregate: agg.name, collection: owned[0]!.f.name,
          child: owned[0]!.child!.name, field: numChildFields[0]!, op, total: numPaths[0]! })));
@@ -251,6 +251,11 @@ const machineArb = (fieldNames: string[], eventNames: string[], numFieldNames: s
 // collection per ownedCollectionChild). Child fields reuse fieldArb (prim/enum only — nested
 // children carry no ref/list per nested-entity-flat) with a forced keyed first field, mirroring
 // aggArb's own shape.
+//
+// The `?` marker is stripped from every child field: fieldArb draws it freely, but a field of an
+// aggregate-owned child may not be optional (validateModel's optional-owned-child — the solver
+// encodings give a child's field no multiplicity of its own). Left in, it would fail the
+// round-trip property on a spec the validator rejects, not on parse ∘ print.
 const nestedArb = (childName: string | undefined, enums: { name: string; values: string[] }[], fieldNames: string[]): fc.Arbitrary<{ child: EntityDef; collectionField: Field } | null> => {
   if (!childName) return fc.constant(null);
   return fc.tuple(
@@ -259,8 +264,9 @@ const nestedArb = (childName: string | undefined, enums: { name: string; values:
     .chain(([collectionFieldName, childFieldNames]) =>
       fc.tuple(...childFieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name))))
         .map(rest => {
+          const required = rest.map(({ optional: _drop, ...f }) => f as Field);
           const child: EntityDef = { kind: 'entity', name: childName,
-            fields: [{ name: childFieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest] };
+            fields: [{ name: childFieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...required] };
           const collectionField: Field = { name: collectionFieldName,
             type: { kind: 'list', of: { kind: 'ref', target: childName } } };
           return { child, collectionField };

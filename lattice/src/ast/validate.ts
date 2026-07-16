@@ -196,9 +196,22 @@ export function validateModel(m: DomainModel): Diagnostic[] {
     for (const child of a.entities ?? []) {
       checkName('entity', child.name, `${a.name}.${child.name}`);
       checkFields(child.fields, `${a.name}.${child.name}`, true);   // missing-key covers child-key-required
-      for (const f of child.fields)
+      for (const f of child.fields) {
         if (f.type.kind === 'ref' || f.type.kind === 'list' || f.type.kind === 'value')
           out.push({ code: 'nested-entity-flat', message: `nested entity ${a.name}.${child.name}.${f.name}: children carry prim/enum fields only in v1 (design §5.2)`, at: `${a.name}.${child.name}.${f.name}` });
+        // Checked here, not in the shared checkFields — this is the only site that knows a field
+        // belongs to an aggregate-owned child rather than a top-level entity, where `Type?` is legal.
+        // alloy.ts's emitChildSigs has no multiplicity to vary: it emits `one` whatever the marker
+        // says (real Alloy on `entity Line { discount : Money? }` in an owned collection: sat=false
+        // for a Line lacking its discount — a state the TS judge permits), while quint.ts's
+        // owned-child record emits no `${f}Present` companion at all. Relaxing Alloy to `lone`
+        // trades this for a worse divergence: its `sum` over an empty join contributes 0 and
+        // convicts where the judge skips the aggregate. No evidence in this slice needs an optional
+        // child field, so it is rejected rather than half-encoded — same call as optional-list and
+        // optional-value.
+        if (f.optional)
+          out.push({ code: 'optional-owned-child', message: `${a.name}.${child.name}.${f.name} is a field of an aggregate-owned child and cannot be optional — the solver encodings give a child's field no multiplicity of its own, so absence is unrepresentable there`, at: `${a.name}.${child.name}.${f.name}` });
+      }
     }
     const collectionOwners = new Map<string, string>();   // child entity name -> first owning field
     for (const f of a.fields) {

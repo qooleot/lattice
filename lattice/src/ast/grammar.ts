@@ -312,17 +312,15 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
         out.push({ code: 'sum-not-owned-collection', message: `${c.collection} is not an owned collection of ${c.aggregate} with child ${c.child}`, at: 'collection' });
         break;
       }
-      // Read `cf.optional` off the already-resolved child Field directly — do NOT swap this for
-      // `isOptionalPath([c.field])`. `ownerDef` (above) only walks top-level `m.aggregates`/
-      // `m.entities`; it cannot see `child`, which lives nested under the aggregate's own
-      // `entities`. isOptionalPath would resolve c.field against the AGGREGATE, not the child,
-      // get null, return false, and turn this gate off silently — no type error, just a candidate
-      // that should have been rejected sailing through.
+      // No `cf.optional` gate here: validateModel's optional-owned-child rejects an optional field
+      // on an aggregate-owned child outright, so no model reaching a candidate can carry one.
+      // Should that rule ever relax, this gate must come back reading `cf.optional` off the
+      // resolved child Field — NOT via `isOptionalPath([c.field])`, which resolves against the
+      // AGGREGATE (ownerDef walks only top-level defs, never nested children), gets null, returns
+      // false, and turns the gate off silently.
       const cf = child.fields.find(x => x.name === c.field);
       if (!cf || cf.key || cf.type.kind !== 'prim' || !SOLVER_INT_PRIMS.includes(cf.type.prim))
         out.push({ code: 'ill-typed', message: `sum field ${c.child}.${c.field} must be a numeric (Int/Money/Date/Duration) non-key field`, at: 'field' });
-      else if (cf.optional)
-        out.push({ code: 'absence-undecided', message: `sum field ${c.child}.${c.field} is optional — a sumOverCollection cannot say what absence means; make the field required`, at: 'field' });
       checkPath(c.total, 'total');   // numeric own path; reuses key-path/unrepresentable-path guards
       if (isOptionalPath(c.total)) out.push({ code: 'absence-undecided', message: `total path ${c.total.join('.')} is optional — a sumOverCollection cannot say what absence means; make the field required`, at: 'total' });
       break;
