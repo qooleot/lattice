@@ -4,7 +4,7 @@
 
 **Goal:** Let a model say a fact is sometimes absent (`field : Type?`), make every rule that reads an absent fact say what absence means, and stop `refsResolve` forbidding `Payment`'s own initial state.
 
-**Architecture:** Optionality is a **field property** (`Field.optional`), sitting beside `key`/`const` — not a new `TypeRef` arm. That keeps it out of the 21 files that switch on `type.kind`. Absence semantics are gated, not defaulted: a `present(f)` predicate joins the closed candidate grammar, and an invariant whose path crosses an optional field without a dominating `present(f)` is rejected (`absence-undecided`). Alloy uses native `lone` multiplicity; Quint uses a `${f}Present: bool` companion flag; the TS judge already treats a missing fact as `undefined` and needs no semantic change.
+**Architecture:** Optionality is a **field property** (`Field.optional`), sitting beside `key`/`const` — not a new `TypeRef` arm. That keeps it out of the 21 files that switch on `type.kind`. Absence semantics are gated, not defaulted: a `present(f)` predicate joins the closed candidate grammar, and an invariant whose path **ends at** an optional field without a dominating `present(f)` is rejected (`absence-undecided`). A path that reads *through* an optional ref and ends at a required field does not fire — it falls under the language's existing ref-hop vacuity rule (`evaluate.ts:19-21`/`:45`, `quint.ts:171`), which already permits any hop through an absent target. Alloy uses native `lone` multiplicity; Quint uses a `${f}Present: bool` companion flag; the TS judge already treats a missing fact as `undefined` and needs no semantic change.
 
 **Tech Stack:** TypeScript (ESM, `.js` import extensions), vitest, Langium, Alloy + Quint solvers, fast-check.
 
@@ -1039,7 +1039,20 @@ Add `present(<path>)` to the predicate/operator table. Add a Semantic Rules bull
 
 State the asymmetry honestly, because it is the thing a reader will trip on: a **comparison** treats a missing operand as unknown and returns true ("unknown facts don't convict", `evaluate.ts:45`), while **`present()`** reads absence as a fact. That is why an invariant over an optional field needs it.
 
-Note the cost the design accepted: ref-hops through a never-created record stay vacuous (`quint.ts:171`), so the language has two absence rules. Say so, and say why (unifying them would change the semantics of every ref-crossing invariant already written).
+**The gate reaches the end of a path, not the middle — and this subsection is the one a reader most needs.** `absence-undecided` fires when a path's *terminal* field is optional. A path that reads **through** an optional ref and ends at a required field does not fire, and permits when the ref is absent:
+
+```
+paymentMethod : ref PayMethod?     // optional
+PayMethod.fee : Money              // required
+
+invariant { paymentMethod.fee > 0 }    // no diagnostic — and it can never fail
+```
+
+Verify that before documenting it (`validateCandidate` returns `[]` and `evaluateCandidate` returns `permit` on that shape — check, do not take my word). Then say plainly, in the reader's terms, that **such an invariant can never fail** when the ref is absent, and that a rule which must hold *only when the ref is present* is already what you have — but a rule that must **forbid** the absent case cannot be written this way, and needs the field it truly depends on to be read directly.
+
+Explain why this is not a second rule bolted on: every ref-hop in this language already resolves vacuously when its target is absent (`evaluate.ts:19-21` returns `undefined` for an unresolvable hop; `:45` permits on it; `quint.ts:171` emits `allExist implies cmp` so Apalache cannot read through a never-created record). An absent optional ref is the same fact as a ref pointing at nothing, so it gets the same answer.
+
+Then state the cost the design accepted: the language has two absence rules — explicit at a path's end, vacuous through its hops — and unifying them would change the semantics of every ref-crossing invariant already written, so it needs its own slice with a migration.
 
 - [ ] **Step 3: `derived-invariants.md` — the guard form**
 

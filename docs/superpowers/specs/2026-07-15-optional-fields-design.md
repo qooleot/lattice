@@ -81,8 +81,8 @@ promoted from a test defect to a language feature.
 
 So:
 
-- **Gate.** Validation rejects an invariant whose path crosses an optional field without saying what
-  absence means: `absence-undecided`. Same shape as `money-sign-undecided`.
+- **Gate.** Validation rejects an invariant whose path **ends at** an optional field without saying
+  what absence means: `absence-undecided`. Same shape as `money-sign-undecided`.
 - **Elicit.** The engine draws a witness with the field absent and asks permit/forbid. **Permit** ⇒
   it writes the guard form (`where present(f)`). **Forbid** ⇒ it writes the assertion form
   (`present(f) && …`). The user judges a concrete case; the engine writes the syntax; the verdict
@@ -96,10 +96,24 @@ types. Auto-inserting it was considered and is impossible: the two rules above n
 insertions (guard vs assertion), and only a domain expert knows which. That is the definition of a
 judgment.
 
-**Known cost:** the language now has two absence rules — explicit for optional fields, vacuous for
-ref-hops through never-created records (`quint.ts:171`). Unifying them would change the semantics of
-every ref-crossing invariant already written and needs its own slice with a migration. Recorded, not
-fixed.
+**The gate reaches the END of a path, not the middle of it.** `absence-undecided` fires when a path's
+*terminal* field is optional. A path that reads **through** an optional ref and ends at a required
+field — `paymentMethod.fee > 0`, where `paymentMethod : ref PayMethod?` and `fee : Money` — does not
+fire, and permits when the ref is absent. Verified, not assumed: `validateCandidate` returns `[]` and
+`evaluateCandidate` returns `permit` on that shape today.
+
+That is deliberate, and it is the existing rule rather than a new one. Every ref-hop in this language
+already resolves vacuously when its target is absent: `evaluate.ts:19-21` returns `undefined` for an
+unresolvable hop and `:45` permits on it, and `quint.ts:171` emits `allExist implies cmp` so Apalache
+cannot read through a never-created record. An optional ref that is absent is the same fact as a ref
+pointing at nothing, so it gets the same answer. Gating hops would mean a *second* absence rule for
+exactly the case the first one already covers.
+
+**Known cost, and it is real:** the language has two absence rules — explicit at a path's end, vacuous
+through its hops — and a reader of `paymentMethod.fee > 0` cannot see that it can never fail. The docs
+must say so where that reader will look (`invariant.md`), not only here. Unifying the two would change
+the semantics of every ref-crossing invariant already written and needs its own slice with a
+migration. Recorded, not fixed.
 
 ### 3. Derived invariants take the guard form — forced, not chosen
 
