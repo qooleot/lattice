@@ -9,7 +9,7 @@ import { observeScoped } from '../observe.js';
 import { checkDb, type CheckContext } from '../report.js';
 import { evaluateCandidate } from '../../engine/evaluate.js';
 import type { PlanTransition } from '../../generate/plan.js';
-import type { ConformViolation } from '../types.js';
+import type { BindingManifest, ConformViolation } from '../types.js';
 import { describeIntention, type Intention } from './intent.js';
 
 export interface DriveOpts { checkEvery: number; clockStep: number }
@@ -59,6 +59,18 @@ function transitionViolation(t: PlanTransition, id: string, source: string, deta
   };
 }
 
+/** Real reads, not a mirror: rows created INSIDE drivers (e.g. a createSubscription driver that
+ *  also inserts the first Invoice) never show up in any executor-side bookkeeping — the only
+ *  honest way to know what rows exist is to ask the db. Ordered by key column so rowPick's
+ *  modulo indexing is deterministic across calls within a step. Returns [] (skip the step, as
+ *  before) for an aggregate with no binding or no rows yet. */
+function liveIds(db: Database.Database, manifest: BindingManifest, aggregate: string): string[] {
+  const agg = manifest.aggregates.find(a => a.aggregate === aggregate);
+  if (!agg || !agg.table || !agg.keyColumn) return [];
+  return (db.prepare(`SELECT ${agg.keyColumn} FROM ${agg.table} ORDER BY ${agg.keyColumn}`).all() as
+    Record<string, unknown>[]).map(row => String(row[agg.keyColumn]));
+}
+
 export function executeSequence(mkDb: () => Database.Database, drivers: DriverModule,
   ctx: CheckContext, seq: Intention[], opts: DriveOpts): DriveResult {
   if (Object.keys(drivers.drivers.create).length === 0) {
@@ -67,7 +79,6 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
 
   const db = mkDb();
   const manifest = bindSchema(db, ctx.input.model, ctx.overrides);
-  const knownIds: Record<string, string[]> = {};
   const createCounters: Record<string, number> = {};
   const stats: DriveStats = {
     commands: 0, accepted: 0, rejected: 0, probesAttempted: 0, probesRejected: 0,
@@ -78,7 +89,15 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
   const narrative: string[] = [];
   let clock = 1_000_000;
 
-  const runCheck = (source: string) => violations.push(...checkDb(db, ctx, source).violations);
+  // Dedup guard for the boundary case: when the last executed step's accepted-count already
+  // triggered an in-loop checkDb, the unconditional end-of-sequence sweep below would re-run
+  // checkDb against identical, unchanged db state and duplicate every live violation it finds.
+  // `null` means "no check has run yet" — the sweep must still run once in that case.
+  let lastCheckedAtAccepted: number | null = null;
+  const runCheck = (source: string) => {
+    violations.push(...checkDb(db, ctx, source).violations);
+    lastCheckedAtAccepted = stats.accepted;
+  };
 
   for (let i = 0; i < seq.length; i++) {
     const intention = seq[i]!;
@@ -94,14 +113,13 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
         const n = (createCounters[intention.aggregate] = (createCounters[intention.aggregate] ?? 0) + 1);
         const id = `d-${intention.aggregate.toLowerCase()}-${n}`;
         fn(db, id, gen);
-        (knownIds[intention.aggregate] ??= []).push(id);
         stats.commands++; stats.accepted++;
         narrative.push(describeIntention(intention, id, 'n/a', 'accepted'));
       }
     } else if (intention.kind === 'superset') {
       const fn = drivers.drivers.superset?.[intention.name];
-      const ids = knownIds[intention.aggregate];
-      if (!fn || !ids || ids.length === 0) { executed = false; }
+      const ids = liveIds(db, manifest, intention.aggregate);
+      if (!fn || ids.length === 0) { executed = false; }
       else {
         const id = ids[intention.rowPick % ids.length]!;
         let outcome = 'accepted';
@@ -114,13 +132,21 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
       // 'transition' that lands illegal downgrades into exactly the probe branch below (design
       // §3: "keeps generated sequences useful without a legality oracle at generation time"),
       // and a 'probe' that lands legal runs exactly the legal branch ("just a command").
-      const ids = knownIds[intention.aggregate];
-      if (!ids || ids.length === 0) { executed = false; }
+      const ids = liveIds(db, manifest, intention.aggregate);
+      if (ids.length === 0) { executed = false; }
       else {
         const id = ids[intention.rowPick % ids.length]!;
         const t = findTransition(ctx, intention.aggregate, intention.name);
         const scoped = observeScoped(db, ctx.input.model, manifest, ctx.overrides, intention.aggregate, id);
-        const fromOk = t.from.includes(String(scoped[0]!.fields[`${t.region}.state`]));
+        const regionKey = `${t.region}.state`;
+        const stateVal = scoped[0]!.fields[regionKey];
+        if (stateVal === undefined) {
+          throw new Error(
+            `drive: missing region-state key '${regionKey}' for ${intention.aggregate}#${id} — observed row ` +
+            `has no field '${regionKey}'; check that transition '${t.name}''s region ('${t.region}') matches ` +
+            `a region bound on ${intention.aggregate}`);
+        }
+        const fromOk = t.from.includes(String(stateVal));
         const guardOk = !t.requires || evaluateCandidate(
           { kind: 'statePredicate', aggregate: intention.aggregate, body: t.requires }, { entities: scoped }) === 'permit';
         const legal = fromOk && guardOk;
@@ -162,7 +188,13 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
     }
   }
 
-  runCheck(`drive:${seq.length}`); // sequence-end sweep, always
+  // Sequence-end sweep — but only if the db state has moved since the last check, or no check
+  // has run at all. Without this guard, a final accepted step landing exactly on a checkEvery
+  // boundary triggers an in-loop checkDb, then this unconditional sweep re-runs checkDb against
+  // identical state and duplicates every live violation.
+  if (lastCheckedAtAccepted === null || stats.accepted !== lastCheckedAtAccepted) {
+    runCheck(`drive:${seq.length}`);
+  }
   db.close();
 
   stats.guardedTransitionsProbed = [...guardedProbed].sort();

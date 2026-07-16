@@ -54,13 +54,21 @@ export function tinyCtx(): CheckContext {
 }
 
 // tinyDrivers.create seeds balance 0 for even seeds, balance 500 for odd seeds — deterministic
-// from the intention's seed via gen.seed, no randomness needed for this fixture.
+// from the intention's seed via gen.seed, no randomness needed for this fixture. On seed % 4 ===
+// 0 it ALSO inserts a bonus second account (id suffix '-b', balance 0 — deliberately 0 so it
+// never disturbs the balance-parity expectations existing tests rely on): this is the fixture's
+// proof that rows created INSIDE a driver (not returned to nor tracked by the walk executor) are
+// still real, live rows the executor's row-discovery must be able to reach.
 const create: DriverModule['drivers']['create'] = {
   Account: (db, id, gen: DriveGenImpl) => {
     const d = db as Database.Database;
     d.prepare(`INSERT INTO accounts (id, owner_name, state) VALUES (?, ?, 'openState')`).run(id, `Owner-${id}`);
     const balance = gen.seed % 2 === 0 ? 0 : 500;
     if (balance !== 0) d.prepare(`INSERT INTO account_entries (account_id, amount) VALUES (?, ?)`).run(id, balance);
+    if (gen.seed % 4 === 0) {
+      const bonusId = `${id}-b`;
+      d.prepare(`INSERT INTO accounts (id, owner_name, state) VALUES (?, ?, 'openState')`).run(bonusId, `Owner-${bonusId}`);
+    }
   },
 };
 
