@@ -734,7 +734,67 @@ artifact leaked). No collateral violations — all 5 VIOLATION lines are the sam
 against the same witness (`d-subscription-1`), differing only by `source drive:NN` sequence index.
 
 ### c02 — wrong event type
-**Verdict: PENDING (campaign #2)**
+**Verdict: REDISCOVERED**
+
+Branch mechanics: `git checkout -b drive/c02 drift/c02-wrong-event`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `e608123`) — one conflict, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved as union (both sides' lines concatenated,
+no lines dropped, all validated as parseable JSON post-resolution). `git diff
+drift/c02-wrong-event -- implementations/subscriptions/src` was empty after the merge — the drift
+edit survived intact. `rm -rf implementations/subscriptions/.conform` before the run; absent both
+before and after.
+
+Seed tried: 21 (first pre-authorized seed — caught on first try).
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed 21`. Exit code 1 (FAILED, matches expected verdict REDISCOVERED).
+
+Verbatim stdout:
+```
+drive: 753 sequences — FAILED (seed 21)
+replay: lattice conform --target ../implementations/subscriptions --drive --seed 21
+commands: 6701 (1527 accepted, 0 rejected, 162 superset ops)
+guards probed at event time: 5012 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 166
+driver skips (impl preconditions, audited): 1
+duration 1.6s
+narrative:
+  create Subscription#d-subscription-1 (seed=0) -> accepted
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition finalize on Invoice#d-subscription-1-inv-1 (rowPick=0, seed=0) legality=legal -> accepted
+  probe settle on Invoice#d-subscription-1-inv-1 (rowPick=0, seed=0) legality=legal -> accepted
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=legal -> accepted
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  superset changePlanOp on Subscription#d-subscription-1 (rowPick=0, seed=0) -> accepted
+  probe activate on Subscription#d-gen-1001080-266429 (rowPick=0, seed=0) legality=illegal -> rejected
+VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [d-subscription-1] — no legal path: Subscription 'd-subscription-1' region 'status' — stuck at event #2 (SubscriptionActivated, outbox seq 4) from state(s) {active, pastDue, canceled}; events=[SubscriptionActivated, SubscriptionActivated] — anchors [transition activate] — source drive:19
+VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [d-subscription-1] — no legal path: Subscription 'd-subscription-1' region 'status' — stuck at event #2 (SubscriptionActivated, outbox seq 4) from state(s) {active, pastDue, canceled}; events=[SubscriptionActivated, SubscriptionActivated] — anchors [transition activate] — source drive:20
+```
+
+Registered substring `stuck at event #2 (SubscriptionActivated` (Tier 2, `machine
+Subscription.status`) appears verbatim, twice, both against the expected witness
+(`d-subscription-1`) — the trace's `events=[SubscriptionActivated, SubscriptionActivated]` shows
+two `SubscriptionActivated` events where the spec's status machine expects a
+`SubscriptionCanceled` at the second slot, consistent with the registered mechanism (`cancel`
+emitting the wrong event type, downstream of c01's route). The shrunk narrative shows one legal
+`activate` acceptance (line 18) plus a `changePlanOp` superset op (line 27) before the violation
+fires; the exact command producing the second `SubscriptionActivated` is not itself narrated by
+name (the narrative lists driven commands, not raw outbox writes) but the outbox trace is
+unambiguous about the drift's effect. One driver skip is visible in the summary line (`driver
+skips (impl preconditions, audited): 1`) — audited data per the campaign's zero-tuning rule, not a
+violation. `.conform` confirmed absent after the run.
 
 ### c03 — emit outside the transaction
 **Verdict: PENDING (campaign #2)**
