@@ -1329,4 +1329,51 @@ recomputed 3166`), exactly as anticipated; `activePaidInFull` collateral did not
 the run.
 
 ### c13 — stale read model
-**Verdict: PENDING (campaign #2)**
+**Verdict: REDISCOVERED**
+
+Branch mechanics: `git checkout -b drive/c13 drift/c13-stale-read-model`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `c197278`) — one conflict, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved as union (both sides' lines concatenated,
+no lines dropped, all validated as parseable JSON post-resolution). `git diff
+drift/c13-stale-read-model -- implementations/subscriptions/src` was empty after the merge — the
+drift edit survived intact (the dropped `refreshAccountSummary(db, inv.subscription_id, 0)` call
+at the end of `settle()`, `implementations/subscriptions/src/billing-service.ts`). `rm -rf
+implementations/subscriptions/.conform` before the run; absent both before and after.
+
+Seed tried: 21 (first pre-authorized seed — caught on first try).
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed 21`. Exit code 1 (FAILED, matches expected verdict REDISCOVERED).
+
+Verbatim stdout (head + first two violations; log continues with 7 more repeats of the same
+crosscheck as the driver keeps probing `activate` before reporting FAILED):
+```
+drive: 42 sequences — FAILED (seed 21)
+replay: lattice conform --target ../implementations/subscriptions --drive --seed 21
+commands: 1289 (321 accepted, 0 rejected, 10 superset ops)
+guards probed at event time: 958 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 15
+driver skips (impl preconditions, audited): 0
+duration 0.2s
+narrative:
+  create Subscription#d-subscription-1 (seed=0) -> accepted
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe finalize on Invoice#d-subscription-1-inv-1 (rowPick=0, seed=0) legality=legal -> accepted
+  probe expireTrial on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=legal -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition settle on Invoice#d-subscription-1-inv-1 (rowPick=0, seed=0) legality=legal -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+VIOLATION crosscheck account_summary (crosscheck account_summary) — witnesses [d-subscription-1] — open_balance 2087 != recomputed 0; lifetime_paid 0 != recomputed 2087 — anchors [target crosscheck (out-of-spec read model, design §6 class 13)] — source drive:12
+VIOLATION crosscheck account_summary (crosscheck account_summary) — witnesses [d-subscription-1] — open_balance 2087 != recomputed 0; lifetime_paid 0 != recomputed 2087 — anchors [target crosscheck (out-of-spec read model, design §6 class 13)] — source drive:13
+```
+9 total `VIOLATION` lines in the full log, all the same `crosscheck account_summary` signal on the
+same witness (`source drive:12` through `drive:20`), as the driver continues probing the
+already-violated row before halting.
+
+Registered signal fires exactly: `crosscheck account_summary`, both registered substrings present
+verbatim in the same line (`open_balance 2087 != recomputed 0` and `lifetime_paid 0 != recomputed
+2087`) — the narrative shows exactly the registered route: the driven `settle` (narrative line 8,
+`legality=legal -> accepted`, terminal write for this subscription's account-summary refresh
+chain) leaves the read model stale, caught by the end-of-sequence crosscheck sweep within 42 of
+1600 budgeted sequences at seed 21. `.conform` confirmed absent after the run.
