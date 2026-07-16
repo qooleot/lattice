@@ -256,48 +256,42 @@ empty list are the same fact; List<T> already means zero or more)."
 
 - [ ] **Step 1: Write the failing test**
 
-Create `lattice/test/engine/evaluate-present.test.ts`. **Read `test/engine/evaluate.test.ts` first and copy its `CaseState` construction exactly** — do not invent a fixture shape:
+Create `lattice/test/engine/evaluate-present.test.ts`.
+
+**The real API** (verified — do not trust any other rendering of it): `evaluateCandidate(c: Candidate, s: CaseState): Verdict` — **two** arguments, returning `'permit' | 'forbid'`, never a boolean. It takes **no `DomainModel`**: `evalTerm`'s `field` case resolves against the `CaseState` alone, so the schema is irrelevant here (the model matters only in `ast/grammar.ts`, a different function). `CaseState` is `{ now?: number; entities: CaseEntity[]; trace?: CaseEntity[][] }` (`evaluate.ts:4`).
 
 ```ts
 import { describe, it, expect } from 'vitest';
 import { evaluateCandidate } from '../../src/engine/evaluate.js';
-import type { DomainModel } from '../../src/ast/domain.js';
+import type { CaseState } from '../../src/engine/evaluate.js';
 import type { Candidate } from '../../src/ast/invariant.js';
 
-const m: DomainModel = {
-  context: 'Opt', ticksPerDay: 24, enums: [], values: [], entities: [],
-  aggregates: [{ kind: 'aggregate', name: 'Refund', fields: [
-    { name: 'refundId', type: { kind: 'prim', prim: 'Id' }, key: true },
-    { name: 'amount', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] },
-    { name: 'approvedAmount', type: { kind: 'prim', prim: 'Money' }, optional: true, tags: ['unsigned'] }] }],
-  events: [], services: []
-};
-
-// present(approvedAmount) && approvedAmount > 0
+// present(approvedAmount) && approvedAmount > 0  — the assertion form: absence must FORBID.
 const cand: Candidate = { kind: 'statePredicate', aggregate: 'Refund',
   body: { kind: 'and', args: [
     { kind: 'present', path: ['approvedAmount'] },
     { kind: 'cmp', op: 'gt', left: { kind: 'field', owner: 'self', path: ['approvedAmount'] }, right: { kind: 'int', value: 0 } }] } };
 
+const absent: CaseState = { entities: [{ type: 'Refund', id: 'r1', fields: { amount: 100 } }] };
+const present: CaseState = { entities: [{ type: 'Refund', id: 'r1', fields: { amount: 100, approvedAmount: 40 } }] };
+
 describe('present()', () => {
-  it('is false when the field is absent, so the conjunction fails', () => {
-    const s = { entities: [{ type: 'Refund', id: 'r1', fields: { amount: 100 } }] } as any;
-    expect(evaluateCandidate(cand, m, s)).toBe(false);
-  });
+  it('forbids when the field is absent — the conjunction fails', () =>
+    expect(evaluateCandidate(cand, absent)).toBe('forbid'));
 
-  it('is true when the field is present, and defers to the comparison', () => {
-    const s = { entities: [{ type: 'Refund', id: 'r1', fields: { amount: 100, approvedAmount: 40 } }] } as any;
-    expect(evaluateCandidate(cand, m, s)).toBe(true);
-  });
+  it('permits when the field is present and the comparison holds', () =>
+    expect(evaluateCandidate(cand, present)).toBe('permit'));
 
-  it('an absent field alone still does not convict a bare comparison', () => {
+  // This is the whole reason present() exists: without it, absence SATISFIES the rule.
+  it('a bare comparison still permits an absent field — unknown facts do not convict', () => {
     const bare: Candidate = { kind: 'statePredicate', aggregate: 'Refund',
       body: { kind: 'cmp', op: 'gt', left: { kind: 'field', owner: 'self', path: ['approvedAmount'] }, right: { kind: 'int', value: 0 } } };
-    const s = { entities: [{ type: 'Refund', id: 'r1', fields: { amount: 100 } }] } as any;
-    expect(evaluateCandidate(bare, m, s)).toBe(true);   // evaluate.ts:45 — unknown facts don't convict
+    expect(evaluateCandidate(bare, absent)).toBe('permit');   // evaluate.ts:45
   });
 });
 ```
+
+Read `test/engine/evaluate.test.ts` before writing this and match its `CaseState` literal style — it is the reference for how these fixtures are built.
 
 - [ ] **Step 2: Run test to verify it fails**
 
