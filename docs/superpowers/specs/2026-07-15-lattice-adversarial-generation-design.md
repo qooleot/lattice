@@ -38,9 +38,14 @@ path. No solver in the loop; failures replay from a seed and shrink to a minimal
   binder/observe machinery (same bindings, same overrides). Real reads only.
 - **Oracle** — legality = from-state membership + `requires` via `evaluateCandidate` on the
   observed pre-state. Legal + rejected ⇒ violation (impl stricter than spec). Illegal probe +
-  accepted ⇒ violation (weakened guard, caught directly). Post-state checking = the driven DB
-  serialized as a standard snapshot and pushed through the unchanged slice-2 path (Tier 1 +
-  Tier 2 + crosschecks) — total reuse, no new checking machinery.
+  accepted ⇒ **post-accept re-attribution** (human ruling 2026-07-16, discovered by the first real
+  campaign: one impl entry point can serve multiple spec transitions, e.g. `voidInvoice` ←
+  voidDraft+voidOpen): the acceptance is a violation ONLY if no legal sibling transition explains
+  the observed pre→post step (Tier 2's single-step rule reused); a sibling match is recorded as a
+  narrative re-attribution. Honest limitation, reported never hidden: drift in one of two
+  transitions sharing an entry point can be masked by its legal sibling. Post-state checking = the
+  driven DB serialized as a standard snapshot and pushed through the unchanged slice-2 path
+  (Tier 1 + Tier 2 + crosschecks) — total reuse, no new checking machinery.
 
 **Target-side (`implementations/subscriptions/conform/drive.ts`):** the typed driver map —
 `transitions` (one entry per spec transition: how to induce it here), `superset` (ops the spec
