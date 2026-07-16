@@ -171,7 +171,63 @@ duplicate seed-1 run plus the 5 in-order seeds 1–5), each `kind: "conformance"
 ## Outcomes
 
 ### c01 — skipped emit
-**Verdict: PENDING**
+**Verdict: MISSED**
+
+Branch mechanics: `git checkout -b drive/c01 drift/c01-skipped-emit`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` — one conflict, in `.lattice-session-subscriptions/ledger.jsonl`,
+resolved as union (both sides' lines concatenated, no lines dropped, all validated as parseable
+JSON post-resolution). `git diff drift/c01-skipped-emit -- implementations/subscriptions/src` was
+empty after the merge — the drift edit (the deleted `appendEvent(db, SUBSCRIPTION_ACTIVATED, ...)`
+call in `activate()`, `implementations/subscriptions/src/subscription-service.ts`) survived intact.
+
+Seeds tried: 11, 12, 13 (all three pre-authorized seeds, per "stopping after 3 clean seeds =
+MISSED").
+
+| seed | verdict | commands (accepted/rejected/superset) | guards probed | re-attributions | duration |
+|------|---------|-----------------------------------------|------------------|--------------------|----------|
+| 11 | CLEAN | 53 (23/0/1) | 29 across 1 (`activate`) | 1 | 0.1s |
+| 12 | CLEAN | 53 (23/0/0) | 30 across 1 (`activate`) | 2 | 0.1s |
+| 13 | CLEAN | 45 (17/0/0) | 28 across 0 | 2 | 0.1s |
+
+Verbatim stdout, all three seeds:
+```
+drive: 200 sequences — CLEAN
+commands: 53 (23 accepted, 0 rejected, 1 superset ops)
+guards probed at event time: 29 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 1
+duration 0.1s
+```
+```
+drive: 200 sequences — CLEAN
+commands: 53 (23 accepted, 0 rejected, 0 superset ops)
+guards probed at event time: 30 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 2
+duration 0.1s
+```
+```
+drive: 200 sequences — CLEAN
+commands: 45 (17 accepted, 0 rejected, 0 superset ops)
+guards probed at event time: 28 attempts across 0 guarded transitions
+probe re-attributions (shared entry points; sibling-masking limitation applies): 2
+duration 0.1s
+```
+
+Registered substring `do not include observed final 'active'` (Tier 2, `machine
+Subscription.status`) does not appear in any of the three logs — grepped directly, zero matches.
+Exit code 0 on all three runs (all three commands exited clean, no violations, no loud abort).
+
+Recorded honestly per the zero-tuning rule: this is a genuine MISS against the pre-registered
+expectation, not a signal-miss/class-catch phrasing variant (unlike c03's precedent) — the
+registered element+witness simply never fired across all three pre-authorized seeds. The driver map
+does include `activate` (`implementations/subscriptions/conform/drive.ts:71`) and the walk clearly
+attempts guard probes against it every seed (`guardedTransitionsProbed: ["activate"]` on seeds 11
+and 12), so the transition is reachable as a probe target; what is not confirmed from the summary
+output alone is whether the walk ever drove `activate` to a full LEGAL acceptance (requiring
+`paid_invoice_count >= 1`, itself requiring a prior finalize+settle chain) within any of the 200×30
+sequences across these three seeds — that is a plausible structural explanation (multi-step
+precondition chain vs. the walk's exploration budget/bias) but is not verified further here, per
+zero-tuning: no additional flags, no re-scoping, no extra seeds beyond the three pre-authorized ones.
+Escalated as MISSED, verbatim, not patched.
 
 ### c02 — wrong event type
 **Verdict: PENDING**
