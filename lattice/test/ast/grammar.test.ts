@@ -161,6 +161,27 @@ describe('validateCandidate — structural shape validation', () => {
   });
 });
 
+// present(f) grammar-validation routing (grammar.ts:207 checkPred → checkPath): same choke point
+// as every other path-bearing predicate, so it inherits key-path/unrepresentable-path for free —
+// pinned here so a future change to checkPred can't silently stop routing 'present' through it.
+describe('validateCandidate — present() predicate', () => {
+  it('accepts present over a normal (non-key, solver-representable) field', () => {
+    const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'present', path: ['grace'] } };
+    expect(validateCandidate(c, model)).toEqual([]);
+  });
+  it('rejects present over a key field as key-path', () => {
+    const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'present', path: ['id'] } };
+    expect(validateCandidate(c, model).map(d => d.code)).toContain('key-path');
+  });
+  it('rejects present over a Text field as unrepresentable-path', () => {
+    const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'present', path: ['note'] } };
+    expect(validateCandidate(c, model).map(d => d.code)).toContain('unrepresentable-path');
+  });
+});
+
 describe('routeCandidate', () => {
   it('routes structural forms to alloy', () => {
     expect(routeCandidate(uniqueCand)).toBe('alloy');

@@ -316,6 +316,68 @@ describe('value objects', () => {
   });
 });
 
+// present(f) (grammar/parse/validate surface only — evaluator semantics covered separately by
+// test/engine/evaluate-present.test.ts). Pins: bare mapping, compound precedence (present binds
+// at atom level, same as cmp), and negation precedence (! present(x) needs no parens).
+describe('present() predicate', () => {
+  const SPEC = `context Billing {
+  aggregate Refund {
+    refundId : Id key
+    fee      : Money
+
+    invariant bare { present(fee) }
+    invariant compound { present(fee) && fee > 0 }
+    invariant negated { ! present(fee) }
+  }
+}
+`;
+
+  it('maps present(x) to { kind: "present", path: ["x"] }', () => {
+    const r = loadLatText(SPEC);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    const bare = r.invariants.find(i => i.name === 'bare')!;
+    expect(bare.candidate).toEqual({ kind: 'statePredicate', aggregate: 'Refund',
+      body: { kind: 'present', path: ['fee'] } });
+  });
+
+  it('maps present(x) && x > 0 with present as one conjunct', () => {
+    const r = loadLatText(SPEC);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const compound = r.invariants.find(i => i.name === 'compound')!;
+    expect(compound.candidate).toEqual({ kind: 'statePredicate', aggregate: 'Refund',
+      body: { kind: 'and', args: [
+        { kind: 'present', path: ['fee'] },
+        { kind: 'cmp', op: 'gt', left: { kind: 'field', owner: 'self', path: ['fee'] }, right: { kind: 'int', value: 0 } }] } });
+  });
+
+  it('maps !present(x) to a not wrapping present', () => {
+    const r = loadLatText(SPEC);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const negated = r.invariants.find(i => i.name === 'negated')!;
+    expect(negated.candidate).toEqual({ kind: 'statePredicate', aggregate: 'Refund',
+      body: { kind: 'not', arg: { kind: 'present', path: ['fee'] } } });
+  });
+
+  it('round-trips byte-identically through astToCode, incl. compound and negated forms', async () => {
+    const { astToCode } = await import('../../src/emit/code.js');
+    const r = loadLatText(SPEC);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const printed = astToCode(r.model, r.invariants);
+    expect(printed).toContain('invariant bare { present(fee) }');
+    expect(printed).toContain('invariant compound { present(fee) && fee > 0 }');
+    // precedence pin: present is atom-level (same as cmp), so negation needs no parens around it
+    expect(printed).toContain('invariant negated { ! present(fee) }');
+    const reparsed = loadLatText(printed);
+    expect(reparsed.ok, JSON.stringify(!reparsed.ok && reparsed.diagnostics)).toBe(true);
+    if (!reparsed.ok) return;
+    expect(reparsed.invariants.map(i => i.candidate)).toEqual(r.invariants.map(i => i.candidate));
+  });
+});
+
 // Task 12: services (design §3.6) — carried structure only. Surface block mirrors the design's
 // canonical SubscriptionService example (creates/read-only/performs + a param+field guard).
 describe('services', () => {

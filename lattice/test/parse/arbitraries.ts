@@ -109,7 +109,12 @@ function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[],
   const inState: fc.Arbitrary<Predicate> | null = agg.machine ? fc.constantFrom(...agg.machine.regions).chain(r =>
     fc.uniqueArray(fc.constantFrom(...r.states.map(s => s.name)), { minLength: 1, maxLength: r.states.length })
       .map(states => ({ kind: 'inState' as const, owner: 'self', region: r.name, states }))) : null;
-  const atoms = [cmpNum, ...(cmpEnum ? [cmpEnum] : []), ...(inState ? [inState] : [])];
+  // present(f): draws from the SAME numFields pool as cmpNum's field-term arm above — any other
+  // pool risks a key/Text/Id path, which checkPath (grammar.ts:207) rejects as key-path/unrepresentable-path.
+  const present: fc.Arbitrary<Predicate> | null = numFields.length
+    ? fc.constantFrom(...numFields).map(f => ({ kind: 'present' as const, path: [f.name] }))
+    : null;
+  const atoms = [cmpNum, ...(cmpEnum ? [cmpEnum] : []), ...(inState ? [inState] : []), ...(present ? [present] : [])];
   const atom = fc.oneof(...atoms);
   if (depth <= 0) return atom;
   const sub = predArb(agg, enums, depth - 1);
