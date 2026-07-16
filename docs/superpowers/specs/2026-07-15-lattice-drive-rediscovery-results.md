@@ -1695,7 +1695,73 @@ recorded. Not escalated as a structural MISS; not re-scoped or re-budgeted beyon
 rung.
 
 #### c09 — cross-aggregate activation (post-w6 route: crosscheck account_summary)
-**Verdict: PENDING**
+**Verdict: REDISCOVERED**
+
+Branch mechanics: `git checkout -b drive/c09 drift/c09-upgrade-activates`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `1051a17`) — one conflict, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved as union (both sides' lines concatenated,
+no lines dropped; all 205 resulting lines validated as parseable JSON post-resolution, 0 failures).
+`git diff drift/c09-upgrade-activates -- implementations/subscriptions/src` was empty after the
+merge — the drift edit (the `changePlan` carry-over block, force-activating the successor via
+direct SQL `UPDATE` + `appendEvent`, bypassing `activate()`'s `refreshAccountSummary` call)
+survived intact. `rm -rf implementations/subscriptions/.conform` before the runs; absent
+throughout.
+
+Seeds tried: 31, 32, 33.
+
+| seed | verdict | commands (accepted/rejected/superset) | driver skips | notes |
+|------|---------|----------------------------------------|-----------------|-------|
+| 31 | CLEAN | 95974 (21466/0/1732) | 23 | byte-identical to clean control at 12800 |
+| 32 | CLEAN | 95552 (21587/0/1689) | 21 | byte-identical to clean control at 12800 |
+| 33 | **FAILED** | 45260 (10234/0/871), 6184/12800 sequences run | 11 | caught, see below |
+
+Command, seed 33: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive
+--sequences 12800 --length 30 --seed 33`. Exit code 1.
+
+Verbatim stdout, seed 33:
+```
+drive: 6184 sequences — FAILED (seed 33)
+replay: lattice conform --target ../implementations/subscriptions --drive --seed 33
+commands: 45260 (10234 accepted, 0 rejected, 871 superset ops)
+guards probed at event time: 34155 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 1346
+driver skips (impl preconditions, audited): 11
+state coverage: Invoice.settlement{draft:14536, open:4478, paid:2694, uncollectible:1990, void:26185} Subscription.status{active:336, canceled:15180, expired:14426, trialing:19940}
+duration 5.0s
+narrative:
+  create Subscription#d-subscription-1 (seed=0) -> accepted
+  transition finalize on Invoice#d-subscription-1-inv-1 (rowPick=0, seed=0) legality=legal -> accepted
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition settle on Invoice#d-subscription-1-inv-1 (rowPick=0, seed=0) legality=legal -> accepted
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=legal -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  superset changePlanOp on Subscription#d-subscription-1 (rowPick=0, seed=0) -> accepted
+VIOLATION crosscheck account_summary (crosscheck account_summary) — witnesses [d-gen-1000480-266429] — status 'trialing' != lifecycle_state 'active' — anchors [target crosscheck (out-of-spec read model, design §6 class 13)] — source drive:20
+```
+
+Registered signal fires exactly as re-derived in the Step 1 registration: `crosscheck
+account_summary`, `status` field mismatch, verbatim `status 'trialing' != lifecycle_state
+'active'`, witness the drift-created successor (`d-gen-1000480-266429`). The narrative shows
+precisely the registered route: `finalize`+`settle` on the original invoice (legal, accepted), a
+legal `activate` accepted (line 15 in the full narrative), then `changePlanOp` (superset op,
+accepted) — the drift's carry-over block fires on the old sub's `active` state, force-activates the
+successor via direct SQL `UPDATE` (never calling `refreshAccountSummary`), leaving
+`account_summary.status` stuck at the successor's create-time value (`'trialing'`) while
+`subscriptions.lifecycle_state` reads `'active'` — caught by the end-of-sequence crosscheck sweep.
+Exactly 1 `VIOLATION` line (unlike several other classes' repeated-probe tails) — the successor was
+not touched again before the sequence ended, so the erasure risk flagged in the registration (a
+subsequent `cancel` resyncing `account_summary` via its own `refreshAccountSummary` call, as
+happened at campaign #2's seed 22) did not materialize on this particular run. `.conform` confirmed
+absent after all three runs.
+
+This closes the c09 gap the §7 investigation root-caused: the OLD route (`activePaidInFull`, now
+retired) was structurally vulnerable to same-sequence erasure before any checkpoint saw it; the NEW
+route (crosscheck `account_summary.status`) is the same underlying corruption viewed through a
+second, independently-written read-model artifact — still erasable in principle (same mechanism,
+registered honestly above) but caught on the very budget it was registered against, without needing
+the erasure to not-happen twice in a row across three seeds.
 
 ---
 
