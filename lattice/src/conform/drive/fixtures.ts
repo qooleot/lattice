@@ -145,3 +145,20 @@ export const strictDrivers: DriverModule = {
     transitions: { close: (_db, id) => { throw new Error(`strictDrivers.close: unconditional reject for '${id}'`); } },
   },
 };
+
+/** Driver-skip signal fixture (human ruling 2026-07-16, walk.ts): `close` ALWAYS throws the
+ *  `drive-skip:` signal, regardless of whether the pre-state made the intention spec-legal or
+ *  spec-illegal. This is deliberate: it proves the walk only ever HONORS the skip signal from the
+ *  legal branch — an intention that lands illegal (a probe) must still be counted as an ordinary
+ *  rejected probe when its driver throws the identical message, never as a skip. A skip must
+ *  never be able to mask a weakened-guard catch. */
+export const skipDrivers: DriverModule = {
+  drivers: {
+    create,
+    transitions: {
+      close: () => {
+        throw new Error('drive-skip: no open invoice — a payment cannot fail when nothing is owed (fixture)');
+      },
+    },
+  },
+};

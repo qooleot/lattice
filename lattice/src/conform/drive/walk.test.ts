@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { executeSequence } from './walk.js';
 import type { DriverModule } from './walk.js';
-import { tinyCtx, tinyDrivers, buggyDrivers, strictDrivers, mkTinyDb, tinyPlanWithSibling } from './fixtures.js';
+import { tinyCtx, tinyDrivers, buggyDrivers, strictDrivers, skipDrivers, mkTinyDb, tinyPlanWithSibling } from './fixtures.js';
 import { tinyModel } from '../fixtures.js';
 import type { Intention } from './intent.js';
 import type { GenPlan, PlanAggregate, PlanTransition } from '../../generate/plan.js';
@@ -117,6 +117,33 @@ describe('executeSequence', () => {
     expect(r.violations).toHaveLength(1);
     expect(r.violations[0]!.detail).toMatch(/accepted a spec-illegal command/);
     expect(r.stats.reattributions).toBe(0);
+  });
+
+  it('driver-skip signal: a legal transition whose driver throws drive-skip is counted as a ' +
+    'skip — not accepted, not rejected, no violation — with a narrative line naming the reason', () => {
+    // seed=2 (even) => tinyDrivers.create seeds balance 0 => close is spec-legal from openState.
+    const r = executeSequence(mkTinyDb, skipDrivers, tinyCtx(), seq(create(2), close(0)), OPTS);
+    expect(r.violations).toEqual([]);
+    expect(r.stats.driverSkips).toBe(1);
+    expect(r.stats.accepted).toBe(1);   // only the create; the skipped close is neither accepted...
+    expect(r.stats.rejected).toBe(0);   // ...nor rejected...
+    expect(r.stats.commands).toBe(1);   // ...nor counted as a command at all.
+    expect(r.narrative.some(line =>
+      line.includes('transition close on Account#d-account-1 → skipped (impl precondition:'))).toBe(true);
+  });
+
+  it('driver-skip signal is honored ONLY for spec-legal intentions: the identical drive-skip ' +
+    'thrown from an illegal probe still counts as an ordinary rejected probe, never a skip — a ' +
+    'skip must never mask a weakened-guard catch', () => {
+    // seed=1 (odd) => tinyDrivers.create seeds balance 500 => close is spec-ILLEGAL from openState
+    // (guard balance==0 fails) => this intention is executed via the probe/illegal branch, whose
+    // catch does not check the drive-skip prefix at all.
+    const r = executeSequence(mkTinyDb, skipDrivers, tinyCtx(), seq(create(1), probeClose(0)), OPTS);
+    expect(r.violations).toEqual([]);
+    expect(r.stats.driverSkips).toBe(0);
+    expect(r.stats.probesAttempted).toBe(1);
+    expect(r.stats.probesRejected).toBe(1);
+    expect(r.narrative.some(line => line.includes('skipped'))).toBe(false);
   });
 
   it('rowPick resolves against a live read, reaching a row created inside the driver (not tracked by any mirror)', () => {

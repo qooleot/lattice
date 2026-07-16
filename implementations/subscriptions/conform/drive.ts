@@ -90,12 +90,32 @@ const transitions: Record<keyof SpecDrivers['transitions'], Fn> = {
   // === 'active')`), so a driver that only forwarded the call would report false accepts for
   // probes from trialing/past_due — the same silent-no-op class as expireTrial: check the target
   // row's own lifecycle actually moved, throw when it didn't.
+  //
+  // drive-skip (pre-registered impl-strictness finding, campaign #2; d2-coverage-investigation.md
+  // §4a): the spec declares `paymentFailed` unconditionally legal from `active` — no `requires`
+  // clause, single-aggregate machine. But `recordPaymentFailure` (../src/dunning.ts) throws unless
+  // the subscription's CURRENT invoice is still `open` (`settlement_state !== 'open'`), an implicit
+  // cross-aggregate precondition the spec's Subscription-only state machine can't express and the
+  // walk's oracle can't see (it only scoped-observes the targeted aggregate). Reaching `active` at
+  // all already requires `paid_invoice_count >= 1` — i.e. the current invoice was already settled
+  // to `paid` — and nothing in this impl auto-rolls the subscription onto a fresh invoice on
+  // activation, so a legally-generated `paymentFailed` on an `active` row can genuinely have
+  // nothing open to fail. That is an impl-strictness fact, not a spec violation: `drive-skip:`
+  // reports it as audited-and-explained rather than surfacing the driver's throw as a false
+  // "impl rejected a spec-legal command" violation.
   paymentFailed: (db, id, gen) => {
     const d = DB(db);
     const sub = d.prepare('SELECT current_invoice_id, lifecycle_state FROM subscriptions WHERE id = ?')
       .get(id) as { current_invoice_id: string | null; lifecycle_state: string } | undefined;
-    if (!sub || !sub.current_invoice_id) throw new Error(`paymentFailed: subscription '${id}' has no current invoice`);
-    recordPaymentFailure(d, sub.current_invoice_id, gen.clock());
+    if (!sub) throw new Error(`paymentFailed: subscription '${id}' not found`);
+    const openInvoice = sub.current_invoice_id
+      ? d.prepare(`SELECT id FROM invoices WHERE id = ? AND settlement_state = 'open'`).get(sub.current_invoice_id)
+      : undefined;
+    if (!openInvoice) {
+      throw new Error('drive-skip: no open invoice — a payment cannot fail when nothing is owed ' +
+        '(pre-registered impl-strictness finding, campaign #2)');
+    }
+    recordPaymentFailure(d, sub.current_invoice_id!, gen.clock());
     const after = (d.prepare('SELECT lifecycle_state FROM subscriptions WHERE id = ?')
       .get(id) as { lifecycle_state: string }).lifecycle_state;
     if (after === sub.lifecycle_state) throw new Error('paymentFailed: no-op (lifecycle unchanged)');
@@ -181,3 +201,22 @@ const create: Partial<Record<keyof SpecDrivers['create'], Fn>> = {
 };
 
 export const drivers = { transitions, superset, create };
+
+// Superset aggregate/name binding (measured, d2-coverage-investigation.md §2 F3): each of these
+// six superset ops is hard-wired (traced from source above, not guessed) to operate on exactly
+// one aggregate's row id — `recordUsage`/`changeSeats`/`rollover`/`changePlanOp` all read/write a
+// `subscriptions` row by `id`; `partialPayment` (`recordPayment`) reads/writes an `invoices` row by
+// `id`; `dunningSweep` ignores its `id` argument entirely (a global sweep) but is bound to
+// Subscription here since that's the aggregate its effects land on. Declaring this lets
+// lattice's `intentionArb` pair `name` with the RIGHT aggregate instead of drawing them
+// independently and uniformly (previously ~33-59%, pooled ~50%, of superset attempts were wasted
+// on a mismatched aggregate whose row id gets fed into the wrong table's lookup and immediately
+// rejected).
+export const supersetAggregates: Record<string, string> = {
+  recordUsage: 'Subscription',
+  changeSeats: 'Subscription',
+  rollover: 'Subscription',
+  changePlanOp: 'Subscription',
+  partialPayment: 'Invoice',
+  dunningSweep: 'Subscription',
+};

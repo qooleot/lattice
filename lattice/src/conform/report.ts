@@ -174,7 +174,8 @@ export async function runDrive(targetDir: string, opts: DriveCliOpts):
   if (!existsSync(drivePath)) {
     throw new Error(`conform --drive: ${drivePath} must export 'drivers' (a transitions/superset/create map) — file not found`);
   }
-  const driveModule = await import(drivePath) as { drivers?: DriverModule['drivers'] };
+  const driveModule = await import(drivePath) as
+    { drivers?: DriverModule['drivers']; supersetAggregates?: Record<string, string> };
   const d = driveModule?.drivers;
   if (!d || typeof d !== 'object' || typeof d.transitions !== 'object' || d.transitions === null ||
       Object.keys(d.transitions).length === 0 || typeof d.create !== 'object' || d.create === null ||
@@ -191,11 +192,16 @@ export async function runDrive(targetDir: string, opts: DriveCliOpts):
 
   const ctx: CheckContext = { input, plan, overrides: ovModule.overrides, crosschecks: cc, optOuts: cfg.optOuts };
   const supersetNames = Object.keys(d.superset ?? {});
+  // Superset binding (measured, d2-coverage-investigation.md §2 F3): a target MAY export
+  // `supersetAggregates` (op name → the aggregate it actually targets) alongside `drivers` —
+  // missing entirely is a valid "no binding declared" answer, not an error, so every superset op
+  // keeps the prior random-aggregate behavior until a target opts in.
+  const supersetTargets = driveModule.supersetAggregates ?? {};
   const campaignOpts: CampaignOpts = {
     sequences: opts.sequences, length: opts.length, seed: opts.seed,
     checkEvery: opts.checkEvery, probeRate: opts.probeRate, clockStep: DRIVE_CLOCK_STEP,
   };
-  const result = runCampaign(mkDb, { drivers: d }, ctx, plan, supersetNames, campaignOpts);
+  const result = runCampaign(mkDb, { drivers: d }, ctx, plan, supersetNames, campaignOpts, supersetTargets);
 
   // residual/invariantsChecked/crosschecks mirror runConform's ledger fields exactly (same bind →
   // plan → crosscheck-declaration facts, mode-independent) so `readConformance` readers never need
@@ -226,6 +232,7 @@ export async function runDrive(targetDir: string, opts: DriveCliOpts):
         probesAttempted: result.stats.probesAttempted, probesRejected: result.stats.probesRejected,
         guardedTransitionsProbed: result.stats.guardedTransitionsProbed,
         reattributions: result.stats.reattributions,
+        driverSkips: result.stats.driverSkips,
         ...(result.clean ? {} : { shrunk: result.failure!.narrative }),
       },
     });

@@ -18,6 +18,12 @@ export interface DriveStats {
   probesAttempted: number; probesRejected: number; supersetOps: number;
   guardedTransitionsProbed: string[];
   reattributions: number;
+  // Driver-skip signal (human ruling 2026-07-16): a driver throwing 'drive-skip: <reason>' from
+  // the LEGAL branch only — see the try/catch below — is neither an accept nor a reject nor a
+  // violation. Deliberately NOT counted in `commands`/`accepted`/`rejected`: it is audited
+  // separately (formatCampaign always prints it) so it can never silently inflate or deflate
+  // those totals.
+  driverSkips: number;
 }
 export interface DriveResult {
   violations: ConformViolation[]; stats: DriveStats;
@@ -83,7 +89,7 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
   const createCounters: Record<string, number> = {};
   const stats: DriveStats = {
     commands: 0, accepted: 0, rejected: 0, probesAttempted: 0, probesRejected: 0,
-    supersetOps: 0, guardedTransitionsProbed: [], reattributions: 0,
+    supersetOps: 0, guardedTransitionsProbed: [], reattributions: 0, driverSkips: 0,
   };
   const guardedProbed = new Set<string>();
   const violations: ConformViolation[] = [];
@@ -159,12 +165,31 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
             driverFn(db, id, gen);
             stats.commands++; stats.accepted++;
             narrative.push(describeIntention(intention, id, 'legal', 'accepted'));
-          } catch {
-            stats.commands++; stats.rejected++;
-            violations.push(transitionViolation(t, id, source,
-              `impl rejected a spec-legal command: '${t.name}' was legal from the observed pre-state ` +
-              `(from-state + guard both held) but the driver threw`));
-            narrative.push(describeIntention(intention, id, 'legal', 'rejected (VIOLATION)'));
+          } catch (err) {
+            // Driver-skip signal (human ruling 2026-07-16, the paymentFailed opt-out): a driver
+            // may throw 'drive-skip: <reason>' to declare a real impl precondition the spec's
+            // single-aggregate state machine can't express (d2-coverage-investigation.md §4a) —
+            // the walk treats it as SKIPPED, neither an accept, a reject, nor a violation.
+            // CRITICAL: this prefix is honored ONLY here, in the LEGAL branch. The illegal/probe
+            // branch below has its own separate catch that does NOT check for this prefix — a
+            // drive-skip thrown from a spec-illegal probe still counts as an ordinary rejected
+            // probe (see the pinned test), so a weakened guard can never hide behind this escape
+            // hatch: the signal only ever suppresses a violation that would otherwise have fired
+            // against a command the spec itself says WAS legal.
+            const msg = err instanceof Error ? err.message : String(err);
+            const skipPrefix = 'drive-skip:';
+            if (msg.startsWith(skipPrefix)) {
+              stats.driverSkips++;
+              const reason = msg.slice(skipPrefix.length).trim();
+              narrative.push(
+                `${intention.kind} ${t.name} on ${intention.aggregate}#${id} → skipped (impl precondition: ${reason})`);
+            } else {
+              stats.commands++; stats.rejected++;
+              violations.push(transitionViolation(t, id, source,
+                `impl rejected a spec-legal command: '${t.name}' was legal from the observed pre-state ` +
+                `(from-state + guard both held) but the driver threw`));
+              narrative.push(describeIntention(intention, id, 'legal', 'rejected (VIOLATION)'));
+            }
           }
         } else {
           stats.commands++; stats.probesAttempted++;

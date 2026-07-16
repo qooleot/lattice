@@ -16,9 +16,27 @@ export type Intention =
  *  between 'transition' (expect legal) and 'probe' (deliberately try illegal) — the executor is
  *  the actual legality oracle, this only expresses generation-time INTENT. Weights must be
  *  integers (fast-check ^3 constraint), hence the *100 scaling. */
-export function intentionArb(plan: GenPlan, supersetNames: string[], probeRate: number): fc.Arbitrary<Intention> {
+// `createable` (measured, d2-coverage-investigation.md §2 "create's 50% waste"): the target's
+// driver map only supports creating SOME aggregates (e.g. Invoice rows are created internally by
+// a Subscription create driver's own transaction, never by a direct entry point) — sampling
+// `create` intentions uniformly over EVERY spec aggregate throws away roughly half the already-
+// small create budget on aggregates with no create driver at all, unconditionally skipped at
+// execution time. Restricting the draw to the driver map's own keys (runCampaign passes
+// `Object.keys(drivers.drivers.create)`) makes every generated create intention executable.
+//
+// `supersetTargets` (measured, §2 "F3 — superset aggregate mismatch"): superset ops are impl-
+// specific extras with no spec-declared aggregate of their own, so (unlike `txnPairs`, which binds
+// transition name to aggregate from the plan) there was nothing to bind `name` to `aggregate`
+// against — the two were drawn independently and uniformly, wasting ~50% of superset attempts on
+// a mismatched aggregate once they finally get enough rows to attempt at all. A target MAY declare
+// which aggregate each superset op actually targets (`supersetAggregates` in its drive module); for
+// ops present in that map, the mapped aggregate is used instead of the random draw. Ops absent
+// from the map (or when no map is supplied) keep the prior random-aggregate behavior.
+export function intentionArb(plan: GenPlan, supersetNames: string[], probeRate: number,
+  createable: string[], supersetTargets: Record<string, string> = {}): fc.Arbitrary<Intention> {
   const aggNames = plan.aggregates.map(a => a.name);
   if (aggNames.length === 0) throw new Error('intentionArb: plan has no aggregates to drive');
+  if (createable.length === 0) throw new Error('intentionArb: no createable aggregates — drivers.create is empty');
   const txnPairs = plan.aggregates.flatMap(a => a.transitions.map(t => ({ aggregate: a.name, name: t.name })));
 
   const seedArb = fc.nat(2 ** 31 - 1);
@@ -28,7 +46,7 @@ export function intentionArb(plan: GenPlan, supersetNames: string[], probeRate: 
   const legalWeight = 100 - probeWeight;
 
   const createArb: fc.Arbitrary<Intention> = fc.record({
-    kind: fc.constant('create' as const), aggregate: fc.constantFrom(...aggNames), seed: seedArb,
+    kind: fc.constant('create' as const), aggregate: fc.constantFrom(...createable), seed: seedArb,
   });
 
   const branches: { weight: number; arbitrary: fc.Arbitrary<Intention> }[] = [{ weight: 3, arbitrary: createArb }];
@@ -45,7 +63,8 @@ export function intentionArb(plan: GenPlan, supersetNames: string[], probeRate: 
   if (supersetNames.length > 0) {
     const supersetArb: fc.Arbitrary<Intention> = fc.tuple(
       fc.constantFrom(...supersetNames), fc.constantFrom(...aggNames), rowPickArb, seedArb,
-    ).map(([name, aggregate, rowPick, seed]) => ({ kind: 'superset' as const, name, aggregate, rowPick, seed }));
+    ).map(([name, randomAggregate, rowPick, seed]) =>
+      ({ kind: 'superset' as const, name, aggregate: supersetTargets[name] ?? randomAggregate, rowPick, seed }));
     branches.push({ weight: 2, arbitrary: supersetArb });
   }
 

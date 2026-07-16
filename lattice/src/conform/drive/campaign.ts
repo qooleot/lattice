@@ -26,7 +26,7 @@ export interface CampaignResult {
 function emptyStats(): DriveStats {
   return {
     commands: 0, accepted: 0, rejected: 0, probesAttempted: 0, probesRejected: 0,
-    supersetOps: 0, guardedTransitionsProbed: [], reattributions: 0,
+    supersetOps: 0, guardedTransitionsProbed: [], reattributions: 0, driverSkips: 0,
   };
 }
 
@@ -41,16 +41,27 @@ function accumulate(agg: DriveStats, guarded: Set<string>, s: DriveStats): void 
   agg.probesRejected += s.probesRejected;
   agg.supersetOps += s.supersetOps;
   agg.reattributions += s.reattributions;
+  agg.driverSkips += s.driverSkips;
   for (const t of s.guardedTransitionsProbed) guarded.add(t);
 }
 
 export function runCampaign(mkDb: () => Database.Database, drivers: DriverModule,
-  ctx: CheckContext, plan: GenPlan, supersetNames: string[], opts: CampaignOpts): CampaignResult {
+  ctx: CheckContext, plan: GenPlan, supersetNames: string[], opts: CampaignOpts,
+  supersetTargets: Record<string, string> = {}): CampaignResult {
   const startedAt = Date.now();
   const stats = emptyStats();
   const guarded = new Set<string>();
 
-  const arb = fc.array(intentionArb(plan, supersetNames, opts.probeRate), { maxLength: opts.length });
+  // Length floor (measured, d2-coverage-investigation.md §1): fast-check's default array-size
+  // schedule with no minLength ramps size far too slowly against a realistic numRuns budget — mean
+  // generated length was 4.4-5.1 against a configured maxLength of 30, so 94-95% of sequences ran
+  // zero commands. A minLength close to maxLength (here 2/3) forces genuinely deep sequences
+  // (measured mean 24.4-25.1 at minLength:20/maxLength:30) without pinning every run to the exact
+  // same length (shrinking still has room to work down to `Math.max(1, ...)`).
+  const createable = Object.keys(drivers.drivers.create);
+  const arb = fc.array(intentionArb(plan, supersetNames, opts.probeRate, createable, supersetTargets), {
+    minLength: Math.max(1, Math.floor(opts.length * 2 / 3)), maxLength: opts.length,
+  });
   const prop = fc.property(arb, seq => {
     const r = executeSequence(mkDb, drivers, ctx, seq, { checkEvery: opts.checkEvery, clockStep: opts.clockStep });
     accumulate(stats, guarded, r.stats);
@@ -90,10 +101,17 @@ export function formatCampaign(r: CampaignResult): string {
   const reattributionLine = s.reattributions > 0
     ? `probe re-attributions (shared entry points; sibling-masking limitation applies): ${s.reattributions}`
     : `probe re-attributions: 0`;
+  // Driver-skip signal (human ruling 2026-07-16, the paymentFailed opt-out): a driver may throw
+  // 'drive-skip: <reason>' to declare "this attempt hit a real impl precondition the spec's single-
+  // aggregate state machine can't express" — neither an accept nor a reject nor a violation. Always
+  // printed, even at 0, same "reported never hidden" reasoning as the re-attribution line above:
+  // audited means visible in every run, not just the runs where it fired.
+  const driverSkipLine = `driver skips (impl preconditions, audited): ${s.driverSkips}`;
   const statLines = [
     `commands: ${s.commands} (${s.accepted} accepted, ${s.rejected} rejected, ${s.supersetOps} superset ops)`,
     guardLine,
     reattributionLine,
+    driverSkipLine,
     `duration ${(r.durationMs / 1000).toFixed(1)}s`,
   ];
 
