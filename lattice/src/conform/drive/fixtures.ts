@@ -78,15 +78,23 @@ function closeOutbox(db: Database.Database, id: string, gen: DriveGenImpl): void
     .run(id, gen.clock());
 }
 
-/** CONFORMANT: close checks the guard itself (mirrors spec's balance == 0 requirement) and
- *  throws when violated — the target-side half of the guard, matched against the spec-side half
- *  the walk evaluates via evaluateCandidate. */
+/** CONFORMANT: close checks both halves of the transition itself — the from-state (mirrors the
+ *  spec's `from: ['openState']`) and the guard (mirrors the spec's balance == 0 requirement) —
+ *  and throws when either is violated. The from-state check matters for walk sequences that
+ *  fixed hand-written cases (walk.test.ts) never exercise: a second 'close' picked against an
+ *  already-closed row. Without it, this driver silently accepted a repeat close (idempotent
+ *  UPDATE, no SQL constraint stops it) — a real spec-illegal-command-accepted violation that only
+ *  a random seeded walk surfaces, exactly what campaign.ts's property-based coverage is for. */
 export const tinyDrivers: DriverModule = {
   drivers: {
     create,
     transitions: {
       close: (db, id, gen) => {
         const d = db as Database.Database;
+        const row = d.prepare('SELECT state FROM accounts WHERE id = ?').get(id) as { state: string } | undefined;
+        if (!row || row.state !== 'openState') {
+          throw new Error(`tinyDrivers.close: account '${id}' is not in openState (state=${row?.state ?? 'missing'})`);
+        }
         const bal = (d.prepare('SELECT COALESCE(SUM(amount),0) s FROM account_entries WHERE account_id = ?')
           .get(id) as { s: number }).s;
         if (bal !== 0) throw new Error(`tinyDrivers.close: balance ${bal} !== 0 for account '${id}'`);
