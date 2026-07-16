@@ -230,7 +230,38 @@ zero-tuning: no additional flags, no re-scoping, no extra seeds beyond the three
 Escalated as MISSED, verbatim, not patched.
 
 ### c02 — wrong event type
-**Verdict: PENDING**
+**Verdict: MISSED**
+
+Branch mechanics: `git checkout -b drive/c02 drift/c02-wrong-event`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` — same single conflict as c01, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved identically as union (validated as
+parseable JSON post-resolution). `git diff drift/c02-wrong-event -- implementations/subscriptions/src`
+was empty after the merge — the drift edit (the `cancel` transition emitting
+`SubscriptionActivated` instead of `SubscriptionCanceled`) survived intact.
+
+Seeds tried: 11, 12, 13 (all three pre-authorized seeds).
+
+| seed | verdict | commands (accepted/rejected/superset) | guards probed | re-attributions | duration |
+|------|---------|-----------------------------------------|------------------|--------------------|----------|
+| 11 | CLEAN | 53 (23/0/1) | 29 across 1 (`activate`) | 1 | 0.1s |
+| 12 | CLEAN | 53 (23/0/0) | 30 across 1 (`activate`) | 2 | 0.1s |
+| 13 | CLEAN | 45 (17/0/0) | 28 across 0 | 2 | 0.1s |
+
+Verbatim stdout, all three seeds — byte-identical to c01's per-seed output (see c01 section for the
+literal blocks; not reproduced twice here). Registered substring `stuck at event #2
+(SubscriptionActivated` does not appear in any of the three logs — grepped directly, zero matches.
+Exit code 0 on all three runs.
+
+Recorded honestly per the zero-tuning rule: another genuine MISS. **Notable pattern, recorded
+plainly and not smoothed over:** the per-seed command-trace statistics (accepted/rejected/superset
+counts, guards-probed counts, re-attribution counts) for c02 are identical to c01's at every one of
+the three seeds. This is consistent with the walk's next-command choice being driven purely by the
+PRNG seed plus the *spec* model (legality per spec, not per observed implementation behavior) —
+the same seed produces the same command trace regardless of which single-line drift is injected,
+as long as the drift does not itself change what the walk perceives as legal/illegal (neither c01's
+nor c02's drift touches guard evaluation). Combined with c01, this raises a real question about
+whether `activate` is being driven to a full LEGAL acceptance at all within 200×30 sequences at
+these three seeds — flagged as a concern for the campaign write-up, not resolved by tuning here.
 
 ### c03 — emit outside the transaction
 **Verdict: PENDING**
