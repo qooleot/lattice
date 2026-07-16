@@ -66,14 +66,4 @@ describe('generated service', () => {
     expect(rows[0].event_type).toBe('SubscriptionActivated');
     expect(rows[0].aggregate_id).toBe('x1');
   });
-
-  it('activate rejects when the guard passes but the post-state invariant fails, and rolls back', () => {
-    const db = new Database(':memory:'); db.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'));
-    insertInvoice(db, makeInvoice({ invoiceId: 'inv1', totalDue: 100, amountPaid: 40 }));
-    insertSubscription(db, makeSubscription({ subId: 'x1', status: 'trialing', periodStart: 0, periodEnd: 1, paidInvoiceCount: 1, latestInvoice: 'inv1' }));
-    const r = activate(db, 'x1');
-    expect(r.ok).toBe(false);
-    expect((getSubscription(db, 'x1') as any).status).toBe('trialing');
-    expect((db.prepare('SELECT COUNT(*) c FROM outbox').get() as any).c).toBe(0);
-  });
 });

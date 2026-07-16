@@ -3,7 +3,7 @@
 import type Database from 'better-sqlite3';
 import { getSubscription, updateSubscription, getInvoice, updateInvoice, appendOutbox } from './repo.js';
 export * from './repo.js';
-import { checkPositivePeriodNonNegativeUsage, checkActivePaidInFull, checkRetryCapWhilePastDue, checkTotalDueAtMostParts, checkNeverOverpaidAndPaidExact, checkNonNegativeInvoiceLicenseFeeAmount, checkNonNegativeInvoiceUsageAmount, checkNonNegativeInvoiceTotalDue, checkNonNegativeInvoiceAmountPaid, checkOneDraftInvoicePerSubscription } from './invariants.js';
+import { checkPositivePeriodNonNegativeUsage, checkRetryCapWhilePastDue, checkTotalDueAtMostParts, checkNeverOverpaidAndPaidExact, checkNonNegativeInvoiceLicenseFeeAmount, checkNonNegativeInvoiceUsageAmount, checkNonNegativeInvoiceTotalDue, checkNonNegativeInvoiceAmountPaid, checkOneDraftInvoicePerSubscription } from './invariants.js';
 
 export function flattenForChecks(db: Database.Database, row: any): any {
   const flat: any = { ...row };
@@ -22,7 +22,6 @@ export function activate(db: Database.Database, id: string): { ok: true; event?:
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
     if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
-    if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     appendOutbox(db, 'SubscriptionActivated', id, { subId: row.subId });
     return 'SubscriptionActivated';
@@ -41,7 +40,6 @@ export function expireTrial(db: Database.Database, id: string): { ok: true; even
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
     if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
-    if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     return undefined;
   });
@@ -59,7 +57,6 @@ export function paymentFailed(db: Database.Database, id: string): { ok: true; ev
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
     if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
-    if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     return undefined;
   });
@@ -77,7 +74,6 @@ export function recover(db: Database.Database, id: string): { ok: true; event?: 
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
     if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
-    if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     return undefined;
   });
@@ -95,7 +91,6 @@ export function cancel(db: Database.Database, id: string): { ok: true; event?: s
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
     if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
-    if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     appendOutbox(db, 'SubscriptionCanceled', id, { subId: row.subId });
     return 'SubscriptionCanceled';
@@ -114,7 +109,6 @@ export function dunningExhausted(db: Database.Database, id: string): { ok: true;
     updateSubscription(db, row);
     const checkRow = flattenForChecks(db, row);
     if (!(checkPositivePeriodNonNegativeUsage(checkRow))) throw { rejected: 'invariant positivePeriodNonNegativeUsage', anchors: ["elicited (w1, w2, w3, w4, w5)"] };
-    if (!(checkActivePaidInFull(checkRow))) throw { rejected: 'invariant activePaidInFull', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     if (!(checkRetryCapWhilePastDue(checkRow))) throw { rejected: 'invariant retryCapWhilePastDue', anchors: ["hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5"] };
     return undefined;
   });

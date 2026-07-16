@@ -26,15 +26,19 @@ describe('composed observe -> tier1 pipeline (positive control)', () => {
     db.pragma('foreign_keys = ON');
     db.exec(readFileSync(join(implDir, 'src/schema.sql'), 'utf8'));
 
-    // Active subscription whose latest invoice is 'open' with amountPaid=0, totalDue=5000
-    // (violates activePaidInFull: where inState(status active) => amountPaid == totalDue),
-    // plus two 'draft' invoices for the same subscription (violates
-    // oneDraftInvoicePerSubscription: unique by subscription while settlement in {draft}).
+    // Past-due subscription with max_retries=0 whose latest 'open' invoice carries one failed
+    // dunning attempt (violates retryCapWhilePastDue: where inState(status pastDue) =>
+    // latestInvoice.retryCount <= maxRetries — the state-guarded statePredicate channel; it was
+    // activePaidInFull until the w6 finalize-on-active ruling retired that invariant), plus two
+    // 'draft' invoices for the same subscription (violates oneDraftInvoicePerSubscription:
+    // unique by subscription while settlement in {draft}).
     db.exec(`
-      INSERT INTO subscriptions (id, plan_code, seats, period_start, period_end, current_invoice_id, lifecycle_state)
-      VALUES ('sub-1', 'pro', 2, 1000, 2000, 'sub-1-inv-open', 'active');
+      INSERT INTO subscriptions (id, plan_code, seats, period_start, period_end, max_retries, current_invoice_id, lifecycle_state)
+      VALUES ('sub-1', 'pro', 2, 1000, 2000, 0, 'sub-1-inv-open', 'past_due');
       INSERT INTO invoices (id, subscription_id, license_fee_amount, usage_amount, total_due, settlement_state)
       VALUES ('sub-1-inv-open', 'sub-1', 5000, 0, 5000, 'open');
+      INSERT INTO dunning_attempts (invoice_id, attempted_at, outcome)
+      VALUES ('sub-1-inv-open', 1500, 'failed');
       INSERT INTO invoices (id, subscription_id, license_fee_amount, usage_amount, total_due, settlement_state)
       VALUES ('sub-1-inv-draft1', 'sub-1', 1000, 0, 0, 'draft');
       INSERT INTO invoices (id, subscription_id, license_fee_amount, usage_amount, total_due, settlement_state)
@@ -50,8 +54,8 @@ describe('composed observe -> tier1 pipeline (positive control)', () => {
     db.close();
 
     const byInvariant = Object.fromEntries(violations.map(v => [v.invariant, v]));
-    expect(Object.keys(byInvariant).sort()).toEqual(['activePaidInFull', 'oneDraftInvoicePerSubscription']);
-    expect(byInvariant.activePaidInFull!.witnessIds).toEqual(['sub-1']);
+    expect(Object.keys(byInvariant).sort()).toEqual(['oneDraftInvoicePerSubscription', 'retryCapWhilePastDue']);
+    expect(byInvariant.retryCapWhilePastDue!.witnessIds).toEqual(['sub-1']);
     // Set-level violations (unique) pin ALL subjects of the aggregate, not just the offending
     // rows (tier1.ts's SET_LEVEL_KINDS handling) — here that's all three invoices.
     expect(byInvariant.oneDraftInvoicePerSubscription!.witnessIds.sort())

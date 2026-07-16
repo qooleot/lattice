@@ -24,7 +24,6 @@ Period invoice: license-fee portion plus usage portion; partial payments accrue
 ## Always true
 
 - On every Subscription: periodStart < periodEnd and accruedUnits ≥ 0.  (elicited (w1, w2, w3, w4, w5): positivePeriodNonNegativeUsage)
-- On every Subscription: where it is active, latestInvoice.amountPaid is latestInvoice.totalDue.  (hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5: activePaidInFull)
 - On every Subscription: where it is pastDue, latestInvoice.retryCount ≤ maxRetries.  (hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5: retryCapWhilePastDue)
 - On every Invoice: totalDue ≤ licenseFeeAmount + usageAmount.  (elicited (w1, w2): totalDueAtMostParts)
 - On every Invoice: amountPaid ≤ totalDue and if it is paid, then amountPaid is totalDue.  (elicited (w1, w2, w3): neverOverpaidAndPaidExact)

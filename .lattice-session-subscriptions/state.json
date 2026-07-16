@@ -1533,48 +1533,6 @@
     },
     {
       "inv": {
-        "id": "hand-activePaidInFull",
-        "name": "activePaidInFull",
-        "prior": 1,
-        "source": "template",
-        "candidate": {
-          "kind": "statePredicate",
-          "aggregate": "Subscription",
-          "body": {
-            "kind": "cmp",
-            "op": "eq",
-            "left": {
-              "kind": "field",
-              "owner": "self",
-              "path": [
-                "latestInvoice",
-                "amountPaid"
-              ]
-            },
-            "right": {
-              "kind": "field",
-              "owner": "self",
-              "path": [
-                "latestInvoice",
-                "totalDue"
-              ]
-            }
-          },
-          "where": {
-            "kind": "inState",
-            "owner": "self",
-            "region": "status",
-            "states": [
-              "active"
-            ]
-          }
-        },
-        "doc": "An active subscription's current invoice is paid in full (companion to the activate guard)."
-      },
-      "status": "adopted"
-    },
-    {
-      "inv": {
         "id": "hand-retryCapWhilePastDue",
         "name": "retryCapWhilePastDue",
         "prior": 1,

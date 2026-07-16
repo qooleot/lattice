@@ -1,6 +1,6 @@
 import type { GenPlan, PlanAggregate, PlanTransition } from '../plan.js';
 import type { Field, TypeRef } from '../../ast/domain.js';
-import type { Predicate } from '../../ast/invariant.js';
+import type { Predicate, Term } from '../../ast/invariant.js';
 
 // Renders the generated package's OWN vitest suite (service.test.ts): guard-rejection tests over a
 // real in-memory better-sqlite3, plus (for the transitions where we can synthesize a valid full seed)
@@ -154,6 +154,26 @@ function baselineInvariantOverrides(a: PlanAggregate): Record<string, number> {
   return overrides;
 }
 
+// Walks a predicate tree collecting every multi-segment `field` term path (a cross-row reach
+// through a ref, e.g. `latestInvoice.amountPaid`) so the activate special-case below can confirm
+// the cross-row invariant it exercises actually exists in the plan.
+function refReachPaths(p: Predicate): string[][] {
+  const fromTerm = (t: Term): string[][] => {
+    switch (t.kind) {
+      case 'field': return t.path.length > 1 ? [t.path as string[]] : [];
+      case 'plus': return [...fromTerm(t.left), ...fromTerm(t.right)];
+      default: return [];
+    }
+  };
+  switch (p.kind) {
+    case 'cmp': return [...fromTerm(p.left), ...fromTerm(p.right)];
+    case 'and': case 'or': return p.args.flatMap(refReachPaths);
+    case 'not': return refReachPaths(p.arg);
+    case 'implies': return [...refReachPaths(p.left), ...refReachPaths(p.right)];
+    case 'inState': return [];
+  }
+}
+
 // The `activate` success + outbox scenario is the one place the task-9 brief asks us to synthesize
 // a FULL passing seed across a cross-row invariant (activePaidInFull reaches through
 // `latestInvoice`). We special-case it here rather than trying to generalize invariant-satisfying
@@ -194,6 +214,24 @@ function activateSuccessAndInvariantRejectionTests(plan: GenPlan): string[] {
     `  expect(rows[0].event_type).toBe('${activate.emits}');\n` +
     `  expect(rows[0].aggregate_id).toBe('x1');\n` +
     `});`;
+
+  // The rejection scenario exercises a cross-row invariant reaching through the latestInvoice ref
+  // in the POST-activate state (historically activePaidInFull: `where active`, an unpaid latest
+  // invoice forbids the state activate lands in). Its premise needs an invariant that (a) applies
+  // in activate's target state — no `where`, or a `where inState` naming `activate.to` — and (b)
+  // ref-reaches through the invoice ref in its body. A `where`-scope elsewhere (e.g.
+  // retryCapWhilePastDue's `pastDue`) is vacuous post-activate and does not count. If no such
+  // invariant exists anymore — e.g. the w6 finalize-on-active ruling retired activePaidInFull
+  // (net-30: an active sub may legitimately carry an unpaid latest invoice) — the seeded partial
+  // payment is spec-legal post-activate and the test's premise is gone: skip it (same
+  // skip-silently posture as the shape detection above), keep the success test.
+  const appliesPostActivate = (where: Predicate | undefined): boolean =>
+    where === undefined || (where.kind === 'inState' && where.states.includes(activate.to));
+  const reachesThroughInvoiceRef = sub.invariants.some(inv =>
+    inv.candidate.kind === 'statePredicate'
+    && appliesPostActivate(inv.candidate.where)
+    && refReachPaths(inv.candidate.body).some(path => path[0] === invoiceField.name));
+  if (!reachesThroughInvoiceRef) return [success];
 
   const invariantRejection =
     `it('${activate.name} rejects when the guard passes but the post-state invariant fails, and rolls back', () => {\n` +

@@ -70,10 +70,11 @@ describe('differential: generated invariant checks vs evaluateCandidate oracle',
   }
 
   it('sanity: tested a non-trivial number of (invariant × witness) pairs', () => {
-    // 21 statePredicate + 9 unique pairs from the six elicited invariants, plus 20 pairs from the
-    // four implied Money non-negativity invariants the plan gate now unions in (5 witnesses each)
-    // — the derived-enforcement fix found by the pipeline-from-scratch test.
-    expect(pairCount).toBe(21 + 9 + 20);
+    // 16 statePredicate + 9 unique pairs from the five explicit invariants (activePaidInFull's 5
+    // pairs retired by the w6 finalize-on-active ruling — net-30: removed via apply --force-remove),
+    // plus 20 pairs from the four implied Money non-negativity invariants the plan gate now unions
+    // in (5 witnesses each) — the derived-enforcement fix found by the pipeline-from-scratch test.
+    expect(pairCount).toBe(16 + 9 + 20);
   });
 
   // Teeth: the suite must not be vacuously all-permit — real forbids must be exercised.

@@ -42,9 +42,6 @@ context Subscriptions {
     /// A billing period is well-ordered and accrued usage never goes negative.
     invariant positivePeriodNonNegativeUsage { periodStart < periodEnd && accruedUnits >= 0 }
 
-    /// An active subscription's current invoice is paid in full (companion to the activate guard).
-    invariant activePaidInFull where state status in {active} { latestInvoice.amountPaid == latestInvoice.totalDue }
-
     /// While past due, dunning retries on the current invoice never exceed the subscription's cap.
     invariant retryCapWhilePastDue where state status in {pastDue} { latestInvoice.retryCount <= maxRetries }
   }

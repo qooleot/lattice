@@ -5,11 +5,6 @@ export function checkPositivePeriodNonNegativeUsage(row: any): boolean {
   return ((row.periodStart < row.periodEnd) && (row.accruedUnits >= 0));
 }
 
-// spec: invariant activePaidInFull  [provenance: hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5; judged witnesses exercising aggregate Subscription: w1, w2, w3, w4, w5]
-export function checkActivePaidInFull(row: any): boolean {
-  return (!(['active'].includes(row.status)) || (row.latestInvoice.amountPaid === row.latestInvoice.totalDue));
-}
-
 // spec: invariant retryCapWhilePastDue  [provenance: hand-edited 2026-07-08, consistent with w1, w2, w3, w4, w5; judged witnesses exercising aggregate Subscription: w1, w2, w3, w4, w5]
 export function checkRetryCapWhilePastDue(row: any): boolean {
   return (!(['pastDue'].includes(row.status)) || (row.latestInvoice.retryCount <= row.maxRetries));
