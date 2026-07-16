@@ -1,7 +1,7 @@
 import type { Diagnostic, Predicate, Term } from './invariant.js';
 import type { DomainModel, Field, TypeRef } from './domain.js';
 import { ownedCollectionChild } from './domain.js';
-import { RESERVED_WORDS } from './reserved.js';
+import { PRIM_NAMES, RESERVED_WORDS } from './reserved.js';
 
 export const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -90,22 +90,40 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       out.push({ code: 'reserved-word', message: `${kind} name '${value}' is a .lat keyword and cannot be used as an identifier`, at });
   };
 
+  /**
+   * Declaration names in the type namespace — the enum/value/entity/aggregate pool that mapType
+   * resolves a bare `NamedType` against. A prim name here is ambiguous, not merely confusing: the
+   * grammar has one production for every named type, so a bare `Id` always resolves to the prim
+   * and never to the declaration. For value/enum that breaks print∘parse outright; for
+   * entity/aggregate it silently hijacks the bare form while `ref X` still works. See
+   * ast/reserved.ts for why both are covered.
+   *
+   * Events and services deliberately use plain checkName — neither is reachable from a type
+   * position, so `event Id {}` names nothing that `Id` could be confused with.
+   */
+  const checkTypeName = (kind: string, value: string, at?: string) => {
+    checkName(kind, value, at);
+    if (PRIM_NAMES.has(value))
+      out.push({ code: 'reserved-prim-name', at,
+        message: `${kind} name '${value}' is a built-in primitive type name — a field typed '${value}' always resolves to the primitive, so the declaration could never be reached by that name` });
+  };
+
   checkName('context', m.context);
   for (const en of m.enums) {
-    checkName('enum', en.name, en.name);
+    checkTypeName('enum', en.name, en.name);
     for (const v of en.values) checkName('enum value', v, `${en.name}.${v}`);
   }
   for (const v of m.values) {
-    checkName('value', v.name, v.name);
+    checkTypeName('value', v.name, v.name);
     for (const f of v.fields) checkName('field', f.name, `${v.name}.${f.name}`);
     for (const inv of v.invariants ?? []) checkName('invariant', inv.name, inv.name);
   }
   for (const e of m.entities) {
-    checkName('entity', e.name, e.name);
+    checkTypeName('entity', e.name, e.name);
     for (const f of e.fields) checkName('field', f.name, `${e.name}.${f.name}`);
   }
   for (const a of m.aggregates) {
-    checkName('aggregate', a.name, a.name);
+    checkTypeName('aggregate', a.name, a.name);
     for (const f of a.fields) checkName('field', f.name, `${a.name}.${f.name}`);
     for (const r of a.machine?.regions ?? []) {
       checkName('machine region', r.name, `${a.name}.${r.name}`);
@@ -194,7 +212,9 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   m.aggregates.forEach(a => {
     checkFields(a.fields, a.name, true);
     for (const child of a.entities ?? []) {
-      checkName('entity', child.name, `${a.name}.${child.name}`);
+      // nested children share the type namespace (duplicate-name pool above, `owners` below), so a
+      // prim-named child has its bare form hijacked exactly as a top-level entity's would be
+      checkTypeName('entity', child.name, `${a.name}.${child.name}`);
       checkFields(child.fields, `${a.name}.${child.name}`, true);   // missing-key covers child-key-required
       for (const f of child.fields) {
         if (f.type.kind === 'ref' || f.type.kind === 'list' || f.type.kind === 'value')

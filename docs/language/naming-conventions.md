@@ -97,11 +97,49 @@ poor style — the printer could not even re-emit it as valid syntax. See
 [`RESERVED_WORDS`](../../lattice/src/ast/reserved.ts) for the complete, hand-maintained list
 (kept in lockstep with the grammar by a sync test): `aggregate`, `anticorruption`, `by`, `conformist`, `conserve`, `const`, `contains`, `context`, `contextMap`, `count`, `creates`, `downstream`, `emits`, `entity`, `enum`, `event`, `exposes`, `fairness`, `from`, `in`, `invariant`, `key`, `leads`, `lifecycle`, `List`, `monotonic`, `now`, `of`, `on`, `openHost`, `partnership`, `performs`, `present`, `publishedLanguage`, `read-only`, `ref`, `refs`, `requires`, `resolve`, `roles`, `service`, `sharedKernel`, `state`, `states`, `sum`, `terminal`, `ticksPerDay`, `to`, `transition`, `under`, `unique`, `upstream`, `value`, `when`, `where`, `while`, `with`.
 
+## Primitive type names are reserved for the type namespace
+
+The built-in primitive type names — `Int`, `Text`, `Date`, `Duration`, `Money`, `Id` — cannot name
+an enum, value, entity, or aggregate. That is `reserved-prim-name`, a hard error that fails the
+load. It is narrower than the reserved-word rule above, and it fails for a different reason.
+
+The grammar has no primitive production at all: `Id` and a declared `Invoice` parse through the very
+same `NamedType: name=ID` rule, and the split happens after parsing, where a name matching a
+primitive wins. So a bare `Id` in a type position *always* means the primitive, and a declaration
+called `Id` can never be reached by its own name.
+
+For a value or an enum that is fatal, because a bare name is their only spelling. Both fields below
+print the identical type expression `Id` — one meaning the primitive, one meaning the value — with
+nothing to tell them apart on the way back in, so the file no longer means what the model said:
+
+```
+aggregate Subscription {
+  subscriptionId : Id key     // the primitive
+  legacyId       : Id const   // the value — re-parses as the primitive, silently
+}
+```
+
+Entities and aggregates are reserved for a softer reason. They have a second spelling, `ref Id`,
+which is unambiguous and is what the printer always emits — so a prim-named entity does survive a
+round-trip. But the bare form is still silently hijacked: writing `foo : Id` meaning your entity
+`Id` gets you the primitive with no diagnostic. The rule covers them to keep that trap out of the
+language, and to keep one rule rather than one per construct.
+
+A reserved word, by contrast, cannot lex as an identifier at all, so the printer would emit
+unparseable text; a primitive name lexes fine and re-parses as the *wrong type*. Because this
+collision lives in the surface syntax rather than the lexer, it is scoped to names a type
+expression can resolve to. Events and services are not in that namespace — no type expression
+resolves to one — so `event Id { ... }` is unambiguous and stays legal, as does a field named
+`Money`.
+
 ## Semantic Rules
 
 - Every identifier must match `/^[A-Za-z_][A-Za-z0-9_]*$/`, else `invalid-name`.
 - Every identifier is checked against the reserved-word set, regardless of case; a match is
   `reserved-word` (hard error).
+- Enum/value/entity/aggregate names (including aggregate-nested entities) are additionally checked
+  against the primitive type names; a match is `reserved-prim-name` (hard error). Events, services,
+  contexts, and fields are exempt — none is reachable from a type position.
 - Case-convention mismatches per the table above are `naming-convention` (warning); the same
   identifier can be both correctly-cased and reserved-word-clean, or neither, independently.
 - A field literally named `state` gets its own dedicated diagnostic, `reserved-field-name`, ahead

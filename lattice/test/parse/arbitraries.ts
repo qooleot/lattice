@@ -3,7 +3,7 @@ import type { DomainModel, AggregateDef, EntityDef, Field, EventDef, Machine, St
   TransitionDef, TypeRef, ValueDef, ServiceDef, MethodDef, ParamDef } from '../../src/ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Cmp } from '../../src/ast/invariant.js';
 import { ownedCollectionChild } from '../../src/ast/domain.js';
-import { RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
+import { PRIM_NAMES, RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
 import type { ContextMapModel, Relationship, RelationshipKind, Role } from '../../src/ast/contextmap.js';
 import { defaultPath } from '../../src/ast/contextmap.js';
 
@@ -14,6 +14,15 @@ const ident = (first: string) => fc.tuple(
   .map(([a, b]) => a + b).filter(s => !RESERVED.has(s));
 const camel = ident(lower);
 const pascal = ident('ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+/**
+ * Names of things a bare type expression can resolve to (enum/value/entity/aggregate). Prim names
+ * are excluded for the same reason `ident` excludes RESERVED_WORDS — validateModel rejects them
+ * (`reserved-prim-name`), so drawing one produces an invalid model, and the round-trip property
+ * would fail on a spec the language does not admit. Scoped to declaration names rather than folded
+ * into `pascal` on purpose: enum *values* also draw from `pascal` and are not in the type
+ * namespace, so `enum E { Id }` stays legal and stays covered.
+ */
+const typeName = pascal.filter(n => !PRIM_NAMES.has(n));
 const uniqNames = (arb: fc.Arbitrary<string>, min: number, max: number) =>
   fc.uniqueArray(arb, { minLength: min, maxLength: max });
 
@@ -415,32 +424,35 @@ function finalSpecArb(context: string, doc: string | undefined, ticksPerDay: num
 }
 
 export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateInvariant[] }> =
-  fc.tuple(pascal, uniqNames(pascal, 0, 2), fc.option(docText, { nil: undefined }))
+  // context name stays `pascal`: a context is not a type, so `context Id {}` is unambiguous
+  fc.tuple(pascal, uniqNames(typeName, 0, 2), fc.option(docText, { nil: undefined }))
     .chain(([ctx, enumNames, topDoc]) =>
       fc.tuple(
         fc.constant(ctx), fc.constant(topDoc),
         fc.array(fc.tuple(fc.constant(0), uniqNames(camel, 1, 3)), { minLength: enumNames.length, maxLength: enumNames.length })
           .map(vals => enumNames.map((name, i) => ({ name, values: vals[i]![1] }))),
-        uniqNames(pascal.filter(n => !enumNames.includes(n)), 1, 2))
+        uniqNames(typeName.filter(n => !enumNames.includes(n)), 1, 2))
       .chain(([context, doc, enums, aggNames]) =>
         // owner/event NAMES first (all mutually disjoint) so machines can reference events
         // via `when` and entity fields can `ref` any owner
         fc.tuple(
-          uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)), 0, 2),
+          uniqNames(typeName.filter(n => !enumNames.includes(n) && !aggNames.includes(n)), 0, 2),
           fc.option(fc.integer({ min: 1, max: 100 }), { nil: undefined }))
         .chain(([entityNames, ticksPerDay]) =>
+          // event names stay `pascal` (not `typeName`): no type expression resolves to an event, so
+          // a prim-named event is unambiguous and validateModel allows it — worth covering
           uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n) && !entityNames.includes(n)), 0, 2)
           .chain(eventNames =>
             // nested-entity child names: disjoint from every top-level name AND from each other
             // (validate's duplicate-name pool is flat across enum/entity/aggregate/nested-entity
             // names), one optional slot per aggregate, each drawn ~1/3 of the time.
-            uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
+            uniqNames(typeName.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
               && !entityNames.includes(n) && !eventNames.includes(n)), 0, aggNames.length)
             .chain(childNamePool =>
             // optional single value type (Task 10, design §3.5), name disjoint from every other
             // top-level name; drawn ~1/2 the time and, when present, made eligible as a field type
             // on every aggregate (fieldArb decides per-field, at low weight, whether to use it).
-            fc.option(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
+            fc.option(typeName.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
               && !entityNames.includes(n) && !eventNames.includes(n) && !childNamePool.includes(n)),
               { nil: undefined })
             .chain(valueName =>
