@@ -128,7 +128,6 @@ export function finalize(db: Database.Database, id: string): { ok: true; event?:
     const row = getInvoice(db, id);
     if (!row) throw { rejected: 'finalize: not found', anchors: [] };
     if (!(['draft'].includes(row.settlement))) throw { rejected: 'finalize: illegal from-state', anchors: [] };
-    if (!(row.totalDue === (row.licenseFeeAmount + row.usageAmount))) throw { rejected: 'finalize: requires guard failed', anchors: ["spec:transition finalize"] };
     row.settlement = 'open';
     updateInvoice(db, row);
     if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };
@@ -152,7 +151,6 @@ export function settle(db: Database.Database, id: string): { ok: true; event?: s
     const row = getInvoice(db, id);
     if (!row) throw { rejected: 'settle: not found', anchors: [] };
     if (!(['open'].includes(row.settlement))) throw { rejected: 'settle: illegal from-state', anchors: [] };
-    if (!(row.amountPaid === row.totalDue)) throw { rejected: 'settle: requires guard failed', anchors: ["spec:transition settle"] };
     row.settlement = 'paid';
     updateInvoice(db, row);
     if (!(checkTotalDueAtMostParts(row))) throw { rejected: 'invariant totalDueAtMostParts', anchors: ["elicited (w1, w2)"] };

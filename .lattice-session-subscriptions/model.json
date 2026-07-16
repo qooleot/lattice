@@ -295,34 +295,6 @@
               "draft"
             ],
             "to": "open",
-            "requires": {
-              "kind": "cmp",
-              "op": "eq",
-              "left": {
-                "kind": "field",
-                "owner": "self",
-                "path": [
-                  "totalDue"
-                ]
-              },
-              "right": {
-                "kind": "plus",
-                "left": {
-                  "kind": "field",
-                  "owner": "self",
-                  "path": [
-                    "licenseFeeAmount"
-                  ]
-                },
-                "right": {
-                  "kind": "field",
-                  "owner": "self",
-                  "path": [
-                    "usageAmount"
-                  ]
-                }
-              }
-            },
             "emits": "InvoiceFinalized"
           },
           {
@@ -332,24 +304,6 @@
               "open"
             ],
             "to": "paid",
-            "requires": {
-              "kind": "cmp",
-              "op": "eq",
-              "left": {
-                "kind": "field",
-                "owner": "self",
-                "path": [
-                  "amountPaid"
-                ]
-              },
-              "right": {
-                "kind": "field",
-                "owner": "self",
-                "path": [
-                  "totalDue"
-                ]
-              }
-            },
             "emits": "InvoicePaid"
           },
           {

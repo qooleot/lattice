@@ -69,8 +69,8 @@ Period invoice: license-fee portion plus usage portion; partial payments accrue
 ```mermaid
 stateDiagram-v2
   [*] --> draft
-  draft --> open: finalize [totalDue == licenseFeeAmount + usageAmount] / InvoiceFinalized
-  open --> paid: settle [amountPaid == totalDue] / InvoicePaid
+  draft --> open: finalize / InvoiceFinalized
+  open --> paid: settle / InvoicePaid
   draft --> void: voidDraft
   open --> void: voidOpen
   open --> uncollectible: writeOff

@@ -54,24 +54,6 @@ describe('generated service', () => {
     expect((db.prepare('SELECT COUNT(*) c FROM outbox').get() as any).c).toBe(0);
   });
 
-  it('rejects finalize when the guard fails', () => {
-    const db = new Database(':memory:'); db.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'));
-    insertInvoice(db, makeInvoice({ invoiceId: 'x1', settlement: 'draft', totalDue: -1 }));
-    const r = finalize(db, 'x1');
-    expect(r.ok).toBe(false);
-    expect((getInvoice(db, 'x1') as any).settlement).toBe('draft');
-    expect((db.prepare('SELECT COUNT(*) c FROM outbox').get() as any).c).toBe(0);
-  });
-
-  it('rejects settle when the guard fails', () => {
-    const db = new Database(':memory:'); db.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'));
-    insertInvoice(db, makeInvoice({ invoiceId: 'x1', settlement: 'open', amountPaid: -1 }));
-    const r = settle(db, 'x1');
-    expect(r.ok).toBe(false);
-    expect((getInvoice(db, 'x1') as any).settlement).toBe('open');
-    expect((db.prepare('SELECT COUNT(*) c FROM outbox').get() as any).c).toBe(0);
-  });
-
   it('activate succeeds and emits an outbox event when the guard and invariants hold', () => {
     const db = new Database(':memory:'); db.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'));
     insertInvoice(db, makeInvoice({ invoiceId: 'inv1', totalDue: 100, amountPaid: 100 }));

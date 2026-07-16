@@ -12,7 +12,7 @@ A customer's subscription to a Plan; usage accrues per billing period and resets
 
 Period invoice: license-fee portion plus usage portion; partial payments accrue
 
-**settlement lifecycle:** draft → open (finalize — only if totalDue is licenseFeeAmount + usageAmount, announces InvoiceFinalized), open → paid (terminal) (settle — only if amountPaid is totalDue, announces InvoicePaid), draft → void (terminal) (voidDraft), open → void (terminal) (voidOpen), open → uncollectible (terminal) (writeOff)
+**settlement lifecycle:** draft → open (finalize, announces InvoiceFinalized), open → paid (terminal) (settle, announces InvoicePaid), draft → void (terminal) (voidDraft), open → void (terminal) (voidOpen), open → uncollectible (terminal) (writeOff)
 
 ## Services
 

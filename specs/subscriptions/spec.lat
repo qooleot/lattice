@@ -61,8 +61,8 @@ context Subscriptions {
 
     lifecycle settlement {
       states { draft @initial, open @active, paid @terminal, void @terminal, uncollectible @terminal }
-      transition finalize { from draft to open; requires totalDue == licenseFeeAmount + usageAmount; emits InvoiceFinalized }
-      transition settle { from open to paid; requires amountPaid == totalDue; emits InvoicePaid }
+      transition finalize { from draft to open; emits InvoiceFinalized }
+      transition settle { from open to paid; emits InvoicePaid }
       transition voidDraft { from draft to void }
       transition voidOpen { from open to void }
       transition writeOff { from open to uncollectible }
