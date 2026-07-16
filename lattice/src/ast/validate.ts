@@ -172,6 +172,13 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       checkType(f.type, `${v.name}.${f.name}`);
       checkReservedField(f, `${v.name}.${f.name}`);
       if (f.key) out.push({ code: 'value-no-key', message: `value ${v.name}.${f.name}: value types are keyless — structural equality replaces identity (design §3.5)`, at: `${v.name}.${f.name}` });
+      // Same rule as the field-level optional-value above, one level down and for the same reason:
+      // the whole value flattens into `<field>_<sub>` sig relations, so a sub-field has no more of
+      // its own multiplicity to carry than the value itself does. Alloy's sub-field loop emits
+      // `one` regardless of the marker (making present(w.end) a tautology) while quint emits a real
+      // nested `endPresent` flag — the two solvers then disagree on whether absence is reachable,
+      // which is the divergence this code exists to forbid.
+      if (f.optional) out.push({ code: 'optional-value', message: `value ${v.name}.${f.name} cannot be optional — a value type flattens into its sub-fields for the solvers, so there is no field for the optionality marker to attach to`, at: `${v.name}.${f.name}` });
       if (f.const) out.push({ code: 'value-no-const', message: `value ${v.name}.${f.name} cannot be const — value types are immutable by structure`, at: `${v.name}.${f.name}` });
       // Note: `const` on a KEY field (entity/aggregate) is deliberately tolerated silently — a key
       // is immutable by nature, so redundant `const` there is harmless and not worth a diagnostic.

@@ -1,4 +1,4 @@
-import type { DomainModel, AggregateDef, EntityDef } from '../ast/domain.js';
+import type { DomainModel, AggregateDef, EntityDef, Field } from '../ast/domain.js';
 import { isQualifiedRef, ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, Path, Predicate, Term } from '../ast/invariant.js';
 import type { SalientFact } from '../engine/session.js';
@@ -113,6 +113,44 @@ function alloyFieldPath(m: DomainModel, ownerName: string, v: string, p: Path): 
   return alloyPath(v, p);
 }
 
+/**
+ * Every intermediate `lone` ref hop a path crosses, as the Alloy expression naming that hop —
+ * the counterpart of quint.ts's refHopsIn (which gates on a record's `exists` flag; here the
+ * relation's own emptiness IS the absence). A required hop stays `one` in emitOwnerSig, so it can
+ * never be empty and needs no gate; a `lone` hop can be, and Alloy's empty-set semantics DECIDE
+ * rather than permit — `x.method.fee > 0` is FALSE, not vacuous, when `x.method` is empty. Without
+ * these gates Alloy forbids the very shape the evaluator (evaluate.ts:45, "unknown facts don't
+ * convict") and quint (`allExist implies cmp`) both permit.
+ *
+ * Paths through a value-typed field flatten to one `_`-joined relation (alloyFieldPath) and reach
+ * only prims, so they cross no ref hop; a trailing `<Region>.state` segment is not a field.
+ */
+function alloyRefHops(m: DomainModel, ownerName: string, v: string, p: Path): string[] {
+  const hops: string[] = [];
+  let owner: string | undefined = ownerName;
+  let expr = v;
+  for (let i = 0; i < p.length; i++) {
+    const seg = p[i]!;
+    if (/^\w+\.state$/.test(seg)) break;
+    const f: Field | undefined = owner ? ownerByName(m, owner)?.fields.find(x => x.name === seg) : undefined;
+    if (!f) break;
+    if (f.type.kind === 'value') break;
+    expr = `${expr}.${seg}`;
+    if (i === p.length - 1 || f.type.kind !== 'ref') break;
+    if (f.optional) hops.push(expr);
+    owner = f.type.target;
+  }
+  return hops;
+}
+
+function termRefHops(m: DomainModel, ownerName: string, t: Term, v: string): string[] {
+  switch (t.kind) {
+    case 'field': return alloyRefHops(m, ownerName, v, t.path);
+    case 'plus': return [...termRefHops(m, ownerName, t.left, v), ...termRefHops(m, ownerName, t.right, v)];
+    default: return [];
+  }
+}
+
 function inStateExpr(agg: string, v: string, region: string, states: string[]): string {
   return '(' + states.map(s => `${v}.${region}_state = ${agg}_${region}_${s}`).join(' or ') + ')';
 }
@@ -132,7 +170,15 @@ function predToAlloy(m: DomainModel, ownerName: string, p: Predicate, agg: strin
     case 'cmp': {
       const l = termToAlloy(m, ownerName, p.left, v), r = termToAlloy(m, ownerName, p.right, v);
       const ops: Record<string, string> = { eq: '=', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' };
-      return `(${l} ${ops[p.op]} ${r})`;
+      const cmp = `(${l} ${ops[p.op]} ${r})`;
+      // Permit polarity, forced by evaluate.ts:45 and mirrored on quint.ts's cmp arm: an operand
+      // read through an absent optional hop is unknown, not a fact, so the comparison must be
+      // vacuously TRUE — hence `implies`. Contrast `present` below, whose gate is a conjunction
+      // because present reads absence as a fact and must be FALSE on an ungrounded hop.
+      const hops = [...termRefHops(m, ownerName, p.left, v), ...termRefHops(m, ownerName, p.right, v)];
+      if (hops.length === 0) return cmp;
+      const allExist = [...new Set(hops)].map(h => `some ${h}`).join(' and ');
+      return `((${allExist}) implies ${cmp})`;
     }
     case 'inState': return inStateExpr(agg, v, p.region, p.states);
     // Must go through alloyFieldPath, same as termToAlloy's field arm: a path through a

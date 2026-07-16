@@ -319,11 +319,14 @@ describe('value objects', () => {
 // present(f) (grammar/parse/validate surface only — evaluator semantics covered separately by
 // test/engine/evaluate-present.test.ts). Pins: bare mapping, compound precedence (present binds
 // at atom level, same as cmp), and negation precedence (! present(x) needs no parens).
+// `fee` must be optional: present() over a required field is `present-not-optional` (grammar.ts),
+// and loadLatText treats a validation diagnostic as a parse failure, so a required `fee` would
+// fail every case here for a reason unrelated to what they pin.
 describe('present() predicate', () => {
   const SPEC = `context Billing {
   aggregate Refund {
     refundId : Id key
-    fee      : Money
+    fee      : Money?
 
     invariant bare { present(fee) }
     invariant compound { present(fee) && fee > 0 }

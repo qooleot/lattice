@@ -204,7 +204,20 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
     switch (p.kind) {
       case 'cmp': checkTerm(p.left, at); checkTerm(p.right, at); break;
       case 'inState': checkOwner(p.owner, at); checkStates(p.region, p.states, at); break;
-      case 'present': checkPath(p.path, at); break;
+      // The sibling of absence-undecided: that gate rejects a read of an optional field with no
+      // present(); this one rejects a present() of a field that cannot be absent. Over a required
+      // field present() is not merely redundant — Alloy renders it `some x.f`, a tautology, while
+      // quint.ts reads `x.fPresent`, a companion flag emitted only for optional fields, so real
+      // quint fails to typecheck. Routing hides the split (a present-only body is Alloy-routed),
+      // but an adoption conjoins it into every later Quint query. resolveFieldPath returning null
+      // means the path is already reported by checkPath.
+      case 'present': {
+        checkPath(p.path, at);
+        const f = resolveFieldPath(m, c.aggregate, p.path);
+        if (f && !f.optional)
+          out.push({ code: 'present-not-optional', message: `path ${p.path.join('.')} is not optional — present(${p.path.join('.')}) asks a question that cannot have two answers; drop it, or mark the field ${p.path.join('.')} optional with \`?\``, at });
+        break;
+      }
       case 'and': case 'or': p.args.forEach((a, i) => checkPred(a, `${at}.${p.kind}[${i}]`)); break;
       case 'not': checkPred(p.arg, at); break;
       case 'implies': checkPred(p.left, `${at}.if`); checkPred(p.right, `${at}.then`); break;

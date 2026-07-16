@@ -17,7 +17,10 @@ const model: any = {
       { name: 'grace', type: { kind: 'prim', prim: 'Duration' } },
       { name: 'dueDate', type: { kind: 'prim', prim: 'Date' } },
       { name: 'status', type: { kind: 'enum', enum: 'Status' } },
-      { name: 'note', type: { kind: 'prim', prim: 'Text' } }
+      { name: 'note', type: { kind: 'prim', prim: 'Text' } },
+      // The one optional field here: present() is legal only over one (present-not-optional), and
+      // nothing else in this file reads it, so it cannot pull absence-undecided into another case.
+      { name: 'discount', type: { kind: 'prim', prim: 'Money' }, optional: true }
     ],
     machine: { regions: [{ name: 'Access', initial: 'Trialing', states: [{ name: 'Trialing' }, { name: 'Active', tags: ['active'] }, { name: 'Ended', tags: ['terminal'] }] }], transitions: [] }
   }],
@@ -165,10 +168,15 @@ describe('validateCandidate — structural shape validation', () => {
 // as every other path-bearing predicate, so it inherits key-path/unrepresentable-path for free —
 // pinned here so a future change to checkPred can't silently stop routing 'present' through it.
 describe('validateCandidate — present() predicate', () => {
-  it('accepts present over a normal (non-key, solver-representable) field', () => {
+  it('accepts present over a normal (non-key, solver-representable) optional field', () => {
+    const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
+      body: { kind: 'present', path: ['discount'] } };
+    expect(validateCandidate(c, model)).toEqual([]);
+  });
+  it('rejects present over a required field as present-not-optional', () => {
     const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
       body: { kind: 'present', path: ['grace'] } };
-    expect(validateCandidate(c, model)).toEqual([]);
+    expect(validateCandidate(c, model).map(d => d.code)).toContain('present-not-optional');
   });
   it('rejects present over a key field as key-path', () => {
     const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',

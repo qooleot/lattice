@@ -56,6 +56,27 @@ describe('absence-undecided', () => {
   });
 });
 
+// present() only means something over a field that can actually be absent. Over a required field
+// it is the constant `true` in Alloy (`some x.amount`) but a read of a flag Quint never declares
+// (`x.amountPresent` — real quint: "Trying to unify { exists: bool, amount: int } and
+// { amountPresent: _t | tail__t }", typechecking failed). Routing hides it: a present-only body
+// routes to Alloy, then poisons every Quint query once adopted (expressibleAdopted).
+describe('present-not-optional', () => {
+  it('rejects present() over a required field', () =>
+    expect(codes(sp({ kind: 'present', path: ['amount'] }))).toContain('present-not-optional'));
+
+  it('does not fire for present() over an optional field', () =>
+    expect(codes(sp({ kind: 'present', path: ['approvedAmount'] }))).toEqual([]));
+
+  it('fires from anywhere in the body, not just the top', () =>
+    expect(codes(sp({ kind: 'implies', left: { kind: 'present', path: ['amount'] }, right: approved() })))
+      .toContain('present-not-optional'));
+
+  it('fires from a where-guard too', () =>
+    expect(codes(sp(approved(), { kind: 'and', args: [{ kind: 'present', path: ['approvedAmount'] }, { kind: 'present', path: ['amount'] }] })))
+      .toContain('present-not-optional'));
+});
+
 const invoiceModel = (lineFields: any[]): DomainModel => ({
   context: 'Opt', ticksPerDay: 24, enums: [], values: [], entities: [], events: [], services: [],
   aggregates: [{ kind: 'aggregate', name: 'Invoice', fields: [

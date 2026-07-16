@@ -35,6 +35,29 @@ describe('optional fields — structural rules', () => {
       [{ kind: 'value', name: 'Window', fields: [{ name: 'len', type: { kind: 'prim', prim: 'Int' } }] }]);
     expect(validateModel(m).map(d => d.code)).toContain('optional-value');
   });
+
+  // Same unsoundness as the field-level rule, one level down: a value type flattens into
+  // `<field>_<sub>` sig relations, and alloy.ts's sub-field loop has no multiplicity to vary — it
+  // emits `one Int` whatever the marker says, so `present(window.end)` is a tautology in Alloy
+  // while quint.ts's nested `endPresent` flag makes it nondeterministic. The two solvers disagree
+  // on whether absence is reachable, which is exactly what optional-value exists to prevent.
+  it('rejects an optional sub-field of a value type', () => {
+    const m = model(
+      [{ name: 'window', type: { kind: 'value', value: 'Window' } }],
+      [{ kind: 'value', name: 'Window', fields: [
+        { name: 'start', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'end', type: { kind: 'prim', prim: 'Int' }, optional: true }] }]);
+    expect(validateModel(m).map(d => d.code)).toContain('optional-value');
+  });
+
+  it('accepts a value type whose sub-fields are all required', () => {
+    const m = model(
+      [{ name: 'window', type: { kind: 'value', value: 'Window' } }],
+      [{ kind: 'value', name: 'Window', fields: [
+        { name: 'start', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'end', type: { kind: 'prim', prim: 'Int' } }] }]);
+    expect(validateModel(m)).toEqual([]);
+  });
 });
 
 describe('optional fields — surface round-trips', () => {

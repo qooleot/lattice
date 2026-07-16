@@ -118,13 +118,15 @@ function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[],
   const inState: fc.Arbitrary<Predicate> | null = agg.machine ? fc.constantFrom(...agg.machine.regions).chain(r =>
     fc.uniqueArray(fc.constantFrom(...r.states.map(s => s.name)), { minLength: 1, maxLength: r.states.length })
       .map(states => ({ kind: 'inState' as const, owner: 'self', region: r.name, states }))) : null;
-  // present(f): draws from numFields — the unfiltered pool, optional fields included, unlike
-  // cmpNum's field-term arm above. present() carries no absence obligation of its own (checkAbsence
-  // ignores it), so an optional path is legal here and is the only shape that exercises `?` fields
-  // in a generated predicate at all. The pool must stay numeric-prim: any wider and it risks a
-  // key/Text/Id path, which checkPath (grammar.ts:207) rejects as key-path/unrepresentable-path.
-  const present: fc.Arbitrary<Predicate> | null = numFields.length
-    ? fc.constantFrom(...numFields).map(f => ({ kind: 'present' as const, path: [f.name] }))
+  // present(f): the mirror image of cmpFields — OPTIONAL-only, where that pool is required-only.
+  // present() carries no absence obligation of its own (checkAbsence ignores it), but it asks a
+  // question a required field cannot answer two ways, which grammar.ts rejects as
+  // `present-not-optional`. This is the only shape that exercises `?` fields in a generated
+  // predicate at all. The pool must stay numeric-prim: any wider and it risks a key/Text/Id path,
+  // which checkPath rejects as key-path/unrepresentable-path.
+  const presentFields = numFields.filter(f => f.optional);
+  const present: fc.Arbitrary<Predicate> | null = presentFields.length
+    ? fc.constantFrom(...presentFields).map(f => ({ kind: 'present' as const, path: [f.name] }))
     : null;
   const atoms = [cmpNum, ...(cmpEnum ? [cmpEnum] : []), ...(inState ? [inState] : []), ...(present ? [present] : [])];
   const atom = fc.oneof(...atoms);

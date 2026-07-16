@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { astToQuint } from '../../src/emit/quint.js';
+import { validateModel } from '../../src/ast/validate.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 import { impliedInvariants } from '../../src/engine/implied.js';
 
@@ -54,23 +55,23 @@ describe('quint — present() beyond a one-hop own field', () => {
     expect(src).toContain('var methods: str -> { exists: bool, fee: int, feePresent: bool }');
   });
 
-  const mVal: DomainModel = {
-    context: 'OptVal', ticksPerDay: 24, enums: [],
-    values: [{ kind: 'value', name: 'Window', fields: [
-      { name: 'start', type: { kind: 'prim', prim: 'Int' } },
-      { name: 'end', type: { kind: 'prim', prim: 'Int' }, optional: true }] }],
-    entities: [],
-    aggregates: [{ kind: 'aggregate', name: 'Plan', fields: [
-      { name: 'planId', type: { kind: 'prim', prim: 'Id' }, key: true },
-      { name: 'window', type: { kind: 'value', value: 'Window' } }] }],
-    events: [], services: []
-  };
-
-  it('a value hop reads the flag inside the nested record, which declares it', () => {
-    const src = astToQuint(mVal, { kind: 'probe-permit', hi: { kind: 'statePredicate', aggregate: 'Plan',
-      body: { kind: 'present', path: ['window', 'end'] } }, exclusions: [], maxSteps: 0 }).source;
-    expect(src).toContain('x.window.endPresent');
-    expect(src).toContain('window: { start: int, end: int, endPresent: bool }');
+  // A value hop cannot reach an optional sub-field: validateModel rejects the declaration itself
+  // (optional-value), because Alloy's sub-field loop has no multiplicity to give it — it emits
+  // `one Int` whatever the marker says, so `present(window.end)` is a tautology there while quint
+  // would make it nondeterministic. No emission test can be written for a model that cannot load.
+  it('a value sub-field cannot be optional in the first place', () => {
+    const mVal: DomainModel = {
+      context: 'OptVal', ticksPerDay: 24, enums: [],
+      values: [{ kind: 'value', name: 'Window', fields: [
+        { name: 'start', type: { kind: 'prim', prim: 'Int' } },
+        { name: 'end', type: { kind: 'prim', prim: 'Int' }, optional: true }] }],
+      entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Plan', fields: [
+        { name: 'planId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'window', type: { kind: 'value', value: 'Window' } }] }],
+      events: [], services: []
+    };
+    expect(validateModel(mVal).map(d => d.code)).toContain('optional-value');
   });
 });
 

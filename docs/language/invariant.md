@@ -178,12 +178,18 @@ and you need do nothing. If what you meant is "a Payment must **not** be able to
 fee," this form cannot say it — the thing the rule truly depends on is the payment method's
 existence, and it has to be read directly, with `present(paymentMethod)` in the rule.
 
-This is not a second rule bolted on for optionality. **Every ref-hop in this language already
-resolves vacuously when its target is absent**, and has since before optional fields existed: the
-evaluator returns `undefined` for a hop it cannot resolve and its comparison then permits
-(`evaluate.ts`), and the Quint emitter wraps each comparison as `allExist implies cmp` so Apalache
-cannot manufacture a counterexample by reading through a record no action ever created. An absent
-optional ref is the same fact as a ref pointing at nothing, so it gets the same answer. Making the
+This is not a second rule bolted on for optionality. **Every ref-hop in this language resolves
+vacuously when its target is absent, in all three engines**: the evaluator returns `undefined` for
+a hop it cannot resolve and its comparison then permits (`evaluate.ts`); the Quint emitter wraps
+each comparison as `allExist implies cmp` so Apalache cannot manufacture a counterexample by
+reading through a record no action ever created (`quint.ts`); and the Alloy emitter wraps each
+comparison as `(some <hop>) implies cmp` for every optional hop it crosses (`alloy.ts`). Alloy
+needed that gate only once optionality existed — before `lone`, every relation was `one`, so a hop
+could not be empty and the vacuity was free. It is not free now: Alloy's empty join **decides**
+rather than permits (`x.paymentMethod.fee > 0` is *false*, not vacuous, on an empty
+`x.paymentMethod`), which would forbid exactly the method-less `Payment` this page promises is
+satisfied. An absent optional ref is the same fact as a ref pointing at nothing, so it gets the
+same answer from all three. Making the
 end of a path explicit while leaving its hops vacuous is what keeps optionality from silently
 re-deciding rules already written.
 
@@ -208,6 +214,11 @@ widening of this one.
 - A predicate body reading a path that **ends at** an optional field, with no dominating
   `present()`, reports `absence-undecided`. A path that ends at a required field does not, even if
   it hops through an optional ref — see above.
+- The mirror rule: `present(f)` on a path that ends at a **required** field reports
+  `present-not-optional`. A required field is never absent, so the question has only one answer —
+  and the two solvers do not even agree on how to say it (Alloy renders it as the tautology
+  `some x.f`; Quint reads a `fPresent` flag it only emits for optional fields, and fails to
+  typecheck). Drop the `present()`, or mark the field `?`.
 - A predicate whose shape exactly matches a [derived invariant](derived-invariants.md) is not
   rejected — it loads, but is reported as `redundant-invariant` (a warning, not an error) and is
   not printed; the derived rule already covers it.

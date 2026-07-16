@@ -127,9 +127,14 @@ So `?` on `Text`/`Id` is documentation of intent, not a constraint: nothing the 
 nothing an invariant can appeal to. `Money?`, `Int?`, `Date?`, `Duration?`, enum, and `ref` fields
 are the ones where optionality carries semantic weight — `present(owner)` on `owner : ref Other?`
 is accepted, Alloy gives the field a `lone` relation, and Quint gives it a real presence flag
-(`ownerPresent`), so both solvers agree on whether absence is reachable. A `value`-typed field is
-not on that list: `?` on one is rejected outright (`optional-value`, see Semantic Rules). So the
-list is exhaustive — every type `?` is *legal* on either carries semantic weight or is `Text`/`Id`.
+(`ownerPresent`), so both solvers agree on whether absence is reachable. Value types are not on
+that list, at either level: `?` on a `value`-typed field **and** `?` on a sub-field of a `value`
+declaration are both rejected outright (`optional-value`, see Semantic Rules). A value flattens
+into `<field>_<sub>` sig relations for Alloy, which has no multiplicity left to vary at either
+level — it would emit `one` whatever the marker said, making `present(window.end)` a tautology
+while Quint made it a real flag, and the two solvers would then disagree about the very thing
+this list promises they agree on. So the list is exhaustive — every type `?` is *legal* on either
+carries semantic weight or is `Text`/`Id`.
 
 ## Semantic Rules
 
@@ -146,6 +151,9 @@ list is exhaustive — every type `?` is *legal* on either carries semantic weig
 - A `value`-typed field cannot be optional (`optional-value`) — a value type flattens into its
   sub-fields for the solvers (`window : Window` becomes Alloy's `window_len`, not a `window`
   relation), so there is no single field for the optionality marker to attach to.
+- Neither can a **sub-field of a `value` declaration** (`optional-value` again, reported on the
+  value): `value Window { end : Int? }` is rejected for the same reason one level down — the
+  sub-field is already a flattened `one` relation with no multiplicity of its own to carry.
 - A field named `state` is always rejected (`reserved-field-name`), regardless of type — `state`
   is reserved for lifecycle-state path accessors.
 
