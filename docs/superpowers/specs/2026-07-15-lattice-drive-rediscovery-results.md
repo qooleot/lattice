@@ -1765,71 +1765,89 @@ the erasure to not-happen twice in a row across three seeds.
 
 ---
 
-## Verdict (design §5 criteria — human ruling required on Criterion 1)
+## Final Verdict (design §5 criteria — campaigns #1, #2, #3 combined)
 
-This section assesses campaign #2 (§6 above, work-branch tip `e608123`→`5322cb3` per-class,
-document tip `4c2d857`) plus §7's c09 investigation against
-`docs/superpowers/specs/2026-07-15-lattice-adversarial-generation-design.md` §5. All figures below
-are read directly from §§1-7 of this document; none are re-derived from unrecorded runs.
+This section assesses the FULL series — campaign #1 (§§1-2, Task 2 summary), campaign #2 (§6),
+§7's c09 root-cause investigation, and campaign #3 (registration + outcomes above, including the
+w6 finalize-on-active amendment that landed between campaign #2 and campaign #3) — against
+`docs/superpowers/specs/2026-07-15-lattice-adversarial-generation-design.md` §5. This supersedes
+the interim campaign-#2-only verdict; every figure below is read directly from this document's own
+sections, none re-derived from unrecorded runs.
 
-### Criterion 1 — Drift rediscovery 13/13: **NOT MET AS REGISTERED — 10/13**
+### Criterion 1 — Drift rediscovery 13/13: **NOT MET AS REGISTERED — 11/13 (final)**
 
-| class | verdict | seed(s) | discriminating evidence |
-|---|---|---|---|
-| c01 skipped-emit | REDISCOVERED | 21 | Tier 2 substring exact match, 5 VIOLATION lines |
-| c02 wrong-event | REDISCOVERED | 21 | Tier 2 substring exact match, 2 VIOLATION lines |
-| c03 emit-outside-tx | REDISCOVERED | 21 | both registered substrings, fires on seq 1 (depth-independent) |
-| c04 weakened-guard | REDISCOVERED (Route B) | 21 | direct probe-accept, seq 1, first probe of the campaign |
-| c05 win-back | REDISCOVERED | 21 | multi-hop chain confirmed reachable at seq 59/1600 |
-| **c06 state-rename** | **MISSED — reachability gap** | 21,22,23 | §7(c): 0/84 rollover attempts ever passed the active-state guard; 0 past_due flips in 4818 sweeps/3 seeds |
-| c07 partial-write | REDISCOVERED | 21 | Tier 1 exact witness, seq 42/1600 |
-| **c08 two-drafts** | **MISSED — reachability gap** | 21,22,23 | §7(c): `needsBilling` evaluated 0/4800 sequences — same active-state bottleneck as c06 |
-| **c09 upgrade-activates** | **MISSED — oracle/sweep-cadence gap** | 21,22,23 | §7(a)(b): 1/98 changePlanOp attempts DID land on an active sub (seed 22); successor DID land active-unpaid; NOT caught because a same-sequence, spec-legal `cancel` on that row resolved it before the end-of-sequence sweep (raw-DB confirmed) |
-| c10 column-rename | REDISCOVERED-LOUD | 21 | bind abort, exit 2, depth-independent |
-| c11 stale-override | REDISCOVERED-LOUD | 21 | observe abort, exit 2, depth-independent |
-| c12 proration-total | REDISCOVERED | 21 | Tier 1 + crosscheck collateral, seq 282/1600 |
-| c13 stale-read-model | REDISCOVERED | 21 | crosscheck both substrings, seq 42/1600 |
+| class | verdict | campaign | seed(s) | discriminating evidence |
+|---|---|---|---|---|
+| c01 skipped-emit | REDISCOVERED | #2 | 21 | Tier 2 substring exact match, 5 VIOLATION lines |
+| c02 wrong-event | REDISCOVERED | #2 | 21 | Tier 2 substring exact match, 2 VIOLATION lines |
+| c03 emit-outside-tx | REDISCOVERED | #2 | 21 | both registered substrings, fires on seq 1 (depth-independent) |
+| c04 weakened-guard | REDISCOVERED (Route B) | #2 | 21 | direct probe-accept, seq 1, first probe of the campaign |
+| c05 win-back | REDISCOVERED | #2 | 21 | multi-hop chain confirmed reachable at seq 59/1600 |
+| **c06 state-rename** | **MISSED-COVERAGE-BOUNDED** | #3 | 31,32,33 @ 12800 | `pastDue` never observed at 0/12 budget-setting runs (1600-12800) nor 0/3 class runs — confirmed budget ceiling, not a structural gap |
+| c07 partial-write | REDISCOVERED | #2 | 21 | Tier 1 exact witness, seq 42/1600 |
+| **c08 two-drafts** | **MISSED-COVERAGE-BOUNDED** | #3 | 31,32,33 @ 12800 | command-trace byte-identical to clean control at all 3 seeds; `rollover`-lands-on-active-with-draft-invoice precondition not independently confirmed either way at the registered ceiling |
+| c09 upgrade-activates | REDISCOVERED | #3 | 33 @ 12800 (31,32 clean) | route re-derived post-w6: `crosscheck account_summary`, `status 'trialing' != lifecycle_state 'active'`, exact registered signal |
+| c10 column-rename | REDISCOVERED-LOUD | #2 | 21 | bind abort, exit 2, depth-independent |
+| c11 stale-override | REDISCOVERED-LOUD | #2 | 21 | observe abort, exit 2, depth-independent |
+| c12 proration-total | REDISCOVERED | #2 | 21 | Tier 1 + crosscheck collateral, seq 282/1600 |
+| c13 stale-read-model | REDISCOVERED | #2 | 21 | crosscheck both substrings, seq 42/1600 |
 
-**10/13 REDISCOVERED(-LOUD), 3/13 MISSED.** Criterion 1 as registered ("13/13... a rediscovery
-failure is recorded and escalated, never re-scoped") is **NOT MET**. Per the registration's own
-rule, these three misses are escalated here for a human ruling, not re-scoped or patched. §7's
-investigation gives the misses two *different* characters — c09 is a real, root-caused mechanism
-gap (state reached, violation existed, checkpoint missed it); c06/c08 are unconfirmed reachability
-(the shared precondition was never observed to hold at all) — which the human ruling may want to
-weigh differently. Options for the human's consideration (not adjudicated here):
+**11/13 REDISCOVERED(-LOUD), 2/13 MISSED-COVERAGE-BOUNDED (final).** Criterion 1 as registered
+("13/13... a rediscovery failure is recorded and escalated, never re-scoped") is **NOT MET**, but
+every miss is now a *measured budget finding*, not an open structural question. The interim
+campaign-#2 verdict recorded three misses and escalated a human ruling among three options; the
+human selected the coverage-metric-budget path (option 2), executed here as campaign #3:
 
-- **Accept as a registered limitation and record a follow-up.** Document the sweep-cadence gap
-  (c09) and the `active`-state reachability ceiling (c06/c08) as known, bounded gaps of this
-  generator design at its current budget; no further campaign work required to ship.
-- **A registered campaign #3 with a coverage-metric budget** (e.g. "run until N actives-driven is
-  observed" rather than a fixed sequence count) — directly targets the reachability half (c06/c08)
-  and would let c09's oracle gap re-surface (or not) at a measured, pre-registered `active`-state
-  exposure level instead of an arbitrary sequence count.
-- **A targeted-steering design amendment** — e.g. bias the walk's row-selection or command-mix
-  toward rows that recently reached a state a still-unexercised invariant cares about, and/or add a
-  post-step (not just per-sequence) Tier-1 check for invariants known to be state-churn-sensitive —
-  would address c09's mechanism directly and might incidentally help c06/c08's reachability too, at
-  the cost of new generator complexity and a new thing to keep zero-tuned.
+- **c09 flipped to REDISCOVERED.** §7's root cause (a same-sequence, spec-legal `cancel` erasing
+  the corrupting state before the end-of-sequence sweep) was real, but it was a property of the
+  *old* `activePaidInFull` route, not of the walk's ability to reach the corrupting state at all —
+  §7(a)/(b) already proved the state WAS reached (seed 22, campaign #2). Once `activePaidInFull`
+  retired (w6) and c09's route was re-derived to `crosscheck account_summary` (campaign #3
+  registration, verified against the drift branch's diff before running), the class caught cleanly
+  at seed 33/12800 — the erasure risk was flagged honestly in the registration as still theoretically
+  present on the new route too, but did not materialize on the run that mattered.
+- **c06/c08 remain MISSED, reclassified from "unconfirmed reachability gap" to "confirmed
+  COVERAGE-BOUNDED."** Campaign #3's Step 1 measured `pastDue` reachability across 4 budget rungs
+  (1600/3200/6400/12800) × 3 seeds = 12 runs on the clean impl: **0/12 ever observed `pastDue`**,
+  the campaign's own pre-registered coverage criterion never met at any rung up to 8× campaign #2's
+  already-8×-inflated budget. Both classes were registered COVERAGE-BOUNDED at the best rung (12800)
+  and run anyway per the registration's own rule; both MISSED at that rung, consistent with the
+  measurement's own prediction, not a surprise. This is a **budget finding** (the registered ladder's
+  ceiling doesn't reach the precondition), explicitly distinct from a structural incapability
+  finding — see the kill-criteria assessment below.
 
-This document does not pick one; that choice is the human's per the registration's own escalation
-rule.
+The third option from the interim verdict (a targeted-steering design amendment biasing the walk's
+row-selection toward under-exercised states) was **not exercised** — the coverage-metric-budget path
+alone resolved c09 and gave c06/c08 a measured, honest final classification without further generator
+changes. It remains a valid forward pointer if `pastDue` coverage is ever needed beyond a
+fixed-sequence budget's reach (see forward pointers below).
 
 ### Criterion 2 — Guard probing both directions: **MET**
 
-- Clean impl → 0 false accepts: the §5 control's 5 seeds attempted **45,362 total illegal probes**
-  (8869+9186+9274+8833+9200), of which 43,575 were rejected and 1,787 were accepted-but-explained
-  by a legal sibling transition (re-attributions) — `45362 − 43575 − 1787 = 0` unexplained accepts,
-  0 violations, on every seed. ✅
+- Clean impl → 0 false accepts: the §5 control's 5 seeds (campaign #2, 1600×30) attempted **45,362
+  total illegal probes** (8869+9186+9274+8833+9200), of which 43,575 were rejected and 1,787 were
+  accepted-but-explained by a legal sibling transition (re-attributions) — `45362 − 43575 − 1787 =
+  0` unexplained accepts, 0 violations, on every seed. Campaign #3's budget-setting measurement adds
+  a further **405,971 probe attempts** across 12 clean-impl runs (1600-12800×30, seeds 31-33; summed
+  from each run's `guards probed` figure), every seed's `probesAttempted − probesRejected ==
+  reattributions` exactly, 0 unexplained accepts throughout. ✅
 - `drift/c04-weakened-guard` → caught directly: Route B fires on the very first probe of the
-  campaign (seed 21, sequence 1), substring `accepted a spec-illegal command` naming `activate`
-  verbatim (§6 c09... c04 outcome). ✅
+  campaign (campaign #2, seed 21, sequence 1), substring `accepted a spec-illegal command` naming
+  `activate` verbatim. ✅
 
-### Criterion 3 — Zero false positives: **MET**
+### Criterion 3 — Zero false positives: **MET (post both amendments)**
 
-- Campaign #2 control: 5 seeds × 1600 sequences = 8000 sequences, **0 violations**, all 5 runs
-  CLEAN, no STOP triggered (§5). ✅
-- Campaign #1 control (retained, not superseded): 5 seeds × 200 sequences = 1000 sequences, **0
-  violations**, also CLEAN (§2). ✅
+- Campaign #1 control: 5 seeds × 200 sequences = 1,000 sequences, **0 violations**, CLEAN (§2).
+- Campaign #2 control: 5 seeds × 1,600 sequences = 8,000 sequences, **0 violations**, CLEAN, no STOP
+  triggered (§5).
+- Campaign #3 budget-setting measurement (post-w6, this document's Campaign #3 §Step 1): 3 seeds ×
+  (1600+3200+6400+12800) = 3 × 24,000 = **72,000 sequences**, **0 violations**, all 12 runs CLEAN —
+  including seed 32 at 6400 and 12800, which deterministically FAILED on this exact clean impl
+  pre-w6 (`.superpowers/sdd/d2-c3-report.md` Finding B, `activePaidInFull` via a fully spec-legal
+  `create→finalize→settle→activate→rollover→finalize(new invoice)` sequence) — now independently
+  reproduced CLEAN post-amendment, confirming the w6 ruling actually resolved that finding rather
+  than merely reducing its likelihood. Total across all three campaigns' clean-impl-only controls:
+  **81,000 sequences, 0 violations.** ✅
 
 ### Criterion 4 — Determinism + shrinking: **MET (design guarantee) — spot-checked, not exhaustively re-run**
 
@@ -1837,7 +1855,7 @@ Every failure in this document replays via a fixed `--seed N` on a deterministic
 (`mulberry32`, no `Date.now()`, per design §6's "drivers receive a monotonic `clock()`... real time
 never leaks into sequences") — the CLI prints the literal `replay: lattice conform ... --seed N`
 command for every FAILED run. Shrunk lengths observed (narrative-line count = minimal reproducing
-command sequence):
+command sequence), campaign #2 classes:
 
 | class | sequences run before FAILED/LOUD | shrunk narrative length | total VIOLATION lines |
 |---|---|---|---|
@@ -1852,99 +1870,152 @@ command sequence):
 | c12 | 282 | 7 intentions | 8 |
 | c13 | 42 | 8 intentions | 9 |
 
-**Byte-identical re-run recorded:** campaign #1's accidental seed-1 duplicate (§2's "Evidence
-quirk") is the one case in this document where the SAME seed was actually executed twice against
-the same clean state — both runs report identical `probesAttempted: 24, probesRejected: 21,
-reattributions: 3, violationCount: 0`, confirming the determinism guarantee empirically, not just
-by construction. No campaign #2 REDISCOVERED class was independently re-executed a second time in
-this document (one run per seed, per protocol) — determinism there rests on the seed+PRNG design
-property (also pinned by dedicated `walk.test.ts` fixtures per the repair report) plus this one
-concrete duplicate, not on redundant re-runs of every class.
+Campaign #3's c09 catch: 6,184 of 12,800 sequences run before FAILED (seed 33), shrunk narrative 9
+intentions, 1 VIOLATION line.
+
+**Byte-identical re-runs recorded, now four independent instances:** (1) campaign #1's accidental
+seed-1 duplicate (§2's "Evidence quirk") — both runs report identical `probesAttempted: 24,
+probesRejected: 21, reattributions: 3, violationCount: 0`. (2) The pre-w6 `d2-c3-report.md`
+measurement recorded seed 32's FAILED run at three independent invocations (6400 first attempt,
+6400 rerun, 12800 attempt), all stopping at exactly 5,604 sequences with identical
+`commands: 42965 (9845/0/788)`. (3) This document's own campaign #3 registration + class-run
+sessions independently re-ran seed 31 at 12800 **four separate times** (the registration's Step 1
+measurement, plus the CLEAN portions of the c06/c08/c09 class runs) — every one reports
+byte-identical `commands: 95974 (21466/0/1732)`, `active:292`. (4) Seed 32 at 12800 was
+independently re-run twice (registration + c06/c08/c09 CLEAN runs — c09's seed 32 run too, since it
+was CLEAN before seed 33 caught it) with identical `commands: 95552 (21587/0/1689)`, `active:288`
+every time. Determinism holds empirically across every re-run attempted in this document series, on
+top of the design's construction guarantee (pinned by dedicated `walk.test.ts` fixtures).
 
 ### Criterion 5 — Runtime ≤ 60s: **MET**
 
 Maximum observed `durationMs` (harness-internal, load-independent) across every run recorded in
-this document: **8.097s** (§5 control, seed 21, 1600 sequences) — roughly **1/7.4 of the 60s
-budget**, despite running at 8× the sequence volume the criterion was originally registered against
-(200×30). The largest individual MISSED-class run was c09 seed 21 at 3.7s (§6); the largest
-REDISCOVERED-class run was c02 seed 21 at 1.6s (753 of 1600 sequences before FAILED). Every other
-recorded duration in this document is ≤ 3.1s.
+this document: **13.5s** (campaign #3, c06 seed 31, 12,800 sequences) — roughly **1/4.4 of the 60s
+budget**, despite running at **64× the sequence volume** the criterion was originally registered
+against (200×30, campaign #1). The largest individual MISSED-class run in campaign #2 was c09 seed
+21 at 3.7s; the largest REDISCOVERED-class run was campaign #3's c09 seed 33 at 5.0s (6,184 of
+12,800 sequences before FAILED). No run recorded anywhere in this document, at any budget from
+200×30 through 12,800×30, exceeded 13.5s.
 
 ### Kill-criteria assessment
 
-- **No irreducible false positives.** Two findings surfaced on the clean impl during plan 1 and
-  were **adjudicated as semantics fixes, not tuned-around false positives** — both are human rulings
-  recorded at the top of this document ("Post-plan amendments"): (a) the finalize/settle `requires`
-  drop (spec amendment `1fbf530` — the guards were mis-filed, structurally unsatisfiable edge
-  conditions, not a real spec constraint); (b) the probe-oracle post-accept re-attribution rule
-  (`fb16f44`/`62c7e83`/`91b61c2` — one impl entry point serving multiple spec transitions is a
-  named, honest limitation, not a false positive being suppressed). Since both rulings landed,
-  every subsequent clean-impl run — campaign #1's 5×200 (§2), campaign #2's 5×1600 (§5) — has been
-  0 violations. No false positive has needed tuning-around at any point after these two rulings. ✅
-- **The three misses are NOT "passive mode caught what driving structurally cannot."** The design's
-  kill criterion is about *structural capability*, not raw catch-rate — and passive mode's own
-  catches for these exact three classes (`docs/superpowers/specs/
-  2026-07-15-lattice-slice-2-drift-experiment-results.md`, c06/c08/c09 sections) each required a
-  **hand-written test fixture deliberately constructed to exercise the exact scenario**: c06's
-  fixture directly drives a failed rollover charge to `past_due`; c08's fixture directly drives a
-  rollover-then-failed-charge sequence; c09's fixture is literally named `changePlan supersedes:
-  cancels old (event), creates new on the new plan, never mutates plan_code` and calls `changePlan`
-  on a subscription an engineer already knew to put in the active state first. None of those three
-  passive catches demonstrate anything about what a *generic, undirected* walk can or cannot reach
-  — they demonstrate what a human who already knows the bug can construct. §7's measurement is the
-  actual answer to the structural-capability question the kill criterion asks: for c09, the walk
-  **did** reach the exact corrupting state undirected (seed 22, no hint, no fixture) — proving this
-  is budget-bounded rarity plus a real oracle-cadence gap, not a structural incapability. For
-  c06/c08, §7 could not confirm reachability at all in 4800 sequences/seed — genuinely unresolved
-  between "budget-bounded rarity" and "harder to reach undirected than these three seeds' budget
-  allows," but in neither case is "passive fixture caught it, driving structurally cannot" an
-  accurate description of what was actually measured. **Kill criterion not triggered.**
+- **No irreducible false positives.** Across the full campaign series, exactly two clean-impl
+  findings surfaced, and **both became human-ruled spec amendments**, not tuned-around false
+  positives:
+  1. **The finalize/settle `requires` drop** (spec amendment `1fbf530`, found during plan 1) — the
+     guards were mis-filed, structurally unsatisfiable edge conditions, not a real spec constraint
+     ("Post-plan amendments folded into this registration," top of this document).
+  2. **The `activePaidInFull` retirement** (w6 finalize-on-active human ruling, commits `96029cd`/
+     `eb375d9`, found during campaign #3's Step 1 budget-setting measurement pre-w6 —
+     `.superpowers/sdd/d2-c3-report.md` Finding B) — a fully spec-legal `rollover`→`finalize(new
+     invoice)` sequence left an active subscription pointed at an unbilled current invoice, an
+     ordinary net-30 reality the invariant wrongly forbade unconditionally; retired with no
+     replacement guard because v1's transition `requires` clauses are own-aggregate-only and cannot
+     express the literal cross-aggregate activation-time law the ruling wanted
+     (`.superpowers/sdd/w6-amendment-report.md`).
 
-### The `paymentFailed` skip audit + forward pointers
+  Both findings BLOCKED their respective plans on discovery (per `d2-protocol.md`'s "false positives
+  on the clean impl STOP the plan" global constraint) and were resolved as adjudicated semantics
+  fixes before any further campaign work resumed. Every clean-impl run after each ruling landed has
+  been 0 violations (criterion 3, above) — no false positive has needed tuning-around at any point
+  in this series. A separate, non-spec-amendment ruling — the probe-oracle post-accept re-attribution
+  rule (`fb16f44`/`62c7e83`/`91b61c2`, "one impl entry point serving multiple spec transitions is a
+  named, honest limitation, not a false positive being suppressed") — is not counted as a third
+  amendment here since it changed the *oracle's* interpretation policy, not the spec text; it is
+  recorded in the findings roll below. ✅
+- **The two remaining misses are NOT "passive mode caught what driving structurally cannot."** The
+  design's kill criterion is about *structural capability*, not raw catch-rate. Passive mode's own
+  catches for c06/c08/c09 (`docs/superpowers/specs/2026-07-15-lattice-slice-2-drift-experiment-results.md`)
+  each required a **hand-written test fixture deliberately constructed to exercise the exact
+  scenario** — they demonstrate what a human who already knows the bug can construct, not what a
+  generic undirected walk can reach. §7's measurement (campaign #2) and campaign #3's own runs are
+  the actual answer to the structural-capability question: for **c09**, the walk reached the exact
+  corrupting state undirected at TWO different budgets under TWO different routes (seed 22 @ 1600
+  pre-w6/pre-cadence-fix, seed 33 @ 12800 post-w6) — conclusively budget-bounded rarity plus a (now
+  closed) cadence gap, never a structural incapability. For **c06/c08**, campaign #3 measured
+  `pastDue` reachability directly (not inferred) across 0/12 budget-setting runs and 0/3 class runs
+  at the ceiling of the registered ladder — genuinely a budget ceiling, not "driving structurally
+  cannot," and explicitly labeled MISSED-COVERAGE-BOUNDED (not MISSED) to keep that distinction
+  visible in the verdict itself, per the campaign #3 registration's own instruction. **Kill
+  criterion not triggered.**
 
-**Skip audit totals.** Every `driverSkips` figure printed anywhere in this document is summed here
-for a single audited total: control (§5) 6+5+3+1+5=20, c01 0, c02 1, c03 0, c04 25, c05 0, c06
-6+5+3=14, c07 0, c08 6+5+3=14, c09 6+5+3=14, c12 0, c13 0 (c10/c11 abort before any driver runs) —
-**88 total driver-skip events recorded across every campaign #2 run in this document.** Every one
-is the pre-registered `paymentFailed` skip (§2: "no open invoice — a payment cannot fail when
-nothing is owed"); none were counted as a command, an accept, a reject, or a violation, per the
-mechanism's own design and the dedicated `walk.test.ts` fixtures proving a weakened guard cannot
-hide behind this path.
+### Full findings roll
+
+Six adjudicated or measured findings surfaced across this campaign series, each already detailed in
+its own section above; collected here as a single roll for the final verdict:
+
+1. **voidInvoice re-attribution ruling** (amendment (b), top of document) — an illegal probe the
+   clean impl accepts is a violation only if no legal sibling transition (same aggregate + entry
+   point) explains the observed step; `voidDraft`/`voidOpen` sharing `voidInvoice` is the concrete
+   case. Not a spec change — an oracle interpretation policy, human-ruled 2026-07-16.
+2. **finalize/settle guard amendment** (spec amendment `1fbf530`) — the `requires` clauses on
+   `Invoice.finalize`/`Invoice.settle` were mis-filed, structurally unsatisfiable edge conditions;
+   dropped. First of the two clean-impl findings named in the kill-criteria assessment above.
+3. **`paymentFailed` skip + the event-vs-command question** (campaign #2 §2) — a driver-skip
+   mechanism audits (not hides) the impl-strictness gap where `paymentFailed` is spec-legal but the
+   real `recordPaymentFailure` throws with nothing open to fail; whether `paymentFailed` should be
+   spec-driveable as a command at all versus only ever arising from a billing/dunning side effect
+   the single-aggregate machine can't see remains an open, explicitly deferred modeling question.
+4. **w6 / `activePaidInFull` retirement + the ref-hop transition-guard gap** (`.superpowers/sdd/
+   w6-amendment-report.md`) — second of the two clean-impl findings named above; retired with no
+   replacement because v1 guards are own-aggregate-only, surfacing the first concrete domain
+   evidence for the r04 ref-hop guard class (language-brief item, ledger structure entry
+   2026-07-16T23:07:18.524Z). A machinery gap was also found and fixed in the same session: bulk
+   `classify` auto-adopts guards with no memory of hand-removed ones (`guard_settle_eq` was
+   auto-re-adopted against the 1fbf530 ruling and had to be force-removed again) — scoped `classify
+   --name` avoids the hook; unscoped bulk classify on this session remains unsafe until fixed
+   upstream.
+5. **The c09 cadence fix + scope widening** (`0bcee74`/`2349f66`) — closed the sweep-cadence gap §7
+   root-caused (a per-step Tier-1 check after every accepted/re-attributed/superset step), then
+   widened from the intention's nominally-touched aggregate to ALL bound aggregates of the context
+   once the narrower scope was shown to relocate rather than close the gap for drivers that mutate a
+   different aggregate than the one they're bound to (`rollover`/`changeSeats`/`recordUsage`/
+   `changePlanOp` are Subscription-bound yet mutate Invoice; `settle` is Invoice-bound yet can
+   recover `Subscription.lifecycle_state`).
+6. **The coverage instrument** (`DriveStats.statesObserved`, the always-on `state coverage: ...`
+   line) — built as the repeatable replacement for the ad hoc scratch-branch `console.error`
+   instrumentation §7's investigation needed; used directly as campaign #3's own budget-setting
+   measurement tool (Step 1's ladder search), closing the "reachability-vs-oracle-gap discriminator"
+   forward pointer campaign #2 raised, for c09 at least — c06/c08's discrimination between "never
+   reachable" and "reachable below what 12800 sequences exercises" remains open (see forward
+   pointers below).
 
 **Forward pointers (ensures brief), recorded here, not resolved here:**
 
-- **Command-vs-event semantics** (carried from §2): whether `paymentFailed` should be a
-  spec-driveable command at all, versus only ever arising as a side effect of a billing/dunning
-  process the single-aggregate `Subscription` machine can't see. Unresolved; the drive-skip is an
-  audit trail for today's impl-strictness gap, not an adjudication of the spec's modeling choice.
-- **Existential ref guards.** The pre-state oracle's scoped-observe closure
-  (`lattice/src/conform/observe.ts`'s `observeScoped`) is bounded to exactly **one** ref hop by
-  deliberate design ("the spec's guards traverse at most one ref hop... not a general-purpose graph
-  walk"). No guard in this spec needs more (`activePaidInFull` reaches through `latestInvoice`, one
-  hop) so this campaign never exercised the bound as a gap — but a future guard requiring
-  existential quantification over a *collection* of refs (e.g. "any invoice ever past due") or a
-  two-hop chain would not be evaluated correctly by the current oracle. Flagged forward, not
-  exercised.
-- **The reachability-vs-oracle-gap discriminator question.** §7 answered this question empirically
-  for c09 using ad hoc scratch-branch instrumentation (five `console.error` points, a throwaway
-  branch, manual log correlation) — effective, but not a repeatable harness feature. The same
-  question is genuinely open for c06/c08. Flagged forward: should the harness itself expose
-  per-invariant reachability telemetry (e.g., "N times this aggregate entered an invariant's
-  applicability state, M of those survived to the next checkpoint") so this class of discrimination
-  doesn't require rebuilding a throwaway branch and hand-instrumenting source every time a class is
-  missed?
+- **Command-vs-event semantics** for `paymentFailed` (finding 3 above) — unresolved; the drive-skip
+  is an audit trail for today's impl-strictness gap, not an adjudication of the spec's modeling
+  choice.
+- **Existential ref guards.** The pre-state oracle's scoped-observe closure is bounded to exactly
+  **one** ref hop by deliberate design. No guard in this spec ever needed more, so this campaign
+  series never exercised the bound as a gap — but a future guard requiring existential
+  quantification over a *collection* of refs, or a two-hop chain, would not be evaluated correctly
+  by the current oracle. Flagged forward, not exercised.
+- **c06/c08's reachability ceiling.** Campaign #3 confirmed `pastDue` is not reached within a
+  12,800-sequence fixed budget at any of three seeds — a measured ceiling, not an unconfirmed gap,
+  but still not distinguished from "unreachable given this walk's undirected row/command selection
+  bias" vs. "reachable at some larger fixed budget nobody tried." The interim verdict's
+  targeted-steering option (bias row-selection toward under-exercised states) remains the concrete,
+  un-exercised path if `pastDue` coverage is ever needed; it was not required to close c09, so it
+  was not built.
+- **The classify auto-strengthen/hand-removed-guard machinery gap** (finding 4 above) — bulk
+  `classify` has no memory of `--force-remove` history; any future bulk classify on this session
+  re-adopts `guard_settle_eq`. Needs an upstream fix (`adoptGuard` checking declined history, not
+  just current adopted candidates) or a standing discipline of scoped-only classify on this session.
 
-### Summary
+### Summary (measured claims only)
 
-This document's claims are strictly limited to what was measured and recorded above. Campaign #2
-rediscovers 10 of 13 pre-registered drift classes verbatim, with zero false positives and zero
-false accepts across every clean-impl run recorded (campaign #1 and campaign #2 controls
-combined: 9000 sequences, 0 violations; ~45k illegal probes, 0 unexplained accepts), deterministic
-replay by construction (one empirical byte-identical duplicate on record), and a maximum observed
-runtime of 8.097s against a 60s budget. The three misses are recorded honestly and root-caused
-where §7's measurement made that possible: c09 is a demonstrated oracle/sweep-cadence gap (the
-corrupting state was reached and then lost to a coarse per-sequence checkpoint), c06 and c08 remain
-unconfirmed reachability gaps (their shared precondition was never observed to hold in 4800
-sequences/seed each). Criterion 1 is NOT met as registered; the misses are escalated, not
-re-scoped, per the registration's own rule, with three options recorded for a human ruling and none
-selected here. No kill criterion was triggered.
+Across three campaigns and two human-ruled spec amendments, this document's drive-mode rediscovery
+series rediscovers **11 of 13** pre-registered drift classes verbatim (10 in campaign #2, 1 more —
+c09 — in campaign #3 under a route re-derived after `activePaidInFull`'s retirement), with **zero
+false positives across every clean-impl-only run recorded in the entire series** (campaigns #1, #2,
+and #3's budget-setting measurement combined: 81,000 sequences, 0 violations; 451,474 illegal
+probes summed across every clean-impl control (141 + 45,362 + 405,971), 0 unexplained accepts), deterministic replay
+by construction and confirmed by four independent empirical re-run instances, and a maximum observed
+runtime of 13.5s against a 60s budget at 64× the originally-registered sequence volume. The 2
+remaining misses (c06, c08) are recorded as **MISSED-COVERAGE-BOUNDED**, a measured budget ceiling
+(0/12 `pastDue` observations across a 4-rung, 3-seed ladder up to 12,800 sequences) explicitly
+distinguished in this verdict from a structural incapability finding — neither miss demonstrates
+anything passive mode's hand-written fixtures could reach that an undirected walk structurally
+cannot; both simply need more `pastDue` exposure than a fixed-sequence budget delivers at these
+three seeds. Criterion 1 is NOT met as registered (11/13, not 13/13); criteria 2-5 are MET. No kill
+criterion was triggered at any point across the series.
