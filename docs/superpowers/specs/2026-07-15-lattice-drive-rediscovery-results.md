@@ -845,7 +845,46 @@ exhausts the rest of that one sequence's probes before reporting FAILED — coll
 class, not a second signal. `.conform` confirmed absent after the run.
 
 ### c04 — weakened guard
-**Verdict: PENDING (campaign #2)**
+**Verdict: REDISCOVERED (Route B)**
+
+Branch mechanics: `git checkout -b drive/c04 drift/c04-weakened-guard`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `e608123`) — one conflict, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved as union (both sides' lines concatenated,
+no lines dropped, all validated as parseable JSON post-resolution). `git diff
+drift/c04-weakened-guard -- implementations/subscriptions/src` was empty after the merge — the
+drift edit survived intact. `rm -rf implementations/subscriptions/.conform` before the run; absent
+both before and after.
+
+Seed tried: 21 (first pre-authorized seed — caught on first try, on the driver's very first probe
+of the campaign, consistent with this route's depth-independence carried forward from campaign
+#1).
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed 21`. Exit code 1 (FAILED, matches expected verdict REDISCOVERED).
+
+Verbatim stdout:
+```
+drive: 1 sequences — FAILED (seed 21)
+replay: lattice conform --target ../implementations/subscriptions --drive --seed 21
+commands: 677 (54 accepted, 0 rejected, 54 superset ops)
+guards probed at event time: 569 attempts across 0 guarded transitions
+probe re-attributions (shared entry points; sibling-masking limitation applies): 46
+driver skips (impl preconditions, audited): 25
+duration 0.2s
+narrative:
+  create Subscription#d-subscription-1 (seed=0) -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> accepted (VIOLATION)
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  ... (7 more rejected activate attempts, 1 superset recordUsage accepted) ...
+VIOLATION transition activate (transition activate) — witnesses [d-subscription-1] — impl accepted a spec-illegal command: 'activate' was illegal from the observed pre-state but the driver accepted it without throwing — anchors [transition activate] — source drive:9
+```
+
+Route B fires: substring `accepted a spec-illegal command` present verbatim, naming transition
+`activate`, anchor `transition activate` — exactly the registered signal, on the driver's very
+first transition attempt after `create` (narrative line 10, `legality=illegal -> accepted
+(VIOLATION)`). Depth-independent, exactly as registered — no dependence on the length-floor fix.
+25 driver skips are visible in the summary line (audited, not violations, per the campaign's
+zero-tuning rule). `.conform` confirmed absent after the run.
 
 ### c05 — terminal resurrection (win-back)
 **Verdict: PENDING (campaign #2)**
