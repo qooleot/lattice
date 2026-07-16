@@ -1622,7 +1622,38 @@ stop-at-first-catch, 3 clean seeds = MISSED(-COVERAGE-BOUNDED for c06/c08).**
 ### Step 2 — outcomes
 
 #### c06 — state-name drift
-**Verdict: PENDING**
+**Verdict: MISSED-COVERAGE-BOUNDED**
+
+Branch mechanics: `git checkout -b drive/c06 drift/c06-state-rename`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `2a2e031`) — clean auto-merge, no conflicts (same
+as campaign #2). `git diff drift/c06-state-rename -- implementations/subscriptions/src` and `--
+implementations/subscriptions/conform/overrides.ts` both empty after the merge — the drift edit
+survived intact. `rm -rf implementations/subscriptions/.conform` before the runs; absent throughout
+(no `.conform` directory exists at any point).
+
+Seeds tried: 31, 32, 33 (all three registered seeds — all CLEAN, no LOUD abort; per "3 clean seeds
+= MISSED(-COVERAGE-BOUNDED)").
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+12800 --length 30 --seed <31|32|33>`. Exit code 0 on all three runs (not 2 — no loud abort).
+
+| seed | verdict | commands (accepted/rejected/superset) | driver skips | state coverage (Subscription.status) | duration |
+|------|---------|----------------------------------------|-----------------|-----------------------------------------|----------|
+| 31 | CLEAN | 95974 (21466/0/1732) | 23 | active:292 canceled:32577 expired:31149 trialing:41727 | 13.5s |
+| 32 | CLEAN | 95552 (21587/0/1689) | 21 | active:288 canceled:31957 expired:32287 trialing:40861 | 12.8s |
+| 33 | CLEAN | 94186 (21051/0/1713) | 26 | active:386 canceled:31850 expired:30649 trialing:40802 | 13.4s |
+
+Registered stderr substring `is null/undefined for row` does not appear in any of the three logs —
+grepped directly, zero matches. `past_due` (the drift's renamed-to `delinquent` key) never appears
+in the `Subscription.status{...}` coverage group at any seed, byte-identical to the registration's
+own budget-setting measurement on the clean impl at the same rung — the class never reached the
+row-state the observer would trip over, at 12800×3 seeds, the ceiling of the registered ladder.
+
+Recorded per the class's registered coverage-bounded status: this is **MISSED-COVERAGE-BOUNDED**, a
+budget finding, not a structural one — the registration itself pre-declared that no rung up to
+12800 was expected to meet the `pastDue≥5` coverage criterion (0/12 in the budget-setting
+measurement), and this run confirms that shortfall holds for the drift branch too, at the same
+depth. Not escalated as a structural MISS; not re-scoped or re-budgeted beyond the registered rung.
 
 #### c08 — widened uniqueness (two drafts)
 **Verdict: PENDING**
