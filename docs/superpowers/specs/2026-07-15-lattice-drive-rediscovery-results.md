@@ -1509,6 +1509,129 @@ this is reported as the discriminating measurement, not a fix.
 
 ---
 
+## Campaign #3 (activePaidInFull retired — coverage-bounded budget)
+
+Between §7's investigation and this campaign, the w6 finalize-on-active human ruling landed
+(`.superpowers/sdd/w6-amendment-report.md`, commits `96029cd`/`eb375d9`): `activePaidInFull`
+retires from the spec entirely (no replacement guard — v1's transition `requires` clauses are
+own-aggregate-only, so the literal cross-aggregate activation-time law the ruling wanted cannot be
+expressed; see the amendment report's Concerns §4). A prior attempt at this campaign
+(`.superpowers/sdd/d2-c3-report.md`, work-branch tip `99f20a0`, pre-w6) BLOCKED at Step 1: the
+budget-search ladder itself surfaced a genuine, deterministic clean-impl violation of
+`activePaidInFull` at seeds 32/6400 and 32/12800 (a fully spec-legal
+`create→finalize→settle→activate→rollover→finalize(new invoice)` sequence — Finding B of that
+report), which is exactly the kind of finding the w6 ruling above resolved. This campaign re-runs
+Step 1 fresh at the post-w6 work-branch tip.
+
+### Step 1 — registration (committed before any class run)
+
+**c09's route is re-derived, not carried forward.** Campaign #2's registered c09 signal
+(`activePaidInFull`, Tier 1) no longer exists post-w6. Re-derivation, verified against the drift
+branch's diff before registering (not assumed):
+
+```
+$ git diff drift/c09-upgrade-activates -- implementations/subscriptions/src/subscription-service.ts
+@@ changePlan(): the drift's carry-over block (successor gets force-activated when the OLD sub is
+   active/past_due) does:
+     finalizeInvoice(db, `${a.newId}-inv-1`);
+     db.prepare(`UPDATE subscriptions SET lifecycle_state = 'active' WHERE id = ?`).run(a.newId);
+     appendEvent(db, SUBSCRIPTION_ACTIVATED, a.newId, { subId: a.newId });
+   — a direct SQL UPDATE, not a call through `activate()` (src/subscription-service.ts:39-45), which
+   is the ONLY place that calls `refreshAccountSummary` after a lifecycle_state flip elsewhere in the
+   codebase. The successor's `account_summary` row was written once, at `createSubscription`-time
+   (src/subscription-service.ts:24-36, `refreshAccountSummary(db, a.id, 0)`), with the successor's
+   THEN-current lifecycle_state ('trialing', the schema default). The drift's later force-activate
+   never refreshes it.
+```
+
+**Candidate route: `crosscheck account_summary`, `status` field mismatch.** `account_summary.status`
+is written once (create-time, `trialing`) and never touched again by the drift's force-activate path
+— `implementations/subscriptions/conform/crosschecks.ts:24` compares `row.status` against the LIVE
+`sub.lifecycle_state` and reports `status '<stale>' != lifecycle_state '<live>'` on any mismatch. Once
+the drift fires, the successor's `subscriptions.lifecycle_state = 'active'` while
+`account_summary.status` still reads `'trialing'` — exactly the mismatch shape the crosscheck
+instrument (design §6 class 13) is built to catch, and the same instrument campaign #2's c12 fired as
+registered collateral (§6 above).
+
+**Honest limitation carried forward, not smoothed over:** this route is subject to the identical
+sweep-cadence gap §7 root-caused for the old `activePaidInFull` route. `walk.ts`'s per-step check
+(`stepCheck`, `0bcee74`/`2349f66`) is explicitly Tier-1-only ("no trace check, no crosschecks, per
+step; those stay the full sweep's job" — `lattice/src/conform/drive/walk.ts:107`) — crosschecks run
+ONLY at the end-of-sequence (or `--check-every`) full sweep, never per-step. Worse, this specific
+mismatch is erasable by a later, itself-legal command on the same row: `cancelSubscription`
+(`src/subscription-service.ts:65-73`) calls `refreshAccountSummary` unconditionally on exit, which
+would resync `status` (and `open_balance`/`lifetime_paid`) to the row's THEN-current state — exactly
+the same "walk immediately `cancel`s the row it just corrupted" pattern §7(b) traced verbatim for the
+old route (seed 22's `changePlanOp` → `cancel` sequence). Registered honestly, before the run: this
+class may MISS again for the same structural reason as before, on a different signal now that the
+old one is gone.
+
+**Budget-setting measurement (re-run fresh, post-w6, work-branch tip `eb375d9`).** Protocol identical
+to the pre-w6 attempt's Step 1 (`d2-c3-report.md`): `rm -rf implementations/subscriptions/.conform`
+once, then for seeds 31/32/33 at each rung of the ladder 1600→3200→6400→12800:
+
+```
+npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences <N> --length 30 --seed <31|32|33>
+```
+
+Target: `Subscription.status{...pastDue≥5...}` AND `Subscription.status{...active≥25...}` (the
+`active≥25` proxy for rollover/changePlanOp landing on an active row), reliably 3/3 seeds, per the
+task's registration.
+
+| sequences | seed | verdict | active count | pastDue count | duration |
+|---|---|---|---|---|---|
+| 1600 | 31 | CLEAN | 11 | 0 | 1.6s |
+| 1600 | 32 | CLEAN | 48 | 0 | 1.6s |
+| 1600 | 33 | CLEAN | 59 | 0 | 1.5s |
+| 3200 | 31 | CLEAN | 90 | 0 | 3.2s |
+| 3200 | 32 | CLEAN | 71 | 0 | 3.0s |
+| 3200 | 33 | CLEAN | 124 | 0 | 3.2s |
+| 6400 | 31 | CLEAN | 157 | 0 | 6.0s |
+| 6400 | 32 | **CLEAN** | 195 | 0 | 6.2s |
+| 6400 | 33 | CLEAN | 217 | 0 | 7.1s |
+| 12800 | 31 | CLEAN | 292 | 0 | 12.9s |
+| 12800 | 32 | CLEAN | 288 | 0 | 12.9s |
+| 12800 | 33 | CLEAN | 386 | 0 | 12.7s |
+
+**Finding, reproduced and extended:** all 12 runs CLEAN, 0 violations — seed 32/6400 and seed 32/12800
+are now CLEAN where the pre-w6 attempt reported `FAILED` at the identical seed/budget pairs
+(`violationCount: 9`, stopped at 5604/6400 sequences, `activePaidInFull`) — direct, independent
+confirmation that the w6 retirement resolved Finding B (matching the amendment report's own §4f
+drive-FP-control re-validation at seed 32/6400, `active: 195`, byte-identical to this measurement's
+row). `pastDue` is **never observed at any of the 12 runs** (4 budgets × 3 seeds) — reproducing
+`d2-c3-report.md`'s Finding A exactly, now confirmed CLEAN through the top of the ladder rather than
+blocked partway through it. `active` counts scale with budget as expected once nothing truncates the
+walk early (seed 32: 48→71→195→288 across the ladder — note this supersedes the pre-w6 report's
+partial-run figure of "746 active at the 5604-sequence failure point," which was inflated by the
+walk repeatedly re-observing the same already-violated, never-repaired row on every remaining illegal
+probe of that truncated sequence; not a discrepancy in this measurement).
+
+**Registration: c06 and c08 are COVERAGE-BOUNDED.** No rung meets both coverage criteria (`active≥25`
+is met reliably from 3200 on; `pastDue≥5` is not met at any tested rung, including the top of the
+ladder). Per the task's instruction, both classes are registered COVERAGE-BOUNDED at the **best rung,
+12800** (highest active-state exposure measured, 0/12 pastDue observations is the best achievable
+result at this ladder's ceiling) and run anyway at that rung, 3 seeds (31→32→33, stop at first catch)
+— a miss records as **MISSED-COVERAGE-BOUNDED**, a budget finding, not a structural one. c09 has no
+`pastDue` precondition (its route needs only an active/past_due-state `changePlanOp` landing, which
+§7(a) already measured non-zero at a much smaller budget, 1/98 at 1600×3-seeds) — it runs at the same
+12800 budget for uniformity with c06/c08, not because its own route requires that depth.
+
+**Registered budget for campaign #3: `--sequences 12800 --length 30`, seeds 31→32→33 per class,
+stop-at-first-catch, 3 clean seeds = MISSED(-COVERAGE-BOUNDED for c06/c08).**
+
+### Step 2 — outcomes
+
+#### c06 — state-name drift
+**Verdict: PENDING**
+
+#### c08 — widened uniqueness (two drafts)
+**Verdict: PENDING**
+
+#### c09 — cross-aggregate activation (post-w6 route: crosscheck account_summary)
+**Verdict: PENDING**
+
+---
+
 ## Verdict (design §5 criteria — human ruling required on Criterion 1)
 
 This section assesses campaign #2 (§6 above, work-branch tip `e608123`→`5322cb3` per-class,
