@@ -5,11 +5,11 @@
 // untouched: this module adds a pre-state oracle in front of it, nothing more.
 import type Database from 'better-sqlite3';
 import { bindSchema } from '../bind.js';
-import { observeScoped, observeAggregateScoped } from '../observe.js';
+import { observeScoped, observeEntities } from '../observe.js';
 import { checkDb, type CheckContext } from '../report.js';
 import { checkInvariants } from '../tier1.js';
 import { evaluateCandidate, type CaseEntity } from '../../engine/evaluate.js';
-import type { GenPlan, PlanTransition } from '../../generate/plan.js';
+import type { PlanTransition } from '../../generate/plan.js';
 import type { BindingManifest, ConformViolation } from '../types.js';
 import { describeIntention, type Intention } from './intent.js';
 
@@ -28,7 +28,7 @@ export interface DriveStats {
   // Coverage counters (human ruling 2026-07-16, c09 follow-up instrument — design §7's forward
   // pointer on reachability telemetry): every region-state value actually observed, keyed
   // '<Aggregate>.<region>=<state>', counted once per occurrence during (a) each transition/probe
-  // step's scoped pre-state read and (b) the per-step scoped invariant check below. Answers "did
+  // step's scoped pre-state read and (b) the per-step full-context invariant check below. Answers "did
   // this walk ever observe X in state Y, and how often" without hand-instrumenting source the way
   // the c09 investigation had to (§7's ad hoc `console.error` scratch branch).
   statesObserved: Record<string, number>;
@@ -81,43 +81,44 @@ function recordStateCoverage(counts: Record<string, number>, entities: CaseEntit
   }
 }
 
-/** Per-step scoped invariant check (design amendment 2026-07-16, human ruling on the c09
+/** Per-step FULL-CONTEXT invariant check (design amendment 2026-07-16, human ruling on the c09
  *  root-cause finding — docs/superpowers/specs/2026-07-15-lattice-drive-rediscovery-results.md
- *  §7): the end-of-sequence/checkEvery sweep is batched to sequence boundaries by deliberate
- *  design (O(1)-query-per-step cost model) and is structurally blind to a violation that a LATER,
- *  itself-legal command in the same sequence resolves before the sweep ever runs (measured, seed
- *  22: a `changePlanOp` left a successor Subscription active-and-unpaid; the very next intention
- *  was a plain legal `cancel` on that same row, and the sweep never observed the violating state
- *  at all — the corrupting state was created and legally erased between two checkpoints). This
- *  closes that gap within the fork-4 cost model by re-checking ONLY the touched aggregate's own
- *  invariants, immediately after every command that mutates state, against ONLY that aggregate's
- *  rows + their one-hop ref closure (observeAggregateScoped, observe.ts) — O(touched aggregate)
- *  per step, not O(every aggregate) like the full sweep. Runs IN ADDITION to checkEvery/
- *  end-of-sequence checks (which still catch cross-aggregate drift on untouched aggregates and
- *  own the trace/crosscheck instruments this scoped check does not attempt). Violations found
- *  here are pushed into the SAME violations array as every other finding — a per-step catch is a
- *  real violation, not a separate class of finding. */
+ *  §7; SCOPE WIDENED same day, second ruling — design doc fork-4 amendment): the end-of-sequence/
+ *  checkEvery sweep is batched to sequence boundaries by deliberate design (O(1)-query-per-step
+ *  cost model) and is structurally blind to a violation that a LATER, itself-legal command in the
+ *  same sequence resolves before the sweep ever runs (measured, seed 22: a `changePlanOp` left a
+ *  successor Subscription active-and-unpaid; the very next intention was a plain legal `cancel`
+ *  on that same row, and the sweep never observed the violating state at all).
+ *
+ *  The FIRST version of this fix re-checked ONLY the intention's nominally touched aggregate. That
+ *  was itself wrong: several drivers mutate an aggregate their intention does NOT name —
+ *  `rollover`/`changeSeats`/`recordUsage`/`changePlanOp` are Subscription-bound intentions whose
+ *  drivers also write Invoice rows; `settle` is Invoice-bound but bumps
+ *  `Subscription.paid_invoice_count` and can recover `lifecycle_state`. A touched-aggregate filter
+ *  doesn't close the cadence gap in that case, it RELOCATES it onto the aggregate the intention
+ *  didn't name — a transient violation on the side-mutated aggregate can still be legally erased
+ *  before any sweep sees it, exactly like c09, just on a different table.
+ *
+ *  Fixed by dropping the touched-aggregate filter entirely: every accepted/re-attributed/superset
+ *  step re-evaluates the Tier-1 invariants of EVERY bound aggregate in the manifest, over the same
+ *  entity set the full end-of-sequence sweep uses (`observeEntities` — every bound aggregate's
+ *  full row set; a ref-hop invariant resolves because the ref target's own full row set is already
+ *  present in that same combined set, not because of a separate one-hop fetch). This is exactly a
+ *  Tier-1-only sweep — no trace check, no crosschecks, per step; those stay the full sweep's job.
+ *  Cost is bounded-context-sized (O(every bound aggregate) per step, not O(1 aggregate) per step)
+ *  — acceptable at this context's scale (a handful of tiny in-memory tables per sequence, see
+ *  measured durations in the fix report). A target where full-context per-step reads would be too
+ *  costly (large or remote) is the recorded seam: a future DECLARED per-op mutation footprint
+ *  (driver map states which aggregates an op can touch) would let this check scope to exactly that
+ *  declared set instead of the whole context — not implemented here, since this context is small
+ *  enough that the full-context read is already cheap. Runs IN ADDITION to checkEvery/
+ *  end-of-sequence checks. Violations found here are pushed into the SAME violations array as
+ *  every other finding — a per-step catch is a real violation, not a separate class of finding. */
 function stepCheck(db: Database.Database, ctx: CheckContext, manifest: BindingManifest,
-  aggregate: string, source: string, stats: DriveStats): ConformViolation[] {
-  const entities = observeAggregateScoped(db, ctx.input.model, manifest, ctx.overrides, aggregate);
+  source: string, stats: DriveStats): ConformViolation[] {
+  const entities = observeEntities(db, ctx.input.model, manifest, ctx.overrides);
   recordStateCoverage(stats.statesObserved, entities);
-  const touchedInvariantNames = new Set(
-    ctx.plan.aggregates.find(a => a.name === aggregate)?.invariants.map(i => i.name) ?? []);
-  // Filtered plan: only the touched aggregate keeps its invariants, so checkInvariants (which
-  // flattens plan.aggregates[].invariants unconditionally) evaluates exactly the invariants
-  // declared on the touched aggregate — nothing cross-aggregate-declared (that's the full
-  // sweep's job, on entities this scoped read never fetches).
-  const scopedPlan: GenPlan = {
-    ...ctx.plan,
-    aggregates: ctx.plan.aggregates.map(a => (a.name === aggregate ? a : { ...a, invariants: [] })),
-  };
-  // An opt-out for a DIFFERENT aggregate's invariant would otherwise trip checkInvariants's own
-  // "opt-out names unknown invariant" guard once that invariant is filtered out of scopedPlan
-  // above — narrow to opt-outs that still apply here. The full unfiltered list is re-validated by
-  // every checkEvery/end-of-sequence sweep regardless (runCheck below), so nothing is silently
-  // skipped campaign-wide.
-  const scopedOptOuts = ctx.optOuts.filter(o => touchedInvariantNames.has(o.invariant));
-  return checkInvariants(entities, scopedPlan, scopedOptOuts, source);
+  return checkInvariants(entities, ctx.plan, ctx.optOuts, source);
 }
 
 function transitionViolation(t: PlanTransition, id: string, source: string, detail: string): ConformViolation {
@@ -197,7 +198,7 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
         stats.commands++; stats.supersetOps++;
         narrative.push(describeIntention(intention, id, 'n/a', outcome));
         if (outcome === 'accepted') {
-          violations.push(...stepCheck(db, ctx, manifest, intention.aggregate, `${source}:step-check`, stats));
+          violations.push(...stepCheck(db, ctx, manifest, `${source}:step-check`, stats));
         }
       }
     } else {
@@ -232,7 +233,7 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
             driverFn(db, id, gen);
             stats.commands++; stats.accepted++;
             narrative.push(describeIntention(intention, id, 'legal', 'accepted'));
-            violations.push(...stepCheck(db, ctx, manifest, intention.aggregate, `${source}:step-check`, stats));
+            violations.push(...stepCheck(db, ctx, manifest, `${source}:step-check`, stats));
           } catch (err) {
             // Driver-skip signal (human ruling 2026-07-16, the paymentFailed opt-out): a driver
             // may throw 'drive-skip: <reason>' to declare a real impl precondition the spec's
@@ -292,7 +293,7 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
               stats.reattributions++;
               narrative.push(
                 `probe ${t.name} on ${intention.aggregate}#${id} → accepted, re-attributed to ${sibling.name}`);
-              violations.push(...stepCheck(db, ctx, manifest, intention.aggregate, `${source}:step-check`, stats));
+              violations.push(...stepCheck(db, ctx, manifest, `${source}:step-check`, stats));
             } else {
               const detail = vanished
                 ? `impl accepted a spec-illegal command: '${t.name}' was illegal from the observed pre-state ` +

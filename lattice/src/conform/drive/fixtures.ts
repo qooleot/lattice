@@ -8,6 +8,7 @@ import { tinyDb, tinyModel } from '../fixtures.js';
 import type { GenInput } from '../../generate/types.js';
 import type { GenPlan, PlanAggregate, PlanInvariant, PlanTransition } from '../../generate/plan.js';
 import type { Predicate } from '../../ast/invariant.js';
+import type { AggregateDef, DomainModel } from '../../ast/domain.js';
 import type { OverridesModule } from '../types.js';
 import type { CheckContext } from '../report.js';
 import type { DriveGenImpl, DriverModule } from './walk.js';
@@ -240,3 +241,123 @@ export function c09Ctx(): CheckContext {
   const input: GenInput = { model: tinyModel, adopted: [], ledger: [] };
   return { input, plan: tinyPlanWithBalanceInvariant, overrides, crosschecks: null, optOuts: [] };
 }
+
+// --- Cross-aggregate regression fixture (human ruling 2026-07-16, per-step scope widening) ------
+//
+// Proves the SECOND c09-class gap (docs/superpowers/specs/2026-07-15-lattice-adversarial-
+// generation-design.md fork-4 amendment, same date): the first per-step-check fix scoped itself to
+// the intention's nominally touched aggregate, which is exactly wrong for a driver that mutates a
+// DIFFERENT aggregate than the one its intention names (the real-world case: a Subscription-bound
+// `changePlanOp` driver that also writes Invoice rows). This fixture reproduces that shape
+// minimally with a second aggregate, 'Wallet', that has NO transitions of its own and is never
+// itself the subject of any intention — it can only be touched as a side effect of an Account-bound
+// driver, exactly like Invoice is touched as a side effect of a Subscription-bound driver in the
+// real target.
+//
+// 'debit' and 'credit' are declared as ordinary self-loop Account transitions (openState ->
+// openState, no requires — mirrors the original c09 fixture) but their DRIVERS never touch the
+// accounts table at all: they mutate the account's paired wallet row directly. 'debit' (op A) drives
+// that wallet's balance negative — a live `nonNegativeWalletBalance` violation on WALLET, not
+// Account, the instant it lands, even though the executing intention names Account. 'credit' (op B)
+// is itself spec-legal and zeroes the wallet balance back out before the sequence ends. Account
+// itself declares NO invariants in this plan, so a touched-aggregate-scoped check (the pre-fix
+// behavior) would find nothing to evaluate at all — not "the right aggregate but wrong timing," but
+// literally the wrong aggregate. Only a check that widens to every bound aggregate can see the
+// Wallet-side violation.
+
+const walletAggDef: AggregateDef = {
+  kind: 'aggregate',
+  name: 'Wallet',
+  fields: [
+    { name: 'walletId', type: { kind: 'prim', prim: 'Id' }, key: true },
+    { name: 'balance', type: { kind: 'prim', prim: 'Money' } },
+  ],
+};
+
+/** Account (unchanged fields/machine from tinyModel) + Wallet (new, no machine — Wallet is never
+ *  itself a transition subject, only a side-mutated row). */
+export const crossAggModel: DomainModel = {
+  ...tinyModel,
+  aggregates: [...tinyModel.aggregates, walletAggDef],
+};
+
+/** tinyDb()'s schema (accounts/account_entries/outbox) plus one new table for the second
+ *  aggregate. Does NOT touch ../fixtures.ts — tinyDb() is reused as the base, extended here. */
+export function crossAggDb(): Database.Database {
+  const db = tinyDb();
+  db.exec(`CREATE TABLE wallets (id TEXT PRIMARY KEY, balance INTEGER NOT NULL);`);
+  return db;
+}
+
+// Account declares NO invariants here — deliberately, so a touched-aggregate-scoped check has
+// nothing to find even if it ran correctly. The only invariant in this plan lives on Wallet.
+const accountAggCrossAgg: PlanAggregate = {
+  name: 'Account',
+  fields: tinyModel.aggregates[0]!.fields,
+  regions: tinyModel.aggregates[0]!.machine!.regions,
+  transitions: [debitTransition, creditTransition],
+  invariants: [],
+};
+
+const nonNegativeWalletBalance: PlanInvariant = {
+  name: 'nonNegativeWalletBalance', aggregate: 'Wallet',
+  candidate: {
+    kind: 'statePredicate', aggregate: 'Wallet',
+    body: {
+      kind: 'cmp', op: 'ge',
+      left: { kind: 'field', owner: 'self', path: ['balance'] },
+      right: { kind: 'int', value: 0 },
+    },
+  },
+  anchors: { specElement: 'invariant nonNegativeWalletBalance', provenance: [], witnessIds: [] },
+};
+
+const walletAgg: PlanAggregate = {
+  name: 'Wallet', fields: walletAggDef.fields, regions: [], transitions: [],
+  invariants: [nonNegativeWalletBalance],
+};
+
+export const crossAggPlan: GenPlan =
+  { context: 'Tiny', aggregates: [accountAggCrossAgg, walletAgg], events: tinyModel.events };
+
+export function crossAggCtx(): CheckContext {
+  const input: GenInput = { model: crossAggModel, adopted: [], ledger: [] };
+  return { input, plan: crossAggPlan, overrides, crosschecks: null, optOuts: [] };
+}
+
+// Create: seeds the account row AND its paired wallet (balance 0), keyed off the SAME id
+// (`${id}-wallet`) so the transition drivers below can find it without any liveIds/rowPick
+// machinery for Wallet — Wallet is never a chosen intention target in this fixture, only ever
+// reached as a side effect, exactly like Invoice rows implicitly created/touched by a
+// Subscription-bound driver in the real target.
+const crossAggCreate: DriverModule['drivers']['create'] = {
+  Account: (db, id) => {
+    const d = db as Database.Database;
+    d.prepare(`INSERT INTO accounts (id, owner_name, state) VALUES (?, ?, 'openState')`).run(id, `Owner-${id}`);
+    d.prepare(`INSERT INTO wallets (id, balance) VALUES (?, 0)`).run(`${id}-wallet`);
+  },
+};
+
+/** op A: intention names Account, but the driver never writes the accounts table at all — it
+ *  drives the paired WALLET row negative. This is the shape that defeats a touched-aggregate
+ *  filter: the aggregate that transiently violates its invariant is not the aggregate the
+ *  intention (or the driver's own name) points at. */
+function crossDebit(db: Database.Database, accountId: string, amount: number): void {
+  db.prepare(`UPDATE wallets SET balance = balance - ? WHERE id = ?`).run(amount, `${accountId}-wallet`);
+}
+
+/** op B: itself spec-legal (Account, openState -> openState, no requires) and zeroes the paired
+ *  wallet's balance back out — the "legally erased by the very next command" half of the pattern. */
+function crossCredit(db: Database.Database, accountId: string, amount: number): void {
+  db.prepare(`UPDATE wallets SET balance = balance + ? WHERE id = ?`).run(amount, `${accountId}-wallet`);
+}
+
+export const crossAggPatternDrivers: DriverModule = {
+  drivers: {
+    create: crossAggCreate,
+    transitions: {
+      debit: (db, id) => crossDebit(db as Database.Database, id, 100),
+      credit: (db, id) => crossCredit(db as Database.Database, id, 100),
+    },
+  },
+};

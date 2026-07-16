@@ -3,7 +3,7 @@ import { executeSequence } from './walk.js';
 import type { DriverModule } from './walk.js';
 import {
   tinyCtx, tinyDrivers, buggyDrivers, strictDrivers, skipDrivers, mkTinyDb, tinyPlanWithSibling,
-  c09Ctx, c09PatternDrivers,
+  c09Ctx, c09PatternDrivers, crossAggCtx, crossAggPatternDrivers, crossAggDb,
 } from './fixtures.js';
 import { tinyModel } from '../fixtures.js';
 import type { Intention } from './intent.js';
@@ -176,6 +176,30 @@ describe('executeSequence', () => {
     // Coverage counters (design amendment §2 of this ruling): both the pre-state read (debit's
     // and credit's own legality checks) and the per-step check tally Account.status occurrences.
     expect(r.stats.statesObserved['Account.status=openState']).toBeGreaterThan(0);
+  });
+
+  it('cross-aggregate regression (human ruling 2026-07-16, scope widening): a driver whose ' +
+    'intention names Account transiently violates an invariant on a DIFFERENT aggregate (Wallet) ' +
+    '— the per-step check must catch it even though Account itself declares no invariants', () => {
+    // crossAggPlan's Account has zero invariants; the only invariant lives on Wallet, which is
+    // never itself an intention target — 'debit' (op A) mutates the account's paired wallet row
+    // negative (spec-legal on Account: openState -> openState, no requires) and 'credit' (op B)
+    // legally zeroes it back out before the sequence ends. checkEvery: 100 means the in-loop
+    // cadence never fires (3 commands total) — the only full sweep is the unconditional
+    // end-of-sequence one, which runs AFTER credit already repaired the wallet.
+    const debitIntent: Intention = { kind: 'transition', name: 'debit', aggregate: 'Account', rowPick: 0, seed: 20 };
+    const creditIntent: Intention = { kind: 'transition', name: 'credit', aggregate: 'Account', rowPick: 0, seed: 21 };
+    const r = executeSequence(crossAggDb, crossAggPatternDrivers, crossAggCtx(),
+      seq(create(2), debitIntent, creditIntent), { checkEvery: 100, clockStep: 60 });
+
+    // The per-step check after 'debit' (step 2) catches the transient Wallet violation even
+    // though the executing intention's aggregate was Account.
+    expect(r.violations.length).toBeGreaterThan(0);
+    expect(r.violations.some(v => v.invariant === 'nonNegativeWalletBalance')).toBe(true);
+    expect(r.violations.some(v => v.source === 'drive:2:step-check')).toBe(true);
+    // The end-of-sequence sweep itself finds nothing — credit already repaired the wallet by the
+    // time it runs, confirming the per-step check (not the sweep) is what closes this gap.
+    expect(r.violations.some(v => v.source === 'drive:3')).toBe(false);
   });
 
   it('rowPick resolves against a live read, reaching a row created inside the driver (not tracked by any mirror)', () => {

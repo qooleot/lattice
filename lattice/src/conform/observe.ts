@@ -46,32 +46,15 @@ function projectRow(db: Database.Database, model: DomainModel, agg: AggregateBin
   return { type: agg.aggregate, id, fields };
 }
 
-/** Project ALL rows of one aggregate plus the one-hop ref closure of each row (drive walk
- *  per-step scoped invariant check, human ruling 2026-07-16, c09 root-cause:
- *  docs/superpowers/specs/2026-07-15-lattice-drive-rediscovery-results.md §7). Different Tier-1
- *  candidate kinds need different entity sets, and this satisfies both: SET_LEVEL_KINDS
- *  (unique/cardinality/sumOverCollection, tier1.ts) are properties of the whole subject set — a
- *  duplicate key needs at least two rows to exist at all — so they need every row of the touched
- *  aggregate in view at once, which the full per-aggregate observe below provides; ref-hop
- *  statePredicate invariants (e.g. `activePaidInFull`'s `latestInvoice.amountPaid`) need the
- *  referenced row's fields resolvable too, which each row's own one-hop closure (via
- *  observeScoped) provides. Bounded to O(rows in the touched aggregate) queries — the walk
- *  re-opens a fresh db per sequence, so this is small in practice (sequence-length-bounded), not
- *  campaign-size-bounded. */
-export function observeAggregateScoped(db: Database.Database, model: DomainModel,
-  manifest: BindingManifest, overrides: OverridesModule, aggregate: string): CaseEntity[] {
-  const agg = manifest.aggregates.find(a => a.aggregate === aggregate);
-  if (!agg || !agg.table || !agg.keyColumn) return [];
-  const ids = (db.prepare(`SELECT ${agg.keyColumn} FROM ${agg.table} ORDER BY ${agg.keyColumn}`).all() as
-    Record<string, unknown>[]).map(row => String(row[agg.keyColumn]));
-  const seen = new Map<string, CaseEntity>();
-  for (const id of ids) {
-    for (const e of observeScoped(db, model, manifest, overrides, aggregate, id)) {
-      seen.set(`${e.type}:${e.id}`, e);
-    }
-  }
-  return [...seen.values()];
-}
+// NOTE (drive walk per-step check, human ruling 2026-07-16, SCOPE WIDENED same day): this module
+// used to export `observeAggregateScoped` — full row set of ONE aggregate + one-hop ref closure
+// — for `walk.ts`'s per-step invariant re-check. That touched-aggregate scoping was found to
+// relocate the c09 cadence gap onto whichever aggregate a driver mutates WITHOUT its intention
+// naming it (e.g. a Subscription-bound `changePlanOp` driver that also writes Invoice rows). The
+// fix widened the per-step check to every bound aggregate at once, which made
+// `observeAggregateScoped` exactly equivalent to `observeEntities` below (every bound aggregate's
+// full row set already contains anything a one-hop ref could have reached) — so `walk.ts` now
+// calls `observeEntities` directly and the narrower helper was removed rather than left unused.
 
 export function observeEntities(db: Database.Database, model: DomainModel,
   manifest: BindingManifest, overrides: OverridesModule): CaseEntity[] {
