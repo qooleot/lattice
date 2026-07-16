@@ -42,10 +42,14 @@ export function fieldArb(name: string, enumNames: string[], valueNames: string[]
   return fc.record({
     type,
     isConst: constDrawArb,
+    isOptional: fc.boolean(),
     tags: fc.option(fc.constantFrom(['total'], ['balance'], ['signed']), { nil: undefined }),
-  }).map(({ type, isConst, tags }) => {
+  }).map(({ type, isConst, isOptional, tags }) => {
     const f: Field = { name, type };
     if (isConst) f.const = true;
+    // `?` is illegal on a key field (optional-key) and on a list (optional-list); this generator
+    // never emits key fields here, so only the list case needs excluding.
+    if (isOptional && type.kind !== 'list') f.optional = true;
     if (tags) f.tags = tags;
     return f;
   });

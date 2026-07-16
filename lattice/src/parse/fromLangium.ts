@@ -46,6 +46,7 @@ function mapType(t: G.LatType, enums: Set<string>, diags: ParseDiagnostic[], own
 function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>, values: Set<string>): Field[] {
   return fs.map(f => {
     const field: Field = { name: f.name, type: mapType(f.type, enums, diags, owners, values) };
+    if (f.optional) field.optional = true;
     if (f.key) field.key = true;
     if (f.const) field.const = true;
     if (f.tags.length) field.tags = f.tags.map(t => t.name);

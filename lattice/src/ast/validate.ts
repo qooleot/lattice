@@ -156,7 +156,12 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       out.push({ code: 'reserved-field-name', message: `'state' is reserved for machine-state keys (<Region>.state)`, at });
   };
   const checkFields = (fs: Field[], owner: string, needKey: boolean) => {
-    fs.forEach(f => { checkType(f.type, `${owner}.${f.name}`); checkReservedField(f, `${owner}.${f.name}`); });
+    fs.forEach(f => { checkType(f.type, `${owner}.${f.name}`); checkReservedField(f, `${owner}.${f.name}`);
+      if (f.optional && f.key)
+        out.push({ code: 'optional-key', message: `${owner}.${f.name} is a key field and cannot be optional — identity is never absent`, at: `${owner}.${f.name}` });
+      if (f.optional && f.type.kind === 'list')
+        out.push({ code: 'optional-list', message: `${owner}.${f.name} is a List and cannot be optional — an absent list and an empty list are the same fact; List<T> already means zero or more`, at: `${owner}.${f.name}` });
+    });
     if (needKey && !fs.some(f => f.key)) out.push({ code: 'missing-key', message: `${owner} has no key field`, at: owner });
   };
 
