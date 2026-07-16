@@ -89,12 +89,20 @@ const entityArb = (name: string, enumNames: string[], ownerNames: string[]): fc.
 const cmpOps: Cmp[] = ['eq', 'ne', 'lt', 'le', 'gt', 'ge'];
 function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[], depth: number): fc.Arbitrary<Predicate> {
   const numFields = agg.fields.filter(f => f.type.kind === 'prim' && ['Int', 'Money', 'Date', 'Duration'].includes((f.type as any).prim));
-  const enumFields = agg.fields.filter(f => f.type.kind === 'enum');
+  // Required-only for the same reason as cmpFields below: cmpEnum reads this path inside a cmp,
+  // and fieldArb marks enum-typed fields `?` as freely as prim ones.
+  const enumFields = agg.fields.filter(f => f.type.kind === 'enum' && !f.optional);
+  // Operand pool for cmp/plus terms: required numerics only. An optional path read inside a cmp is
+  // `absence-undecided` unless a present() syntactically dominates it (grammar.ts checkAbsence);
+  // this generator draws its atoms independently and so never builds that dominance, making any
+  // cmp over an optional path a spec the validator rejects. `present` below is the deliberate
+  // exception — deciding absence is precisely what it is for, so it keeps the full pool.
+  const cmpFields = numFields.filter(f => !f.optional);
   // No fallback to agg.fields when there are no numeric fields: the remaining fields are key /
   // Text/Id (out-of-grammar as paths — see `representable`) or enums (covered by cmpEnum below),
   // so field terms are simply omitted and cmpNum draws from int/now terms only.
   const term: fc.Arbitrary<Term> = fc.oneof(
-    ...(numFields.length ? [fc.constantFrom(...numFields).map(f => ({ kind: 'field' as const, owner: 'self' as const, path: [f.name] }))] : []),
+    ...(cmpFields.length ? [fc.constantFrom(...cmpFields).map(f => ({ kind: 'field' as const, owner: 'self' as const, path: [f.name] }))] : []),
     fc.integer({ min: 0, max: 999 }).map(value => ({ kind: 'int' as const, value })),
     fc.constant({ kind: 'now' as const }));
   const sum: fc.Arbitrary<Term> = fc.oneof({ weight: 4, arbitrary: term },
@@ -110,8 +118,11 @@ function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[],
   const inState: fc.Arbitrary<Predicate> | null = agg.machine ? fc.constantFrom(...agg.machine.regions).chain(r =>
     fc.uniqueArray(fc.constantFrom(...r.states.map(s => s.name)), { minLength: 1, maxLength: r.states.length })
       .map(states => ({ kind: 'inState' as const, owner: 'self', region: r.name, states }))) : null;
-  // present(f): draws from the SAME numFields pool as cmpNum's field-term arm above — any other
-  // pool risks a key/Text/Id path, which checkPath (grammar.ts:207) rejects as key-path/unrepresentable-path.
+  // present(f): draws from numFields — the unfiltered pool, optional fields included, unlike
+  // cmpNum's field-term arm above. present() carries no absence obligation of its own (checkAbsence
+  // ignores it), so an optional path is legal here and is the only shape that exercises `?` fields
+  // in a generated predicate at all. The pool must stay numeric-prim: any wider and it risks a
+  // key/Text/Id path, which checkPath (grammar.ts:207) rejects as key-path/unrepresentable-path.
   const present: fc.Arbitrary<Predicate> | null = numFields.length
     ? fc.constantFrom(...numFields).map(f => ({ kind: 'present' as const, path: [f.name] }))
     : null;
@@ -134,8 +145,14 @@ function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[],
 // Value-typed fields are excluded outright: Task 10 adds surface/AST/printer support only, no
 // solver encoding yet (fieldQType/emitOwnerSig drop them, like lists), so a path into one would
 // generate an invariant the emitters can't faithfully represent.
+// Optional fields are excluded for the same reason at one remove: every form candidateArb draws
+// these paths into — monotonic's field, unique's by, conservation's parts/total,
+// sumOverCollection's total — has no predicate in which a present() could sit, so validateCandidate
+// rejects an optional path outright (`absence-undecided`, grammar.ts). A statePredicate CAN carry
+// an optional path legally, under a dominating present(); candidateArb never builds that guard, so
+// this pool stays required-only rather than teaching it to.
 const representable = (f: Field) =>
-  !f.key && f.type.kind !== 'value' && !(f.type.kind === 'prim' && ['Text', 'Id'].includes((f.type as any).prim));
+  !f.key && !f.optional && f.type.kind !== 'value' && !(f.type.kind === 'prim' && ['Text', 'Id'].includes((f.type as any).prim));
 
 function candidateArb(agg: AggregateDef, enums: { name: string; values: string[] }[]): fc.Arbitrary<Candidate> {
   const paths = agg.fields.filter(representable).map(f => [f.name]);
@@ -159,9 +176,15 @@ function candidateArb(agg: AggregateDef, enums: { name: string; values: string[]
   if (paths.length >= 3) arbs.push(fc.constant({ kind: 'conservation' as const, aggregate: agg.name,
     parts: [paths[0]!, paths[1]!], total: paths[2]! }));
   const owned = agg.fields.map(f => ({ f, child: ownedCollectionChild(agg, f) })).filter(x => x.child);
-  const numPaths = agg.fields.filter(isNumericPrim).map(f => [f.name]);
+  // sumOverCollection's `total` (own field) and `field` (child field) both reject an optional path
+  // outright — neither position has a predicate a present() could sit in (grammar.ts). These pools
+  // are therefore required-only, for the same reason `representable` above is. The child pool reads
+  // `optional` off the child entity's own fields: nestedArb builds them with fieldArb, which draws
+  // `?` freely.
+  const required = (f: Field) => !f.optional;
+  const numPaths = agg.fields.filter(isNumericPrim).filter(required).map(f => [f.name]);
   if (owned.length && numPaths.length) {
-    const numChildFields = owned[0]!.child!.fields.filter(isNumericPrim).map(f => f.name);
+    const numChildFields = owned[0]!.child!.fields.filter(isNumericPrim).filter(required).map(f => f.name);
     if (numChildFields.length) arbs.push(fc.constantFrom<'eq' | 'le' | 'ge'>('eq', 'le', 'ge').map(op =>
       ({ kind: 'sumOverCollection' as const, aggregate: agg.name, collection: owned[0]!.f.name,
          child: owned[0]!.child!.name, field: numChildFields[0]!, op, total: numPaths[0]! })));
