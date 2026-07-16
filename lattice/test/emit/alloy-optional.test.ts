@@ -84,3 +84,65 @@ describe('alloy — ref-hop existence gate on cmp', () => {
   it('does not gate a read that crosses no hop', () =>
     expect(emit(cmpOver(['amount']))).toContain('(x.amount > 0)'));
 });
+
+// The same hole on unique's by-clause, at the THIRD polarity. `by (pm.fee)` with `pm` optional is
+// accepted by the language (absence-undecided gates a path's end, not its middle), and in Alloy
+// `none = none` is TRUE — two pm-less rows compare equal on `a.pm.fee = b.pm.fee` and read as a
+// collision Alloy reports as a uniqueness violation. evaluate.ts:79 skips such rows ("unknown facts
+// don't convict") and quint conjoins `<hop>.exists` into its collision predicate; Alloy must too.
+describe('alloy — ref-hop existence gate on unique by-keys', () => {
+  const mUniq: DomainModel = {
+    context: 'UniqHop', ticksPerDay: 24, enums: [], values: [],
+    entities: [{ kind: 'entity', name: 'PM', fields: [
+      { name: 'pmId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'fee', type: { kind: 'prim', prim: 'Money' } }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Payment', fields: [
+      { name: 'paymentId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'pm', type: { kind: 'ref', target: 'PM' }, optional: true },
+      { name: 'required', type: { kind: 'ref', target: 'PM' } },
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' } }],
+      machine: { regions: [{ name: 'Access', initial: 'Open', states: [
+        { name: 'Open', tags: ['active'] }, { name: 'Closed', tags: ['terminal'] }] }], transitions: [] } }],
+    events: [], services: []
+  };
+  const uniqueBy = (by: string[][]): Candidate => ({ kind: 'unique', aggregate: 'Payment',
+    whileStates: { region: 'Access', states: ['Open'] }, by });
+  const emit = (c: Candidate) => astToAlloy(mUniq, { kind: 'probe-permit', hi: c, exclusions: [], scope: 4 });
+
+  // Fact polarity, and the reason it differs from cmp's: the gate joins the COLLISION, which must
+  // be FALSE when a hop is absent (so the rows don't collide). cmp gates with `implies` because an
+  // ungrounded read must be vacuously TRUE. Do not unify these two arms.
+  it('gates the collision on both sides existing, conjunctively', () =>
+    expect(emit(uniqueBy([['pm', 'fee']])))
+      .toContain('implies not ((some a.pm and some b.pm) and a.pm.fee = b.pm.fee)'));
+
+  it('leaves a by-key through a required hop ungated — `one` can never be empty', () =>
+    expect(emit(uniqueBy([['required', 'fee']]))).toContain('implies not (a.required.fee = b.required.fee)'));
+
+  it('does not gate a by-key that crosses no hop', () =>
+    expect(emit(uniqueBy([['amount']]))).toContain('implies not (a.amount = b.amount)'));
+
+  it('gates every optional hop across a multi-key by-clause', () => {
+    const src = emit(uniqueBy([['pm', 'fee'], ['amount']]));
+    expect(src).toContain('(some a.pm and some b.pm) and a.pm.fee = b.pm.fee and a.amount = b.amount');
+  });
+
+  // The same none = none hazard in the shape-exclusion renderer. An `equal` dim only exists when
+  // both sides resolved (salient.ts:86), so excluding "two rows with equal fees" must not also
+  // exclude "two rows with no pm at all" — ungated it did, and the pm-less witness the judge
+  // permits became unreachable (real Alloy: UNSAT before, SAT after).
+  const excl = (facts: { dim: string; value: unknown }[]) =>
+    astToAlloy(mUniq, { kind: 'probe-permit', hi: uniqueBy([['pm', 'fee']]), exclusions: [facts as never], scope: 4 });
+
+  it('gates an `equal` exclusion dim whose path hops through an optional ref', () =>
+    expect(excl([{ dim: 'pm.fee equal', value: true }]))
+      .toContain('(some a.pm and some b.pm) and a.pm.fee = b.pm.fee'));
+
+  it('gates the `!=` polarity of that dim identically', () =>
+    expect(excl([{ dim: 'pm.fee equal', value: false }]))
+      .toContain('(some a.pm and some b.pm) and a.pm.fee != b.pm.fee'));
+
+  // A literal-valued dim is already FALSE on an absent hop — the right answer, so no gate.
+  it('leaves a literal-valued exclusion dim ungated', () =>
+    expect(excl([{ dim: 'amount value', value: 3 }])).toContain('a.amount = 3'));
+});

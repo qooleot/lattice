@@ -197,7 +197,20 @@ function candidateToPred(m: DomainModel, c: Candidate, name: string): string {
     case 'unique': {
       const inS = (v: string) => inStateExpr(c.aggregate, v, c.whileStates.region, c.whileStates.states);
       const eqs = c.by.map(p => `${alloyFieldPath(m, c.aggregate, 'a', p)} = ${alloyFieldPath(m, c.aggregate, 'b', p)}`).join(' and ');
-      return `pred ${name} { all disj a, b: ${c.aggregate} | (${inS('a')} and ${inS('b')}) implies not (${eqs}) }`;
+      // A by-path may hop THROUGH an optional ref and end at a required field — the language's
+      // absence-undecided check gates a path's end, not its middle, so this is legal input. In
+      // Alloy `none = none` is TRUE, so two rows that both lack the hop compare equal on every
+      // key read through it and read as a collision; evaluate.ts:79 skips such rows ("unknown
+      // facts don't convict") and quint conjoins each hop's `.exists` into its own collision.
+      //
+      // Fact polarity, and a THIRD polarity from the two arms above — do not unify them. The gate
+      // joins the COLLISION conjunctively, so an absent hop makes the collision FALSE and the pair
+      // does not convict. cmp needs `implies` (an ungrounded read is vacuously TRUE); present
+      // needs no gate at all (Alloy's `some x.a.b` is already false on an empty `x.a`).
+      const hops = [...new Set(c.by.flatMap(p => [
+        ...alloyRefHops(m, c.aggregate, 'a', p), ...alloyRefHops(m, c.aggregate, 'b', p)]))];
+      const gated = hops.length ? `(${hops.map(h => `some ${h}`).join(' and ')}) and ${eqs}` : eqs;
+      return `pred ${name} { all disj a, b: ${c.aggregate} | (${inS('a')} and ${inS('b')}) implies not (${gated}) }`;
     }
     case 'refsResolve': return `pred ${name} { }`;   // refs are total in Alloy sigs by construction — vacuously true
     case 'cardinality': {
@@ -258,7 +271,22 @@ function shapeToPred(m: DomainModel, facts: SalientFact[], subject: Candidate, n
     const mTot = f.dim.match(/^([\w.]+) value$/);
     if (mTot) { conj.push(`${alloyFieldPath(m, agg, 'a', mTot[1]!.split('.'))} = ${f.value}`); continue; }
     const mEq = f.dim.match(/^(.+) equal$/);
-    if (mEq) { const p = mEq[1]!.split('.'); conj.push(`${alloyFieldPath(m, agg, 'a', p)} ${f.value ? '=' : '!='} ${alloyFieldPath(m, agg, 'b', p)}`); continue; }
+    if (mEq) {
+      const p = mEq[1]!.split('.');
+      // Same `none = none` hazard as candidateToPred's unique arm, and gated the same way: an
+      // `equal` dim is only ever produced from a witness where BOTH sides resolved (salient.ts:86),
+      // so a pair that lacks the hop entirely is NOT this shape — but ungated, `a.pm.fee = b.pm.fee`
+      // is TRUE of two hop-less rows and the `not shape` exclusion swallows them, making a witness
+      // the judge permits unreachable. The `!=` rendering is already false on an ungrounded hop; it
+      // takes the gate too so both polarities state the same requirement.
+      //
+      // The `value`/`= <lit>` branches below need NO gate: `a.pm.fee = 3` is already FALSE on an
+      // absent hop, which is the right answer — a hop-less row genuinely does not have that fact.
+      const hops = [...new Set([...alloyRefHops(m, agg, 'a', p), ...alloyRefHops(m, agg, 'b', p)])];
+      const eq = `${alloyFieldPath(m, agg, 'a', p)} ${f.value ? '=' : '!='} ${alloyFieldPath(m, agg, 'b', p)}`;
+      conj.push(hops.length ? `(${hops.map(h => `some ${h}`).join(' and ')}) and ${eq}` : eq);
+      continue;
+    }
     const mVal = f.dim.match(/^(.+) = (.+)$/);
     if (mVal) {
       // A dim whose path is `<Region>.state` (extractSalient's machine-state capture, same format
