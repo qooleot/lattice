@@ -1137,7 +1137,79 @@ extra seeds beyond the three pre-authorized, no source changes, no verbose/repor
 Escalated as MISSED, verbatim, not patched. `.conform` confirmed absent after all three runs.
 
 ### c09 — cross-aggregate activation
-**Verdict: PENDING (campaign #2)**
+**Verdict: MISSED**
+
+Branch mechanics: `git checkout -b drive/c09 drift/c09-upgrade-activates`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `5322cb3`) — one conflict, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved as union (both sides' lines concatenated,
+no lines dropped, all validated as parseable JSON post-resolution). `git diff
+drift/c09-upgrade-activates -- implementations/subscriptions/src` was empty after the merge — the
+drift edit survived intact (`changePlan`'s added block that finalizes the successor's first
+invoice, force-sets `lifecycle_state = 'active'`, and emits `SubscriptionActivated` when the source
+subscription is `active`/`past_due` — `implementations/subscriptions/src/subscription-service.ts`).
+`rm -rf implementations/subscriptions/.conform` before the run; absent both before and after.
+
+Seeds tried: 21, 22, 23 (all three pre-authorized seeds — all CLEAN, no violation; per "stopping
+after 3 clean seeds = MISSED").
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed <21|22|23>`. Exit code 0 on all three runs.
+
+Verbatim stdout, seed 21:
+```
+drive: 1600 sequences — CLEAN
+commands: 11688 (2608 accepted, 0 rejected, 211 superset ops)
+guards probed at event time: 8869 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 337
+driver skips (impl preconditions, audited): 6
+duration 3.7s
+```
+Verbatim stdout, seed 22:
+```
+drive: 1600 sequences — CLEAN
+commands: 12161 (2781 accepted, 0 rejected, 193 superset ops)
+guards probed at event time: 9187 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 370
+driver skips (impl preconditions, audited): 5
+duration 2.8s
+```
+Verbatim stdout, seed 23:
+```
+drive: 1600 sequences — CLEAN
+commands: 12189 (2728 accepted, 0 rejected, 187 superset ops)
+guards probed at event time: 9274 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 380
+driver skips (impl preconditions, audited): 3
+duration 3.0s
+```
+
+Registered element `activePaidInFull` (Tier 1) and the crosscheck collateral (`crosscheck
+account_summary`) do not appear in any of the three logs — grepped directly
+(`VIOLATION\|activePaidInFull\|account_summary`), zero matches. Exit code 0 on all three runs.
+
+Seeds 21 and 23 are byte-identical to the corresponding rows of §5's clean-impl control (seed 21:
+11688/2608/0/211, 337 reattr, 6 skips; seed 23: 12189/2728/0/187, 380 reattr, 3 skips) — same
+"observably indistinguishable from clean" pattern already seen at c06/c08. **Seed 22 is the one
+exception recorded honestly across the campaign so far: it diverges from the clean control by a
+small margin** (accepted 2781 vs. clean's 2782; guard-probe attempts 9187 vs. 9186; re-attributions
+370 vs. 369 — all other fields identical: commands 12161, superset ops 193, driver skips 5,
+rejected 0). This is the first seed in campaign #2 whose command-trace statistics are not
+byte-identical to the clean control, which is evidence the drift's extra `changePlan` code path
+(finalize + force-activate the successor) DID execute somewhere in this run and shifted at least
+one subsequent legality classification (most plausibly: a later probe against the
+force-activated successor row was classified `illegal` in the clean impl — successor still
+`draft` — but the drift makes that row observably `active`, changing the oracle's per-step
+legality read for a downstream command touching it). Despite that divergence, no `VIOLATION` line
+appears and exit code is 0 — the registered `activePaidInFull` end-of-sequence sweep did not flag
+the force-activated successor as unpaid-active in this run.
+
+Recorded honestly per the zero-tuning rule: a genuine MISS, but not a clean one — seed 22's
+divergence is the strongest evidence in the c08/c09/c06 MISS cluster that a drift's mutation path
+actually fired during a driven run without producing the registered violation, as opposed to the
+route's precondition simply never being reached. No further investigation performed here (no
+extra flags, no extra seeds beyond the three pre-authorized, no source changes, no verbose/report
+reruns) — escalated as MISSED, verbatim, with the seed-22 anomaly flagged plainly rather than
+smoothed over. `.conform` confirmed absent after all three runs.
 
 ### c10 — schema rename breaks auto-binding
 **Verdict: PENDING (campaign #2)**
