@@ -264,7 +264,41 @@ whether `activate` is being driven to a full LEGAL acceptance at all within 200�
 these three seeds — flagged as a concern for the campaign write-up, not resolved by tuning here.
 
 ### c03 — emit outside the transaction
-**Verdict: PENDING**
+**Verdict: REDISCOVERED**
+
+Branch mechanics: `git checkout -b drive/c03 drift/c03-emit-outside-tx`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` — same single ledger.jsonl conflict, union-resolved and validated.
+`git diff drift/c03-emit-outside-tx -- implementations/subscriptions/src` was empty after the merge
+— the drift edit (the emit hoisted outside the transaction in `activate()`) survived intact.
+
+Seeds tried: 11 (caught on the first pre-registered seed).
+
+Verbatim stdout, seed 11:
+```
+drive: 3 sequences — FAILED (seed 11)
+replay: lattice conform --target ../implementations/subscriptions --drive --seed 11
+commands: 57 (29 accepted, 0 rejected, 0 superset ops)
+guards probed at event time: 28 attempts across 1 guarded transitions (activate)
+probe re-attributions: 0
+duration 0.0s
+narrative:
+  create Subscription#d-subscription-1 (seed=0) -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [d-subscription-1] — no legal path: Subscription 'd-subscription-1' region 'status' — all 1 event(s) consumed, reachable state(s) {active, pastDue, canceled} do not include observed final 'trialing'; events=[SubscriptionActivated] — anchors [transition activate] — source drive:2
+```
+Exit code: 1.
+
+Verdict vs. the registered signal: the registered element+witness is `Tier 2, machine
+Subscription.status`, with either of two pre-registered substrings — this run's detail line
+contains BOTH `do not include observed final 'trialing'` and `all 1 event(s) consumed` verbatim.
+The registered route matches exactly: shrunk narrative shows the driver's illegal probe of
+`activate` from the trialing pre-state (`legality=illegal -> rejected` — the oracle correctly
+reports the *command* as rejected, matching spec expectation for the probe itself), yet the stray
+`SubscriptionActivated` event the drift committed outside the transaction still landed in the
+row's outbox, so the end-of-sequence Tier-2 trace check dead-ends on it — exactly the "rejected
+command, stray committed event" mechanism the registration anticipated. No phrasing-variant issue
+arose (the slice-2 c03 precedent's masking concern did not recur here, as the registration flagged
+as possible).
 
 ### c04 — weakened guard
 **Verdict: PENDING**
