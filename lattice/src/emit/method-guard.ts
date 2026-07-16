@@ -56,11 +56,17 @@ export function predToQuintParam(
       return `((${allExist}) implies ${cmp})`;
     }
     case 'inState': return '(' + p.states.map(s => `${self}.${p.region}_state == "${s}"`).join(' or ') + ')';
-    // Mirrors predToQuint's 'present' arm verbatim (quint.ts) — pathToQuint's last hop always
-    // renders `${prefix}.${lastSeg}`, so appending `Present` reaches the companion flag beside
-    // the field. Params never appear in a present() path (present() takes a Path, not a Term), so
-    // this needs no param-aware variant.
-    case 'present': return `${pathToQuint(m, p.path, self, ownerName)}Present`;
+    // Mirrors predToQuint's 'present' arm verbatim (quint.ts), ref-hop existence gate included —
+    // conjoined, not implied, because presence reads absence as a fact (see the polarity note there).
+    // Params never appear in a present() path (present() takes a Path, not a Term), so this needs no
+    // param-aware variant and can reuse refHopsIn directly.
+    case 'present': {
+      const flag = `${pathToQuint(m, p.path, self, ownerName)}Present`;
+      const hops = refHopsIn(m, p.path, self, ownerName);
+      if (hops.length === 0) return flag;
+      const allExist = [...new Set(hops)].map(h => `${h}.exists`).join(' and ');
+      return `((${allExist}) and ${flag})`;
+    }
     case 'and': return '(' + p.args.map(a => predToQuintParam(m, a, self, ownerName, paramVars)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToQuintParam(m, a, self, ownerName, paramVars)).join(' or ') + ')';
     case 'not': return `(not(${predToQuintParam(m, p.arg, self, ownerName, paramVars)}))`;

@@ -67,6 +67,17 @@ function fieldQType(m: DomainModel, f: Field): string | null {
 // `${collection}Count: int` uses for owned collections). Only for a field BOTH declared optional
 // AND encodable by fieldQType — a flag for a field the solver cannot see (Text/Id, dropped above)
 // would be a promise the engine cannot keep.
+//
+// The flag is drawn ONCE, here, and no action ever writes it: isEvolvingField is prim-only, the enum
+// mutator only names enum fields, and a transition writes only its region state. That looks fatal for
+// the motivating shape (a Payment that ACQUIRES a payment method mid-life) and is not, for a reason
+// only statable here: the draw is unconstrained and independent of the region state, so "absent at
+// init, attached at step k" and "present from init" differ only in the flag's value at the states
+// before k — and presence is expressible ONLY as a single-state predicate (grammar.ts's `present`
+// takes a Path and appears inside a state predicate), so no property this grammar can state separates
+// the two encodings. A real mutator becomes REQUIRED the moment a TEMPORAL presence property is
+// expressible ("once attached, never detached"): with nothing writing the flag, this encoding would
+// prove such a property vacuously.
 function presentInitValue(m: DomainModel, f: Field, nondets: string[], tag: string): string | null {
   if (!f.optional || !fieldQType(m, f)) return null;
   const nd = `nd_${tag}_${f.name}Present`;
@@ -198,7 +209,20 @@ export function predToQuint(m: DomainModel, p: Predicate, self: string, ownerNam
     // pathToQuint's last hop is always `${prefix}.${lastSeg}` (ref-hop or not), so appending
     // `Present` here yields exactly `${prefix}.${lastSeg}Present` — the companion flag emitted
     // beside the field itself (see presentInitValue / the record-type `fields` construction above).
-    case 'present': return `${pathToQuint(m, p.path, self, ownerName)}Present`;
+    case 'present': {
+      const flag = `${pathToQuint(m, p.path, self, ownerName)}Present`;
+      // Same ref-hop existence gate as `cmp` above, with the OPPOSITE polarity — and the polarity is
+      // forced, not a taste. `cmp` reads absence as unknown and must not convict, so its gate is
+      // `allExist implies cmp` (ungrounded ⇒ vacuously true). `present` reads absence as a FACT
+      // (evaluate.ts's evalPred 'present' resolves the path and returns `!== undefined`), so a read
+      // through a never-created record is FALSE for the TS judge — a conjunction, not an implication.
+      // Without this, Apalache reads the placeholder flag of a record no create_ action ever made and
+      // may answer true where the judge answers false: a solver/judge divergence, not a real fact.
+      const hops = refHopsIn(m, p.path, self, ownerName);
+      if (hops.length === 0) return flag;
+      const allExist = [...new Set(hops)].map(h => `${h}.exists`).join(' and ');
+      return `((${allExist}) and ${flag})`;
+    }
     case 'and': return '(' + p.args.map(a => predToQuint(m, a, self, ownerName)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToQuint(m, a, self, ownerName)).join(' or ') + ')';
     case 'not': return `(not(${predToQuint(m, p.arg, self, ownerName)}))`;

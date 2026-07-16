@@ -94,7 +94,11 @@ describe('quint — an unencodable optional field gets no flag', () => {
   });
 });
 
-describe('the Payment.paymentMethod fix (quint path — Alloy never enforced refsResolve)', () => {
+// An ENGINE-derivation test, not a solver-path one: it calls impliedInvariants and nothing else. It
+// says only that no refsResolve rule is derived for an owner whose every same-context ref is
+// optional. Whether the emitted model actually ADMITS a method-less Payment is a different claim on
+// a different layer — see quint-optional.integration.test.ts, which emits and runs Apalache.
+describe('impliedInvariants derives no refsResolve for an all-optional-ref owner', () => {
   const payment: DomainModel = {
     context: 'BillPayments', ticksPerDay: 24, enums: [], values: [],
     entities: [{ kind: 'entity', name: 'PaymentMethod', fields: [{ name: 'pmId', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
