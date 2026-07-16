@@ -1212,7 +1212,37 @@ reruns) — escalated as MISSED, verbatim, with the seed-22 anomaly flagged plai
 smoothed over. `.conform` confirmed absent after all three runs.
 
 ### c10 — schema rename breaks auto-binding
-**Verdict: PENDING (campaign #2)**
+**Verdict: REDISCOVERED-LOUD**
+
+Branch mechanics: `git checkout -b drive/c10 drift/c10-column-rename`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `bf135cb`) — clean auto-merge, no conflicts (same
+as c06 — the ledger.jsonl divergence pattern on this branch pair didn't collide on the same lines).
+`git diff drift/c10-column-rename -- implementations/subscriptions/src` was empty after the merge —
+the drift edit survived intact (`seats` column renamed to `seat_qty` consistently across
+`implementations/subscriptions/src/schema.sql` and `subscription-service.ts`;
+`conform/overrides.ts` deliberately left untouched, per the drift's own commit message, so the spec
+field `seats` no longer auto-binds and has no override). `rm -rf
+implementations/subscriptions/.conform` before the run; absent both before and after (the run
+aborts before any command executes, so no ledger entry or `.conform` artifact is written at all).
+
+Seed tried: 21 (first pre-authorized seed — aborts loud immediately, depth-independent, as
+registered; no need for 22/23).
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed 21`. Exit code 2.
+
+Verbatim stdout/stderr:
+```
+conform: unbound spec fields — add typed overrides or fix naming:
+  Subscription (table subscriptions): seats
+```
+
+Registered signal fires exactly: substring `unbound spec fields`, naming `Subscription` … `seats`
+— both present verbatim. Matches the registered route precisely: `executeSequence` calls
+`bindSchema` before the intention loop even begins, so the campaign never reaches a single driven
+command regardless of seed or sequence/length budget — exit 2 immediately, before any narrative,
+before any command counter. `.conform` confirmed absent after the run (no working-tree changes at
+all from this run — the abort happens before any session/ledger write).
 
 ### c11 — stale override
 **Verdict: PENDING (campaign #2)**
