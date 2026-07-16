@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatReport, runConform } from './report.js';
+import { formatReport, runConform, runDrive } from './report.js';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, copyFileSync, existsSync, readdirSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { join, resolve } from 'node:path';
@@ -198,6 +198,82 @@ describe('runConform', () => {
 
       await runConform(tmpDir, 'report');
       expect(forThisRun()).toHaveLength(2); // append-only, one per run
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+});
+
+describe('runDrive', () => {
+  const DRIVE_OPTS = { sequences: 5, length: 5, seed: 1, checkEvery: 5, probeRate: 0.2 };
+
+  it("rejects a target with no drive.ts (must export 'drivers')", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'conform-drive-test-'));
+    const realSessionPath = resolve(__dirname, '../../..', '.lattice-session-subscriptions');
+    try {
+      mkdirSync(join(tmpDir, 'conform'), { recursive: true });
+      writeFileSync(join(tmpDir, 'conform', 'conform.config.json'), JSON.stringify({
+        session: realSessionPath, snapshots: '.conform/snapshots', optOuts: [],   // no "schema" key either
+      }));
+      writeFileSync(join(tmpDir, 'conform', 'overrides.ts'), 'export const overrides = {};');
+
+      try {
+        await runDrive(tmpDir, DRIVE_OPTS);
+        expect.unreachable('runDrive must throw when conform/drive.ts is missing');
+      } catch (err) {
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toMatch(/must export 'drivers'/);
+      }
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  it('validates drive.ts shape BEFORE checking for the config schema key (order pinned)', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'conform-drive-test-'));
+    const realSessionPath = resolve(__dirname, '../../..', '.lattice-session-subscriptions');
+    try {
+      mkdirSync(join(tmpDir, 'conform'), { recursive: true });
+      writeFileSync(join(tmpDir, 'conform', 'conform.config.json'), JSON.stringify({
+        session: realSessionPath, snapshots: '.conform/snapshots', optOuts: [],   // still no "schema" key
+      }));
+      writeFileSync(join(tmpDir, 'conform', 'overrides.ts'), 'export const overrides = {};');
+      // Empty maps: the non-empty-transitions/create validation must fire before the schema check
+      // ever runs, even though this config also lacks "schema".
+      writeFileSync(join(tmpDir, 'conform', 'drive.ts'), 'export const drivers = { transitions: {}, create: {} };');
+
+      try {
+        await runDrive(tmpDir, DRIVE_OPTS);
+        expect.unreachable('runDrive must throw on an empty drivers module');
+      } catch (err) {
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toMatch(/non-empty 'transitions' and 'create'/);
+        expect((err as Error).message).not.toMatch(/schema/);
+      }
+    } finally {
+      rmSync(tmpDir, { recursive: true });
+    }
+  });
+
+  it('rejects --drive when conform.config.json has no "schema" key (drive.ts is otherwise valid)', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'conform-drive-test-'));
+    const realSessionPath = resolve(__dirname, '../../..', '.lattice-session-subscriptions');
+    try {
+      mkdirSync(join(tmpDir, 'conform'), { recursive: true });
+      writeFileSync(join(tmpDir, 'conform', 'conform.config.json'), JSON.stringify({
+        session: realSessionPath, snapshots: '.conform/snapshots', optOuts: [],   // no "schema" key
+      }));
+      writeFileSync(join(tmpDir, 'conform', 'overrides.ts'), 'export const overrides = {};');
+      writeFileSync(join(tmpDir, 'conform', 'drive.ts'),
+        "export const drivers = { transitions: { t: () => {} }, create: { Agg: () => {} } };");
+
+      try {
+        await runDrive(tmpDir, DRIVE_OPTS);
+        expect.unreachable('runDrive must throw when the config has no schema key');
+      } catch (err) {
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toMatch(/schema/);
+      }
     } finally {
       rmSync(tmpDir, { recursive: true });
     }

@@ -58,12 +58,17 @@ export type LedgerEntry =
   // target's conform.config.json. Structural shape is inlined (not imported from ../conform/types)
   // because the engine must not depend on the conform module tree; violations are mapped
   // structurally, dropping the `invariant` member that conform's ConformViolation carries.
-  | { kind: 'conformance'; at: string; target: string; mode: 'report' | 'enforce';
+  // `mode: 'drive'` (Task 6, design §3): seeded adversarial campaigns against the live impl via a
+  // target-supplied driver map — the optional `drive` member carries campaign-only evidence
+  // (report/enforce runs never set it) alongside the same structural fields report/enforce use.
+  | { kind: 'conformance'; at: string; target: string; mode: 'report' | 'enforce' | 'drive';
       snapshots: number; invariantsChecked: number; traceRowsChecked: number;
       violationCount: number;
       violations: { specElement: string; anchors: string[]; witnessIds: string[]; source: string; detail: string }[];
       residual: { autoBound: number; overridden: number; total: number };
-      optOuts: { invariant: string; reason: string }[]; crosschecks: string[]; durationMs: number };
+      optOuts: { invariant: string; reason: string }[]; crosschecks: string[]; durationMs: number;
+      drive?: { sequences: number; seed: number; probesAttempted: number; probesRejected: number;
+        guardedTransitionsProbed: string[]; shrunk?: string[] } };
 
 /** Calendar day of an ISO timestamp — the human-facing date in provenance and refusal text. */
 export const isoDay = (at: string): string => at.slice(0, 10);

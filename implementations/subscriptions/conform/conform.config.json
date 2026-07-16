@@ -1,5 +1,6 @@
 {
   "session": "../../.lattice-session-subscriptions",
   "snapshots": ".conform/snapshots",
-  "optOuts": []
+  "optOuts": [],
+  "schema": "src/schema.sql"
 }

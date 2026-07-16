@@ -344,6 +344,8 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       choose: { type: 'string' }, spec: { type: 'string' }, ledger: { type: 'string' },
       target: { type: 'string' }, enforce: { type: 'boolean' }, report: { type: 'boolean' },
       contract: { type: 'boolean' }, id: { type: 'string' }, reason: { type: 'string' },
+      drive: { type: 'boolean' }, sequences: { type: 'string' }, length: { type: 'string' },
+      seed: { type: 'string' }, 'check-every': { type: 'string' }, 'probe-rate': { type: 'string' },
     }});
 
     // generate has its own source-of-input pair (--spec [--ledger], the .lat-canonical path) as
@@ -415,13 +417,29 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
     // inferred-exitCode convention every other verb uses below — so it's handled here, before
     // loadState(dir) (dir is undefined for this command), and terminates the process itself.
     if (cmd === 'conform') {
-      const { runConform, formatReport, writeContract } = await import('./conform/report.js');
+      const { runConform, runDrive, formatReport, writeContract } = await import('./conform/report.js');
       const target = values.target!;
       try {
         if (values.contract) {
           const path = await writeContract(target);
           console.log(path);
           process.exit(0);
+        }
+        if (values.drive) {
+          const { formatCampaign } = await import('./conform/drive/campaign.js');
+          const driveOpts = {
+            sequences: values.sequences ? parseInt(values.sequences, 10) : 200,
+            length: values.length ? parseInt(values.length, 10) : 30,
+            seed: values.seed ? parseInt(values.seed, 10) : 1,
+            checkEvery: values['check-every'] ? parseInt(values['check-every'], 10) : 10,
+            probeRate: values['probe-rate'] ? parseFloat(values['probe-rate']) : 0.2,
+          };
+          const { result, exitCode, ledgerError } = await runDrive(target, driveOpts);
+          // formatCampaign prints a `<target>` placeholder for the replay hint (it has no target
+          // path of its own — the campaign layer never sees --target); interpolate the real one here.
+          console.log(formatCampaign(result).replaceAll('<target>', target));
+          if (ledgerError) console.error('ledger append failed: ' + ledgerError);
+          process.exit(exitCode);
         }
         const { report, exitCode, ledgerError } = await runConform(target, values.enforce ? 'enforce' : 'report');
         console.log(formatReport(report));

@@ -18,8 +18,13 @@ import { loadCrosschecks, runCrosschecks, type CrosscheckModule } from './crossc
 import { renderContract } from './contract.js';
 import { appendLedger } from '../engine/session.js';
 import type { BindingManifest, ConformReport, ConformViolation, OverridesModule } from './types.js';
+import { runCampaign, type CampaignOpts, type CampaignResult } from './drive/campaign.js';
+import type { DriverModule } from './drive/walk.js';
 
-interface ConformConfig { session: string; snapshots: string; optOuts: OptOut[] }
+// `schema` is optional (design §3, Task 6): only `--drive` needs it (drive mode opens `:memory:`
+// and executes the target's schema fresh per sequence — no captured snapshots involved), so a
+// target that never runs `--drive` never has to declare it.
+interface ConformConfig { session: string; snapshots: string; optOuts: OptOut[]; schema?: string }
 
 // Shared post-state check context, built once per `runConform` call and threaded into `checkDb`
 // for every snapshot — this is also the seam passive and (future) drive modes share, since both
@@ -139,6 +144,92 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
     });
   } catch (e) { ledgerError = e instanceof Error ? e.message : String(e); }
   return { report, exitCode, ledgerError };
+}
+
+export interface DriveCliOpts { sequences: number; length: number; seed: number; checkEvery: number; probeRate: number }
+
+// A pinned monotonic clock step, not CLI-configurable (design §3, Task 6): real time never leaks
+// into a drive sequence (walk.ts's own clock is a pure counter), so there's nothing a user could
+// meaningfully tune here beyond what --sequences/--length/--seed/--check-every/--probe-rate cover.
+const DRIVE_CLOCK_STEP = 60;
+
+export async function runDrive(targetDir: string, opts: DriveCliOpts):
+  Promise<{ result: CampaignResult; exitCode: number; ledgerError?: string }> {
+  const cfg = readConfig(targetDir);
+  const sessionDir = resolve(targetDir, cfg.session);
+  const input = loadGenInput(sessionDir);
+  const plan = buildPlan(input);
+  const overridesPath = resolve(targetDir, 'conform', 'overrides.ts');
+  const ovModule = await import(overridesPath) as { overrides: OverridesModule };
+  if (!ovModule || typeof ovModule.overrides !== 'object' || ovModule.overrides === null) {
+    throw new Error(`conform: ${overridesPath} must export 'overrides' (an aggregate→field→fn map)`);
+  }
+  const cc = await loadCrosschecks(targetDir);
+
+  // Shape-validated like overrides — a module without a usable `drivers` export is a harness
+  // error, not a clean pass. Checked BEFORE the schema-key requirement below (report.test.ts pins
+  // this order): an empty stub module is a config error on its own terms, independent of whether
+  // --drive could even open a db yet.
+  const drivePath = resolve(targetDir, 'conform', 'drive.ts');
+  if (!existsSync(drivePath)) {
+    throw new Error(`conform --drive: ${drivePath} must export 'drivers' (a transitions/superset/create map) — file not found`);
+  }
+  const driveModule = await import(drivePath) as { drivers?: DriverModule['drivers'] };
+  const d = driveModule?.drivers;
+  if (!d || typeof d !== 'object' || typeof d.transitions !== 'object' || d.transitions === null ||
+      Object.keys(d.transitions).length === 0 || typeof d.create !== 'object' || d.create === null ||
+      Object.keys(d.create).length === 0) {
+    throw new Error(`conform --drive: ${drivePath} must export 'drivers' with non-empty 'transitions' and 'create'`);
+  }
+  if (!cfg.schema) {
+    throw new Error(
+      `conform --drive: ${join(targetDir, 'conform', 'conform.config.json')} has no "schema" key ` +
+      `(e.g. "src/schema.sql") — drive mode opens a fresh in-memory db per sequence and needs to know how`);
+  }
+  const schemaSql = readFileSync(resolve(targetDir, cfg.schema), 'utf8');
+  const mkDb = (): Database.Database => { const db = new Database(':memory:'); db.exec(schemaSql); return db; };
+
+  const ctx: CheckContext = { input, plan, overrides: ovModule.overrides, crosschecks: cc, optOuts: cfg.optOuts };
+  const supersetNames = Object.keys(d.superset ?? {});
+  const campaignOpts: CampaignOpts = {
+    sequences: opts.sequences, length: opts.length, seed: opts.seed,
+    checkEvery: opts.checkEvery, probeRate: opts.probeRate, clockStep: DRIVE_CLOCK_STEP,
+  };
+  const result = runCampaign(mkDb, { drivers: d }, ctx, plan, supersetNames, campaignOpts);
+
+  // residual/invariantsChecked/crosschecks mirror runConform's ledger fields exactly (same bind →
+  // plan → crosscheck-declaration facts, mode-independent) so `readConformance` readers never need
+  // a mode-conditional shape; a throwaway db supplies the one-off binding manifest drive mode
+  // otherwise has no reason to keep around after the campaign closes every db it opens itself.
+  const probeDb = mkDb();
+  const manifest = bindSchema(probeDb, input.model, ovModule.overrides);
+  probeDb.close();
+  const allInvariants = plan.aggregates.flatMap(a => a.invariants);
+  const skippedOptOuts = new Set(cfg.optOuts.map(o => o.invariant));
+  const violations = result.clean ? [] : result.failure!.violations;
+
+  const exitCode = result.clean ? 0 : 1;
+  let ledgerError: string | undefined;
+  try {
+    appendLedger(sessionDir, {
+      kind: 'conformance', at: new Date().toISOString(), target: resolve(targetDir), mode: 'drive',
+      snapshots: 0, // no captured snapshots in drive mode — sequence count lives under `drive`
+      invariantsChecked: allInvariants.filter(i => i.candidate.kind !== 'guard' && !skippedOptOuts.has(i.name)).length,
+      traceRowsChecked: 0, // not tracked at campaign granularity (walk.ts checks it per-step internally)
+      violationCount: violations.length,
+      violations: violations.map(v => ({ specElement: v.specElement, anchors: v.anchors,
+        witnessIds: v.witnessIds, source: v.source, detail: v.detail })),
+      residual: residual(manifest), optOuts: cfg.optOuts, crosschecks: cc ? Object.keys(cc.crosschecks) : [],
+      durationMs: result.durationMs,
+      drive: {
+        sequences: result.sequencesRun, seed: opts.seed,
+        probesAttempted: result.stats.probesAttempted, probesRejected: result.stats.probesRejected,
+        guardedTransitionsProbed: result.stats.guardedTransitionsProbed,
+        ...(result.clean ? {} : { shrunk: result.failure!.narrative }),
+      },
+    });
+  } catch (e) { ledgerError = e instanceof Error ? e.message : String(e); }
+  return { result, exitCode, ledgerError };
 }
 
 export function formatReport(r: ConformReport): string {
