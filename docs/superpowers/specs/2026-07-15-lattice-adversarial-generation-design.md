@@ -27,7 +27,7 @@ path. No solver in the loop; failures replay from a seed and shrink to a minimal
 | 1 | Scope | **All three pressures**: legal-sequence driving; illegal-attempt guard probing (accept = violation); superset-op interleaving (spec-unknown ops woven between spec commands; their rejections are not violations, their state corruption is caught downstream). |
 | 2 | Generator | **Seeded pure-TS walk + fast-check shrinking** (fast-check ^3 already a lattice dependency). Quint-simulated traces rejected for the driving path (JVM-slow, no shrinking; solver-directed generation recorded as a seam). |
 | 3 | Driver map | **Hand-written typed `conform/drive.ts`** in the target (~20 lines for this impl). The map is irreducible semantic judgment — spec-`settle` = "recordPayment with exactly the remaining balance"; `dunningExhausted` = "the nightly job with a failing charge callback until the cap"; `recover` has NO dedicated entry point (side effect of recordPayment). Conventions bind data, not calling contracts: name-matching finds 3 of 11 transitions and zero argument shapes. Typed against the generated contract → compile-breaks on spec regen; line count joins the measured residual surface. Generated stubs recorded as follow-up DX if more targets materialize. |
-| 4 | Pre-state oracle | **Scoped observe + tiered check frequency.** Per-step legality reads the REAL database, scoped to the target row + ref hops through the existing projection (no mirror — a maintained mirror is the §11.5 second truth, and desyncs worst exactly where it's tempting: real DBs with background jobs and concurrent writers). Full-tier sweeps at sequence end; per-step during shrinking; `--check-every` between. Cost model holds for remote/real-DB targets (O(1 query) per step). |
+| 4 | Pre-state oracle | **Scoped observe + tiered check frequency.** Per-step legality reads the REAL database, scoped to the target row + ref hops through the existing projection (no mirror — a maintained mirror is the §11.5 second truth, and desyncs worst exactly where it's tempting: real DBs with background jobs and concurrent writers). Full-tier sweeps at sequence end; per-step during shrinking; `--check-every` between. Cost model holds for remote/real-DB targets (O(1 query) per step). **Amendment 2026-07-16 (human ruling, c09 root-cause):** the full-tier sweep's sequence-boundary batching is structurally blind to a violation a later, itself-legal command resolves before the sweep runs — closed by a per-step SCOPED Tier-1 check (touched aggregate's rows + one-hop ref closure) after every accepted/re-attributed/superset step, still O(touched aggregate) per step, in addition to the existing sweeps. |
 | 5 | Criteria | **Approved as drafted** (§5). |
 
 ## 2. Architecture
@@ -46,7 +46,13 @@ path. No solver in the loop; failures replay from a seed and shrink to a minimal
   narrative re-attribution. Honest limitation, reported never hidden: drift in one of two
   transitions sharing an entry point can be masked by its legal sibling. Post-state checking = the
   driven DB serialized as a standard snapshot and pushed through the unchanged slice-2 path
-  (Tier 1 + Tier 2 + crosschecks) — total reuse, no new checking machinery.
+  (Tier 1 + Tier 2 + crosschecks) — total reuse, no new checking machinery. **Amendment 2026-07-16
+  (human ruling, c09 root-cause finding):** after every accepted legal transition, re-attributed
+  probe, or accepted superset op, the oracle additionally re-checks the touched aggregate's own
+  Tier-1 invariants immediately (`walk.ts`'s `stepCheck`, scoped to that aggregate's rows + one-hop
+  ref closure) — closing the measured gap where a violation the end-of-sequence/checkEvery sweep
+  would have caught was instead created and legally erased by the very next command within the same
+  batching window.
 
 **Target-side (`implementations/subscriptions/conform/drive.ts`):** the typed driver map —
 `transitions` (one entry per spec transition: how to induce it here), `superset` (ops the spec
@@ -74,7 +80,14 @@ reason}`, normalizing this impl's throws).
 [--probe-rate 0.2]`. The report's guards line upgrades in drive mode: `guards probed at event
 time: N attempts across M guarded transitions` (the passive line remains for passive runs — the
 honesty statement is mode-accurate). The ledger `conformance` entry gains drive metadata: mode
-`'drive'`, sequences, probe counts, seeds, and the shrunk repro for any failure.
+`'drive'`, sequences, probe counts, seeds, and the shrunk repro for any failure. **Amendment
+2026-07-16:** `formatCampaign` also prints a state-coverage line — `state coverage:
+Subscription.status{trialing:812, active:9, pastDue:2, canceled:340, expired:71}
+Invoice.settlement{...}` — tallying every `<Aggregate>.<region>=<state>` value actually observed
+across the campaign's scoped pre-state reads and per-step checks (`DriveStats.statesObserved`),
+always printed even when empty; this is the instrument for a future coverage-metric campaign
+budget (e.g. "run until N actives-driven is observed") registered as a forward pointer in
+`docs/superpowers/specs/2026-07-15-lattice-drive-rediscovery-results.md`.
 
 ## 5. Pre-registered success / kill criteria (human-approved)
 
