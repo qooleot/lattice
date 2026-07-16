@@ -674,7 +674,64 @@ Ledger evidence: 5 new lines appended to `.lattice-session-subscriptions/ledger.
 ### 6. Campaign #2 outcomes
 
 ### c01 — skipped emit
-**Verdict: PENDING (campaign #2)**
+**Verdict: REDISCOVERED**
+
+Branch mechanics: `git checkout -b drive/c01 drift/c01-skipped-emit`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` (work-branch tip `e608123`) — one conflict, in
+`.lattice-session-subscriptions/ledger.jsonl`, resolved as union (both sides' lines concatenated,
+no lines dropped, all validated as parseable JSON post-resolution). `git diff
+drift/c01-skipped-emit -- implementations/subscriptions/src` was empty after the merge — the drift
+edit survived intact. `rm -rf implementations/subscriptions/.conform` before the run; absent both
+before and after.
+
+Seed tried: 21 (first pre-authorized seed — caught on first try, no need for 22/23 per "stop at
+first catch").
+
+Command: `npx tsx src/cli.ts conform --target ../implementations/subscriptions --drive --sequences
+1600 --length 30 --seed 21`. Exit code 1 (FAILED, not a loud abort — matches expected verdict
+REDISCOVERED, not REDISCOVERED-LOUD).
+
+Verbatim stdout:
+```
+drive: 323 sequences — FAILED (seed 21)
+replay: lattice conform --target ../implementations/subscriptions --drive --seed 21
+commands: 3084 (755 accepted, 0 rejected, 51 superset ops)
+guards probed at event time: 2278 attempts across 1 guarded transitions (activate)
+probe re-attributions (shared entry points; sibling-masking limitation applies): 75
+driver skips (impl preconditions, audited): 0
+duration 0.6s
+narrative:
+  create Subscription#d-subscription-1 (seed=0) -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition finalize on Invoice#d-subscription-1-inv-1 (rowPick=0, seed=0) legality=legal -> accepted
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition settle on Invoice#d-subscription-1-inv-1 (rowPick=0, seed=0) legality=legal -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=legal -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  probe activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> rejected
+VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [d-subscription-1] — no legal path: Subscription 'd-subscription-1' region 'status' — all 0 event(s) consumed, reachable state(s) {trialing, expired} do not include observed final 'active'; events=[] — anchors [spec:machine Subscription.status] — source drive:16
+VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [d-subscription-1] — no legal path: Subscription 'd-subscription-1' region 'status' — all 0 event(s) consumed, reachable state(s) {trialing, expired} do not include observed final 'active'; events=[] — anchors [spec:machine Subscription.status] — source drive:17
+VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [d-subscription-1] — no legal path: Subscription 'd-subscription-1' region 'status' — all 0 event(s) consumed, reachable state(s) {trialing, expired} do not include observed final 'active'; events=[] — anchors [spec:machine Subscription.status] — source drive:18
+VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [d-subscription-1] — no legal path: Subscription 'd-subscription-1' region 'status' — all 0 event(s) consumed, reachable state(s) {trialing, expired} do not include observed final 'active'; events=[] — anchors [spec:machine Subscription.status] — source drive:19
+VIOLATION machine Subscription.status (machine Subscription.status) — witnesses [d-subscription-1] — no legal path: Subscription 'd-subscription-1' region 'status' — all 0 event(s) consumed, reachable state(s) {trialing, expired} do not include observed final 'active'; events=[] — anchors [spec:machine Subscription.status] — source drive:20
+```
+
+Registered substring `do not include observed final 'active'` (Tier 2, `machine
+Subscription.status`) appears verbatim, 5 times, all against `machine Subscription.status`, exactly
+the pre-registered signal — the narrative shows the exact route registered for campaign #2: the
+sequence reaches `finalize` then `settle` on the invoice (paying it), then a legal `activate` is
+accepted (`legality=legal -> accepted`), and the deleted-emit drift leaves the Subscription's Tier-2
+event trace one event short of `active`, so the end-of-sequence replay dead-ends at `{trialing,
+expired}`. Confirms the length-floor fix (campaign #2 amendment) closed exactly the reachability gap
+that produced this class's campaign #1 MISS — `activate` is reached directly, well within the first
+323 (of 1600 budgeted) sequences at seed 21. `.conform` confirmed absent after the run (no snapshot
+artifact leaked). No collateral violations — all 5 VIOLATION lines are the same registered signal
+against the same witness (`d-subscription-1`), differing only by `source drive:NN` sequence index.
 
 ### c02 — wrong event type
 **Verdict: PENDING (campaign #2)**
