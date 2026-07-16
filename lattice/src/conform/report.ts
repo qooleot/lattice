@@ -8,16 +8,46 @@ import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { loadGenInput } from '../generate/load.js';
 import { buildPlan } from '../generate/plan.js';
+import type { GenInput } from '../generate/types.js';
+import type { GenPlan } from '../generate/plan.js';
 import { bindSchema } from './bind.js';
 import { observeEntities } from './observe.js';
 import { checkInvariants, type OptOut } from './tier1.js';
 import { checkTraces, type ObservedEvent } from './trace.js';
-import { loadCrosschecks, runCrosschecks } from './crosscheck.js';
+import { loadCrosschecks, runCrosschecks, type CrosscheckModule } from './crosscheck.js';
 import { renderContract } from './contract.js';
 import { appendLedger } from '../engine/session.js';
 import type { BindingManifest, ConformReport, ConformViolation, OverridesModule } from './types.js';
 
 interface ConformConfig { session: string; snapshots: string; optOuts: OptOut[] }
+
+// Shared post-state check context, built once per `runConform` call and threaded into `checkDb`
+// for every snapshot — this is also the seam passive and (future) drive modes share, since both
+// need to run the identical bind → observe → tier1 → trace → crosschecks path against a db handle.
+export interface CheckContext {
+  input: GenInput; plan: GenPlan; overrides: OverridesModule;
+  crosschecks: CrosscheckModule | null; optOuts: OptOut[];
+}
+
+export interface CheckDbResult {
+  violations: ConformViolation[]; traceRowsChecked: number; manifest: BindingManifest;
+}
+
+// Runs the full post-state check path against a single open db: bind → observe → tier1 → trace →
+// crosschecks, in that order (order matters for violation-list stability, not correctness).
+export function checkDb(db: Database.Database, ctx: CheckContext, source: string): CheckDbResult {
+  const violations: ConformViolation[] = [];
+  const manifest = bindSchema(db, ctx.input.model, ctx.overrides);
+  const entitiesArr = observeEntities(db, ctx.input.model, manifest, ctx.overrides);
+  violations.push(...checkInvariants(entitiesArr, ctx.plan, ctx.optOuts, source));
+  const events = db.prepare(
+    'SELECT id as seq, event_type as eventType, aggregate_id as aggregateId FROM outbox ORDER BY id'
+  ).all() as ObservedEvent[];
+  const trace = checkTraces(entitiesArr, events, ctx.plan.aggregates, source);
+  violations.push(...trace.violations);
+  if (ctx.crosschecks) violations.push(...runCrosschecks(db, ctx.crosschecks, source));
+  return { violations, traceRowsChecked: trace.rowsChecked, manifest };
+}
 
 function readConfig(targetDir: string): ConformConfig {
   return JSON.parse(readFileSync(join(targetDir, 'conform', 'conform.config.json'), 'utf8')) as ConformConfig;
@@ -68,21 +98,15 @@ export async function runConform(targetDir: string, mode: 'report' | 'enforce'):
     .map(t => t.name)
     .sort();
   const guardedSet = new Set(guardedTransitions);
+  const ctx: CheckContext = { input, plan, overrides: ovModule.overrides, crosschecks: cc, optOuts: cfg.optOuts };
   for (const snap of snaps) {
     const db = new Database(join(snapDir, snap), { readonly: true });
     try {
       const meta = JSON.parse(readFileSync(join(snapDir, snap.replace(/\.sqlite$/, '.json')), 'utf8')) as { source: string };
-      const m = bindSchema(db, input.model, ovModule.overrides);
-      manifest ??= m; // first snapshot's binding fixes the manifest reported (schema is shared across snapshots)
-      const entitiesArr = observeEntities(db, input.model, m, ovModule.overrides);
-      violations.push(...checkInvariants(entitiesArr, plan, cfg.optOuts, meta.source));
-      const events = db.prepare(
-        'SELECT id as seq, event_type as eventType, aggregate_id as aggregateId FROM outbox ORDER BY id'
-      ).all() as ObservedEvent[];
-      const trace = checkTraces(entitiesArr, events, plan.aggregates, meta.source);
-      violations.push(...trace.violations);
-      traceRows += trace.rowsChecked;
-      if (cc) violations.push(...runCrosschecks(db, cc, meta.source));
+      const result = checkDb(db, ctx, meta.source);
+      manifest ??= result.manifest; // first snapshot's binding fixes the manifest reported (schema is shared across snapshots)
+      violations.push(...result.violations);
+      traceRows += result.traceRowsChecked;
     } finally { db.close(); }
   }
   // GenPlan has no top-level `invariants` — every invariant lives under an aggregate
