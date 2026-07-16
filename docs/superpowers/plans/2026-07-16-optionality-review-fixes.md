@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix the 10 verified findings from the Slice A/B1 code review — finish the Quint half of optionality, repair generated-code `present()`, restore gate symmetry (templates, money-sign tags, decline, refsResolve), close the named test-coverage gaps, and reconcile the docs.
+**Goal:** Fix the 10 verified findings from the Slice A/B1 code review — finish the Quint half of optionality, repair generated-code `present()`, restore gate symmetry (templates, money-sign tags, decline, refsResolve), close the named test-coverage gaps, and reconcile the docs — plus two verified elicitation-loop defects reported by other agents (Phase 6): declined rulings must block re-adoption, and adoption provenance must be anchored per candidate.
 
 **Architecture:** All engine work is in `lattice/src` (TypeScript, ESM, vitest). Three encodings must agree on absence: the TS judge (`evaluate.ts`: absent = `undefined`, cmp permits unknowns, `present()` reads absence as a fact), Alloy (`lone` relations; hop gates already landed), and Quint (a `${f}Present: bool` companion beside each optional field; hop gates and witness decoding are what this plan completes). Findings are fixed in the user-chosen sequence: Quint unit (1, 2, 6) → missing-case bugs (3, 5) → gate symmetry (4, 7, 8) → tests (9 + gaps) → docs (10 + stale claims).
 
@@ -12,10 +12,12 @@
 
 - Working directory for all commands: `lattice/` (the package root; `npx vitest run <file>` paths below are relative to it).
 - Every code task follows TDD: failing test first, then the minimal fix, then green, then commit.
-- Task order within Phase 1 and Phase 3 is load-bearing: Task 2 (adapter strip) must land before Task 6 (refsResolve re-inclusion) — without the strip, the judge convicts placeholder ids of absent optional refs.
+- Task order within Phase 1 and Phase 3 is load-bearing: Task 2 (adapter strip) must land before Task 6 (refsResolve re-inclusion) — without the strip, the judge convicts placeholder ids of absent optional refs. Task 12 consumes Task 8's `declinedShapes` helper and must follow it.
 - Doc code examples are CI-checked (`test/docs-blocks.test.ts` runs `loadLatText` on every ```lat block) — run it after any doc edit.
 - Commit after every task; message style follows the repo's `fix(scope): sentence` convention.
 - **Non-goals** (reviewed and deliberately excluded): the `apply`-path money-sign gate (explicitly-argued design decision — raise with the user separately, do not change); a rename bridge for pre-slice `classified` ledger entries (low impact, converges after one re-classify); absence gates for `cardinality.where`/`leadsTo` (documented open decision in invariant.md); reuse/efficiency refactors beyond the `refHopGates` consolidation Task 1 performs.
+- **Deferred to a design slice, not this plan** (verified real, but each needs an "open question" grouping concept the session state does not have — a mechanical patch would guess the design): per-session `alternativeAttempts`/`regenAttempts`/`probesAsked` counters starving every question after the first (session.ts:22-24, hypothesis.ts:27-31, planner.ts:158); `pruneOnVerdict` annihilating unrelated candidates proposed in one flat batch; cross-kind conjunctions being inexpressible (an `and` Predicate cannot hold a `sumOverCollection`). Write a kickoff doc (repo pattern: docs/superpowers/specs/*-kickoff-prompt.md) instead of patching.
+- Agent 1's proposed new `'retired'` ledger kind is deliberately NOT added: `apply --force-remove` already appends `{kind: 'declined', invariant, reason}` (reconcile.ts:107) and `decline --id --reason` writes the same kind — the defect is that adoption paths never CONSULT it (Task 12), not that the record is missing. A third removal kind would split one meaning across two spellings.
 
 ---
 
@@ -931,6 +933,246 @@ git add docs/
 git commit -m "docs: reconcile optionality claims with the engine (refsResolve, gates, owned collections, free templates)"
 ```
 
+## Phase 6 — Elicitation-loop integrity (verified findings from two other agents)
+
+### Task 12: Adoption paths consult declined rulings (guard re-adoption bug)
+
+Verified against the code and the slice-2 session report: `adoptGuard` (src/cli.ts:213-219) refuses re-adoption only when a tracker with the same id is currently `adopted`. A guard the human ruled OFF via `apply --force-remove` leaves a `{kind: 'declined'}` ledger entry (reconcile.ts:107) but no tracker at all (apply's rebuild drops adopted trackers, cli.ts:693), so the next bulk-classify auto-strengthen hook (cli.ts:817) re-derives and re-adopts it — observed live with `guard_settle_eq`. The convergence-adoption path (cli.ts:507) has the same blindness for shape-matching re-proposals of a declined rule. **Depends on Task 8** (`declinedShapes`).
+
+**Files:**
+- Modify: `src/cli.ts` (adoptGuard :213-219, the next-question convergence adoption ~:495-510)
+- Test: `test/cli-strengthen.test.ts` (extend), `test/cli-decline.test.ts` (extend)
+
+**Interfaces:**
+- Consumes: `declinedShapes(ledger)` from Task 8 (src/engine/reconcile.ts); `canonicalCandidate` (src/engine/implied.ts).
+- Produces: adoptGuard returns null for a guard whose id's last adopted/declined ledger word is `declined`; convergence adoption parks (open-decision `previously-declined`) instead of adopting a shape the ledger last declined.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `test/cli-strengthen.test.ts` (reuse its session/fakeDeps setup — the file already drives the `strengthen` command through `runCommand`):
+
+```typescript
+  it('a guard whose last ledger word is declined is NOT re-adopted by strengthen', async () => {
+    // Simulate the human ruling: the guard was adopted once, then hand-removed via
+    // apply --force-remove, which appends kind:'declined' (reconcile.ts:107).
+    const gInv = /* the guard invariant this file's existing strengthen test expects to adopt,
+                    built with the same deterministic id `guard-<agg>-<transition>-<op>` */;
+    appendLedger(dir, { kind: 'adopted', at: t1, invariant: gInv, provenance: 'strengthen' });
+    appendLedger(dir, { kind: 'declined', at: t2, invariant: gInv, reason: 'hand-removed via --force-remove' });
+
+    const r: any = await runCommand([/* the strengthen invocation the existing test uses */], fakeDeps);
+    const s = loadState(dir);
+    expect(s.candidates.some(c => c.inv.id === gInv.id && c.status === 'adopted'),
+      'a human-declined guard must not be re-adopted without a re-ruling').toBe(false);
+    expect(readLedger(dir).filter(e => e.kind === 'adopted' && e.invariant.id === gInv.id))
+      .toHaveLength(1);   // only the original adoption — no new entry
+  });
+```
+
+In `test/cli-decline.test.ts`:
+
+```typescript
+  it('a re-proposed shape matching a declined rule parks instead of adopting on convergence', async () => {
+    await runCommand(['decline', '--session', dir, '--id', 'implied-nonNegativeAcctBal', '--reason', 'x'], fakeDeps);
+    // Re-propose the same shape under a fresh agent id, then converge it (single candidate,
+    // fakeDeps produce no distinguishing witnesses → nextQuestion returns converged).
+    const same = { id: 'agent-1', name: 'balNonNeg2', prior: 0.6, source: 'agent',
+      candidate: { kind: 'statePredicate', aggregate: 'Acct',
+        body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['bal'] }, right: { kind: 'int', value: 0 } } } };
+    writeFileSync(join(dir, 'c.json'), JSON.stringify([same]));
+    await runCommand(['propose', '--session', dir, '--candidates', join(dir, 'c.json')], fakeDeps);
+    const r: any = await runCommand(['next-question', '--session', dir], fakeDeps);
+    const s = loadState(dir);
+    expect(s.candidates.find(c => c.inv.id === 'agent-1')!.status).toBe('parked');
+    expect(readLedger(dir).some(e => e.kind === 'open-decision' && (e as any).topic === 'previously-declined')).toBe(true);
+  });
+```
+
+(Fill the two `/* ... */` holes from the existing strengthen test's own fixtures — the guard id and invocation are already built there; do not invent new ones.)
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `npx vitest run test/cli-strengthen.test.ts test/cli-decline.test.ts`
+Expected: FAIL — the guard is re-adopted; the shape-matching candidate is adopted.
+
+- [ ] **Step 3: Implement**
+
+`adoptGuard` (cli.ts:213), after the same-id-adopted check:
+
+```typescript
+  // A guard the human ruled OFF stays off: `decline` and `apply --force-remove` both append a
+  // kind:'declined' ledger entry, and re-deriving the same guard from a CTI does not overrule a
+  // recorded human ruling. Last word per id wins, so a later hand-re-adoption re-enables it.
+  const lastWord = new Map<string, 'adopted' | 'declined'>();
+  for (const e of readLedger(dir))
+    if (e.kind === 'adopted' || e.kind === 'declined') lastWord.set(e.invariant.id, e.kind);
+  if (lastWord.get(gInv.id) === 'declined') return null;
+```
+
+Convergence adoption (cli.ts, inside the `next-question` converged branch, before `survivor.status = 'adopted'`):
+
+```typescript
+            if (declinedShapes(priorLedger).has(canonicalCandidate(survivor.inv.candidate))) {
+              survivor.status = 'parked';
+              appendLedger(dir, { kind: 'open-decision', at: now(), topic: 'previously-declined',
+                note: `converged candidate ${survivor.inv.name} matches a shape the ledger last declined; needs an explicit human re-ruling` });
+              return done({ ...out, warning: 'previously-declined-parked' });
+            }
+```
+
+(`open-decision` entries carry `topic` + `note` — match the existing `unanchored-survivor` append two lines above.)
+
+- [ ] **Step 4: Run and verify**
+
+Run: `npx vitest run test/cli-strengthen.test.ts test/cli-decline.test.ts test/cli.test.ts`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/cli.ts test/cli-strengthen.test.ts test/cli-decline.test.ts
+git commit -m "fix(engine): adoption paths consult declined rulings — a ruled-off guard or shape is not re-adopted"
+```
+
+### Task 13: Per-candidate anchoring — provenance, unanchored-survivor, and permit evidence share one predicate
+
+Three verified bugs with one root (no notion of per-candidate anchoring): (1) adoption provenance cites every verdict in the session (cli.ts:508) — reproduced: `journalNetsToZero` cited `(w1, w3, w4, w5, w6)` though it was proposed after w6 and none of the five contains a JournalTransaction; (2) the `unanchored-survivor` park checks whether the SESSION has any verdict (cli.ts:498), not whether any verdict anchors THIS candidate, so after the first judged question every lone candidate is adopted unexamined; (3) `hasPermitEvidence` (planner.ts:197) counts a permit verdict whose witness contains zero instances of the candidate's aggregate — `evaluateCandidate` returns `'permit'` vacuously (`subjects().every` over an empty array, evaluate.ts) — suppressing the permit probe.
+
+**Files:**
+- Create: `src/engine/anchoring.ts`
+- Modify: `src/engine/session.ts` (TrackedCandidate :16), `src/engine/hypothesis.ts` (:8, :38), `src/cli.ts` (:495-510), `src/engine/planner.ts` (:197)
+- Test: `test/engine/anchoring.test.ts` (new), `test/cli.test.ts` (extend)
+
+**Interfaces:**
+- Produces: `export function anchorsCandidate(v: { at: string; judge: 'permit' | 'forbid'; witness: CaseState }, c: Candidate, registeredAt?: string): boolean` — true iff the verdict is at-or-after the candidate's registration (missing `registeredAt` = pre-upgrade tracker, time filter waived) AND the witness contains ≥1 entity of `c.aggregate`. `TrackedCandidate` gains optional `registeredAt?: string`, stamped at both `s.candidates.push({ inv, status: 'active' })` sites (hypothesis.ts:8 seed admit, :38 propose admit).
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `test/engine/anchoring.test.ts`:
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import { anchorsCandidate } from '../../src/engine/anchoring.js';
+import type { Candidate } from '../../src/ast/invariant.js';
+
+const journalLaw: Candidate = { kind: 'statePredicate', aggregate: 'JournalTransaction',
+  body: { kind: 'cmp', op: 'eq', left: { kind: 'field', owner: 'self', path: ['netAmount'] }, right: { kind: 'int', value: 0 } } };
+const refundWitness = { entities: [{ type: 'Refund', id: 'r1', fields: {} }] };
+const journalWitness = { entities: [{ type: 'JournalTransaction', id: 'j1', fields: { netAmount: 0 } }] };
+
+describe('anchorsCandidate', () => {
+  it('a witness with no instance of the aggregate anchors nothing (vacuous permit is not evidence)', () => {
+    expect(anchorsCandidate({ at: '2026-07-16T10:00:00Z', judge: 'permit', witness: refundWitness }, journalLaw)).toBe(false);
+  });
+  it('a verdict judged before the candidate existed does not anchor it', () => {
+    expect(anchorsCandidate({ at: '2026-07-16T10:00:00Z', judge: 'permit', witness: journalWitness },
+      journalLaw, '2026-07-16T11:00:00Z')).toBe(false);
+  });
+  it('an at-or-after verdict whose witness contains the aggregate anchors', () => {
+    expect(anchorsCandidate({ at: '2026-07-16T12:00:00Z', judge: 'permit', witness: journalWitness },
+      journalLaw, '2026-07-16T11:00:00Z')).toBe(true);
+  });
+  it('a pre-upgrade tracker (no registeredAt) waives the time filter, not the aggregate filter', () => {
+    expect(anchorsCandidate({ at: '2026-07-16T10:00:00Z', judge: 'permit', witness: journalWitness }, journalLaw)).toBe(true);
+    expect(anchorsCandidate({ at: '2026-07-16T10:00:00Z', judge: 'permit', witness: refundWitness }, journalLaw)).toBe(false);
+  });
+});
+```
+
+In `test/cli.test.ts`, the two regression tests Agent 2 named (reuse the file's tmp-session pattern; fakeDeps that return no witnesses make a lone proposed candidate converge on the next `next-question`):
+
+```typescript
+  it('a candidate that converged with no anchoring verdict is PARKED even when the session has verdicts', async () => {
+    // seed an unrelated verdict (different aggregate), then propose + converge the journal law
+    appendLedger(dir, { kind: 'verdict', at: now(), witnessId: 'w1', judge: 'permit', salient: [],
+      question: 'q', witness: { entities: [{ type: 'Refund', id: 'r1', fields: {} }] } });
+    /* propose journalLaw under id 'agent-j', run next-question to convergence */
+    const s = loadState(dir);
+    expect(s.candidates.find(c => c.inv.id === 'agent-j')!.status).toBe('parked');
+    expect(readLedger(dir).some(e => e.kind === 'open-decision' && (e as any).topic === 'unanchored-survivor')).toBe(true);
+  });
+
+  it('adoption provenance cites only anchoring witnesses, never the whole session', async () => {
+    /* same setup, but also seed an anchoring verdict w2 whose witness contains the aggregate,
+       registered BEFORE proposing (use appendLedger order to make w2 anchor and w1 not) */
+    const adoptedEntry = readLedger(dir).find(e => e.kind === 'adopted' && e.invariant.id === 'agent-j') as any;
+    expect(adoptedEntry.provenance).toBe('elicited (w2)');   // w1 (foreign aggregate) not cited
+  });
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `npx vitest run test/engine/anchoring.test.ts test/cli.test.ts`
+Expected: FAIL — module does not exist; parked/provenance assertions fail.
+
+- [ ] **Step 3: Implement**
+
+`src/engine/anchoring.ts`:
+
+```typescript
+import type { Candidate } from '../ast/invariant.js';
+import type { CaseState } from './evaluate.js';
+
+/** Does this verdict ANCHOR this candidate? Anchoring is what adoption provenance may cite, what
+ *  rescues a lone survivor from unanchored-survivor parking, and what counts as permit evidence —
+ *  three call sites, one meaning (the review that motivated this found all three had drifted).
+ *  A verdict anchors iff (a) it was judged at-or-after the candidate was registered — a candidate
+ *  proposed after a verdict cannot have been vetted by it — and (b) its witness contains at least
+ *  one instance of the candidate's aggregate: evaluateCandidate is vacuously 'permit' on a witness
+ *  with zero subjects, and a vacuous permit is not evidence. Missing registeredAt (pre-upgrade
+ *  trackers persisted in state.json) waives the time filter only. */
+export function anchorsCandidate(
+  v: { at: string; judge: 'permit' | 'forbid'; witness: CaseState },
+  c: Candidate, registeredAt?: string,
+): boolean {
+  if (registeredAt && v.at < registeredAt) return false;   // ISO-8601 strings order lexically
+  return v.witness.entities.some(e => e.type === c.aggregate);
+}
+```
+
+`src/engine/session.ts:16`: `export interface TrackedCandidate { inv: CandidateInvariant; status: CandidateStatus; mergedInto?: string; registeredAt?: string }`.
+
+`src/engine/hypothesis.ts` (:8 and :38): `s.candidates.push({ inv, status: 'active', registeredAt: new Date().toISOString() })` — match however the module currently timestamps (if it imports a `now()` helper, use that).
+
+`src/cli.ts` next-question converged branch — replace the session-level check and the all-verdict wids (:497-509) with:
+
+```typescript
+            const anchoring = priorLedger.filter(e => e.kind === 'verdict'
+              && anchorsCandidate(e, survivor.inv.candidate, survivor.registeredAt));
+            if (anchoring.length === 0) {
+              // Converged with zero judged cases ANCHORING THIS CANDIDATE (per-candidate on
+              // purpose — a session full of verdicts about other aggregates vets nothing here).
+              survivor.status = 'parked';
+              appendLedger(dir, { kind: 'open-decision', at: now(), topic: 'unanchored-survivor',
+                note: 'converged with no judged cases anchoring this candidate; needs human confirmation' });
+              return done({ ...out, warning: 'unanchored-survivor-parked' });
+            }
+            survivor.status = 'adopted';
+            const wids = anchoring.map(e => e.witnessId).join(', ');
+```
+
+`src/engine/planner.ts:197`:
+
+```typescript
+  const hasPermitEvidence = verdicts(ledger).some(v => v.judge === 'permit'
+    && anchorsCandidate(v, H.inv.candidate, H.registeredAt)
+    && evaluateCandidate(H.inv.candidate, v.witness) === 'permit');
+```
+
+(`H` is a `TrackedCandidate`; if the surrounding code names it differently, keep the local name.)
+
+- [ ] **Step 4: Run the engine and CLI suites**
+
+Run: `npx vitest run test/engine/ test/cli.test.ts test/cli-decline.test.ts test/pipeline-from-scratch.test.ts test/golden-trace-d.test.ts`
+Expected: PASS. Golden traces are the canary for over-tightening: if one now parks a survivor it previously adopted, inspect whether its verdicts genuinely anchor the candidate — the trace, not the predicate, decides which is wrong; surface it rather than loosening `anchorsCandidate` silently.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/engine/anchoring.ts src/engine/session.ts src/engine/hypothesis.ts src/cli.ts src/engine/planner.ts test/engine/anchoring.test.ts test/cli.test.ts
+git commit -m "fix(engine): per-candidate anchoring — provenance, unanchored-survivor, and permit evidence share one predicate"
+```
+
 ---
 
 ## Self-Review Notes
@@ -940,3 +1182,5 @@ git commit -m "docs: reconcile optionality claims with the engine (refsResolve, 
 - Task 7 makes `validateModel` strictly stricter; `test/docs-blocks.test.ts` is the canary for doc examples (none carry both tags — verified against the working tree during review).
 - Task 5's init belt (`template-out-of-grammar`) may surface latent template/gate drift in fixtures beyond the three filtered templates — the instruction is to fix templates.ts, never to weaken the belt.
 - Line numbers were verified against the working tree at plan time (branch `claude/lattice-engine-review-91388b`, even with `main` @ 2db1539); re-locate by the quoted code if drift has occurred.
+- Phase 6 was added after verifying two external agent reports against the code: Agent 2's findings 1-3 confirmed verbatim (cli.ts:498/:508, planner.ts:197, vacuous permit in evaluate.ts); Agent 1's re-adoption bug confirmed at adoptGuard (cli.ts:213-219) but their "no ledger record" framing corrected — reconcile.ts:107 already records the ruling as kind:'declined', so Task 12 consults it instead of adding a 'retired' kind. Their findings 4-6 are deferred by design (see Global Constraints).
+- Task 12's Step 1 intentionally leaves two fixture holes to be filled from test/cli-strengthen.test.ts's OWN existing guard fixtures — inventing a parallel guard fixture would test a different id than the strengthen path mints.
