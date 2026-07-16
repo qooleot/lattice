@@ -397,7 +397,59 @@ consistent with that same root cause rather than anything specific to the state-
 tuned around; escalated as MISSED.
 
 ### c07 — partial write on settle
-**Verdict: PENDING**
+**Verdict: MISSED**
+
+Branch mechanics: `git checkout -b drive/c07 drift/c07-partial-write`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` — same single ledger.jsonl conflict as c01/c02/c03/c04/c05,
+union-resolved and validated. `git diff drift/c07-partial-write -- implementations/subscriptions/src`
+was empty after the merge — the drift edit (the dropped payment record on the exact-settling
+branch of the botched `recordPayment` refactor) survived intact.
+
+Seeds tried: 11, 12, 13 (all three pre-authorized seeds).
+
+| seed | verdict | commands (accepted/rejected/superset) | guards probed | re-attributions | duration |
+|------|---------|-----------------------------------------|------------------|--------------------|----------|
+| 11 | CLEAN | 53 (23/0/1) | 29 across 1 (`activate`) | 1 | 0.1s |
+| 12 | CLEAN | 53 (23/0/0) | 30 across 1 (`activate`) | 2 | 0.1s |
+| 13 | CLEAN | 45 (17/0/0) | 28 across 0 | 2 | 0.1s |
+
+Registered element `neverOverpaidAndPaidExact` does not appear in any of the three logs — grepped
+directly, zero matches. Exit code 0 on all three runs.
+
+Recorded honestly per the zero-tuning rule: a fourth MISS. Per-seed command-trace statistics are
+again identical to c01's/c02's/c05's at every seed — the fifth class in this batch to show this
+exact pattern. The registered route requires a driven `settle` (full-balance `recordPayment`) on a
+finalized (open) invoice, which is itself downstream of `finalize`; whether these three seeds ever
+drive that far down the invoice lifecycle within 200×30 is not confirmed from summary output alone
+(consistent with the same reachability question flagged in c01/c02/c05/c06, not resolved here per
+zero-tuning). Escalated as MISSED, not tuned around.
+
+---
+
+## Task 2 summary (c01–c07)
+
+| class | verdict | seeds tried | notes |
+|-------|---------|-------------|-------|
+| c01 skipped-emit | MISSED | 11, 12, 13 | registered substring never appeared |
+| c02 wrong-event | MISSED | 11, 12, 13 | registered substring never appeared; trace identical to c01's |
+| c03 emit-outside-tx | REDISCOVERED | 11 | matched both pre-registered substrings, registered route exactly |
+| c04 weakened-guard | REDISCOVERED (Route B) | 11 | direct probe-accept, matched registered substring/anchor exactly |
+| c05 win-back | MISSED | 11, 12, 13 | registered substring never appeared; trace identical to c01's |
+| c06 state-rename | MISSED | 11, 12, 13 | exit 0 not 2 — no row ever driven into `past_due`; class checklist's own pre-registered honesty clause for this exact scenario |
+| c07 partial-write | MISSED | 11, 12, 13 | registered substring never appeared; trace identical to c01's |
+
+**2/7 REDISCOVERED, 5/7 MISSED.** Both catches (c03, c04) fire on illegal-probe mechanisms that
+don't require reaching a full legal `activate` (c03: probe rejected but stray event still
+committed; c04: probe itself accepted). All five misses share element/witness routes that require
+either a legal `activate` acceptance (c01, c02 use it as a precondition; c05/c06/c07 require it
+transitively via `active`/`past_due`/settle chains) — and across every miss, the per-seed
+command-trace statistics (accepted/rejected/superset counts, guards-probed counts) are byte-identical
+across classes at the same seed, which is expected (the walk's command choice is seed+spec-driven,
+not observation-driven) but also means the underlying question — does `activate` ever get legally
+accepted within 200×30 at seeds 11/12/13 — was not independently confirmed or refuted from the CLI's
+summary-only output for any of the five MISSED classes. Flagged here as the single open question
+this task's evidence raises; not investigated further within Task 2's scope (zero tuning: no extra
+flags, no extra seeds beyond the three pre-authorized, no source changes).
 
 ### c08 — widened uniqueness (two drafts)
 **Verdict: PENDING**
