@@ -301,7 +301,36 @@ arose (the slice-2 c03 precedent's masking concern did not recur here, as the re
 as possible).
 
 ### c04 — weakened guard
-**Verdict: PENDING**
+**Verdict: REDISCOVERED (Route B)**
+
+Branch mechanics: `git checkout -b drive/c04 drift/c04-weakened-guard`, `git merge --no-edit
+claude/silly-tereshkova-a4e54b` — same single ledger.jsonl conflict, union-resolved and validated.
+`git diff drift/c04-weakened-guard -- implementations/subscriptions/src` was empty after the merge
+— the drift edit (the removed `paidInvoiceCount >= 1` guard clause on `activate`) survived intact.
+
+Seeds tried: 11 (caught on the first pre-registered seed).
+
+Verbatim stdout, seed 11:
+```
+drive: 3 sequences — FAILED (seed 11)
+replay: lattice conform --target ../implementations/subscriptions --drive --seed 11
+commands: 57 (23 accepted, 6 rejected, 0 superset ops)
+guards probed at event time: 28 attempts across 0 guarded transitions
+probe re-attributions: 0
+duration 0.0s
+narrative:
+  create Subscription#d-subscription-1 (seed=0) -> accepted
+  transition activate on Subscription#d-subscription-1 (rowPick=0, seed=0) legality=illegal -> accepted (VIOLATION)
+VIOLATION transition activate (transition activate) — witnesses [d-subscription-1] — impl accepted a spec-illegal command: 'activate' was illegal from the observed pre-state but the driver accepted it without throwing — anchors [transition activate] — source drive:2
+```
+Exit code: 1.
+
+Verdict vs. the registered signal: matches Route B exactly — substring `accepted a spec-illegal
+command` present, naming transition `activate`, anchor `transition activate`. The walk's own
+illegal probe of `activate` (guard-violated pre-state — no paid invoice) gets accepted by the
+drifted impl instead of rejected, and the oracle flags it directly, in-sequence, on the very first
+probe attempt of the campaign — no need to wait for the end-of-sequence sweep (Route A,
+`activePaidInFull`, was not exercised — the direct probe fired first).
 
 ### c05 — terminal resurrection (win-back)
 **Verdict: PENDING**
