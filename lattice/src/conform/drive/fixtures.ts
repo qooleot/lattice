@@ -39,6 +39,32 @@ const accountAgg: PlanAggregate = {
 /** Consumed by BOTH walk.test.ts (via tinyCtx) and campaign.test.ts (Task 5). */
 export const tinyPlanForWalk: GenPlan = { context: 'Tiny', aggregates: [accountAgg], events: tinyModel.events };
 
+// Sibling transition for the post-accept re-attribution amendment (design §2 Oracle, human
+// ruling 2026-07-16): same region ('status'), same from-state (openState) and same to-state
+// (closedState) as `close`, but NO requires and NO emits — the shape of a genuinely different
+// spec transition that happens to share `close`'s driver entry point (voidInvoice ← voidDraft +
+// voidOpen is the real-world case this amendment fixes). Kept in a SEPARATE plan
+// (tinyPlanWithSibling) so tinyPlanForWalk — and every existing test built on the assumption
+// that `close` is the ONLY transition on Account — stays untouched.
+const discardTransition: PlanTransition = {
+  name: 'discard', region: 'status', from: ['openState'], to: 'closedState',
+  anchors: { specElement: 'transition discard', provenance: [], witnessIds: [] },
+};
+
+const accountAggWithSibling: PlanAggregate = {
+  name: 'Account',
+  fields: tinyModel.aggregates[0]!.fields,
+  regions: tinyModel.aggregates[0]!.machine!.regions,
+  transitions: [closeTransition, discardTransition],
+  invariants: [],
+};
+
+/** Consumed ONLY by the new re-attribution tests in walk.test.ts — never by tinyPlanForWalk's
+ *  consumers, so the buggy-target "probe close acceptance is a violation" tests keep their
+ *  original semantics (no sibling to re-attribute to). */
+export const tinyPlanWithSibling: GenPlan =
+  { context: 'Tiny', aggregates: [accountAggWithSibling], events: tinyModel.events };
+
 const overrides: OverridesModule = {
   Account: {
     balance: (db, row) => ((db as Database.Database)

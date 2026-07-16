@@ -17,6 +17,7 @@ export interface DriveStats {
   commands: number; accepted: number; rejected: number;
   probesAttempted: number; probesRejected: number; supersetOps: number;
   guardedTransitionsProbed: string[];
+  reattributions: number;
 }
 export interface DriveResult {
   violations: ConformViolation[]; stats: DriveStats;
@@ -82,7 +83,7 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
   const createCounters: Record<string, number> = {};
   const stats: DriveStats = {
     commands: 0, accepted: 0, rejected: 0, probesAttempted: 0, probesRejected: 0,
-    supersetOps: 0, guardedTransitionsProbed: [],
+    supersetOps: 0, guardedTransitionsProbed: [], reattributions: 0,
   };
   const guardedProbed = new Set<string>();
   const violations: ConformViolation[] = [];
@@ -167,12 +168,47 @@ export function executeSequence(mkDb: () => Database.Database, drivers: DriverMo
           }
         } else {
           stats.commands++; stats.probesAttempted++;
+          const preRegionState = String(stateVal);
           try {
             driverFn(db, id, gen);
-            violations.push(transitionViolation(t, id, source,
-              `impl accepted a spec-illegal command: '${t.name}' was illegal from the observed pre-state ` +
-              `but the driver accepted it without throwing`));
-            narrative.push(describeIntention(intention, id, 'illegal', 'accepted (VIOLATION)'));
+            // Post-accept re-attribution (design §2 Oracle, human ruling 2026-07-16): one impl
+            // entry point can serve multiple spec transitions sharing a from-state (voidInvoice
+            // ← voidDraft + voidOpen). The acceptance is a violation ONLY if no sibling
+            // transition of the same aggregate+region explains the observed pre→post step —
+            // from-state membership and guard both evaluated on the PRE-state we already
+            // scoped-read, `to` matched against a fresh post-state read.
+            let postRegionState: string | undefined;
+            let vanished = false;
+            try {
+              const postScoped = observeScoped(db, ctx.input.model, manifest, ctx.overrides, intention.aggregate, id);
+              postRegionState = String(postScoped[0]!.fields[regionKey]);
+            } catch {
+              vanished = true; // impl freedom: the operation may delete the row (e.g. a hard-void)
+            }
+            const siblings = vanished ? [] : ctx.plan.aggregates
+              .find(a => a.name === intention.aggregate)?.transitions
+              .filter(tr => tr.region === t.region) ?? [];
+            const sibling = siblings.find(tr =>
+              tr.from.includes(preRegionState) &&
+              (!tr.requires || evaluateCandidate(
+                { kind: 'statePredicate', aggregate: intention.aggregate, body: tr.requires },
+                { entities: scoped }) === 'permit') &&
+              tr.to === postRegionState);
+
+            if (sibling) {
+              stats.reattributions++;
+              narrative.push(
+                `probe ${t.name} on ${intention.aggregate}#${id} → accepted, re-attributed to ${sibling.name}`);
+            } else {
+              const detail = vanished
+                ? `impl accepted a spec-illegal command: '${t.name}' was illegal from the observed pre-state ` +
+                  `but the driver accepted it without throwing, and the row was deleted post-accept — no legal ` +
+                  `sibling transition could be checked, treated as unexplained`
+                : `impl accepted a spec-illegal command: '${t.name}' was illegal from the observed pre-state ` +
+                  `but the driver accepted it without throwing`;
+              violations.push(transitionViolation(t, id, source, detail));
+              narrative.push(describeIntention(intention, id, 'illegal', 'accepted (VIOLATION)'));
+            }
           } catch {
             stats.probesRejected++;
             if (fromOk && !guardOk) guardedProbed.add(t.name); // illegality came from the guard, not from-state

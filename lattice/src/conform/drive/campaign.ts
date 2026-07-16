@@ -26,7 +26,7 @@ export interface CampaignResult {
 function emptyStats(): DriveStats {
   return {
     commands: 0, accepted: 0, rejected: 0, probesAttempted: 0, probesRejected: 0,
-    supersetOps: 0, guardedTransitionsProbed: [],
+    supersetOps: 0, guardedTransitionsProbed: [], reattributions: 0,
   };
 }
 
@@ -40,6 +40,7 @@ function accumulate(agg: DriveStats, guarded: Set<string>, s: DriveStats): void 
   agg.probesAttempted += s.probesAttempted;
   agg.probesRejected += s.probesRejected;
   agg.supersetOps += s.supersetOps;
+  agg.reattributions += s.reattributions;
   for (const t of s.guardedTransitionsProbed) guarded.add(t);
 }
 

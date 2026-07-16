@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { executeSequence } from './walk.js';
 import type { DriverModule } from './walk.js';
-import { tinyCtx, tinyDrivers, buggyDrivers, strictDrivers, mkTinyDb } from './fixtures.js';
+import { tinyCtx, tinyDrivers, buggyDrivers, strictDrivers, mkTinyDb, tinyPlanWithSibling } from './fixtures.js';
 import { tinyModel } from '../fixtures.js';
 import type { Intention } from './intent.js';
 import type { GenPlan, PlanAggregate, PlanTransition } from '../../generate/plan.js';
@@ -93,6 +93,30 @@ describe('executeSequence', () => {
     const ctx = { ...tinyCtx(), plan: badPlan };
     expect(() => executeSequence(mkTinyDb, tinyDrivers, ctx, seq(create(2), close(0)), OPTS))
       .toThrow(/missing region-state key 'bogusRegion\.state'.*Account#d-account-1/s);
+  });
+
+  it('post-accept re-attribution: probe close accepted, but a legal sibling (discard) explains the ' +
+    'pre→post step — not a violation', () => {
+    // seed=1 → balance 500 (odd), so 'close' (requires balance==0) is illegal from openState:
+    // buggyDrivers accepts it unconditionally, moving the row openState -> closedState. With
+    // tinyPlanWithSibling, 'discard' (same region, from openState, no requires, to closedState)
+    // explains that exact pre->post step, so the acceptance re-attributes instead of violating.
+    const ctx = { ...tinyCtx(), plan: tinyPlanWithSibling };
+    const r = executeSequence(mkTinyDb, buggyDrivers, ctx, seq(create(1), probeClose(0)), OPTS);
+    expect(r.violations).toEqual([]);
+    expect(r.stats.reattributions).toBe(1);
+    expect(r.narrative.some(line => line.includes('re-attributed to discard'))).toBe(true);
+  });
+
+  it('post-accept re-attribution: with no sibling transition declared, the same accepted probe ' +
+    'is still caught as a violation (c04-class weakened-guard catch survives)', () => {
+    // Identical sequence, but tinyCtx()'s plan (tinyPlanForWalk) declares ONLY 'close' — no
+    // sibling can explain the openState -> closedState step, so re-attribution finds nothing and
+    // the acceptance is reported exactly as before this amendment.
+    const r = executeSequence(mkTinyDb, buggyDrivers, tinyCtx(), seq(create(1), probeClose(0)), OPTS);
+    expect(r.violations).toHaveLength(1);
+    expect(r.violations[0]!.detail).toMatch(/accepted a spec-illegal command/);
+    expect(r.stats.reattributions).toBe(0);
   });
 
   it('rowPick resolves against a live read, reaching a row created inside the driver (not tracked by any mirror)', () => {
