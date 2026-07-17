@@ -43,21 +43,32 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
   const seeds: CandidateInvariant[] = [];
 
   for (const o of owners(m)) {
-    const refs = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type));
+    // Unique seeds (#7) key on the ref; an optional by-path end is absence-undecided
+    // (grammar.ts's `unique`/by[] gate) — a human `propose`ing the same by-path would be
+    // rejected, so the template must not author it either.
+    const refs = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type) && !f.optional);
     const machine = (o as AggregateDef).machine;
 
     // #1 conservation: >=2 @balance + a @total. Paths resolve THROUGH a value type (slice B2) —
     // before this, tagging a value-typed money field silently stopped conservation firing.
-    const balances = o.fields.filter(f => f.tags?.includes('balance'))
-      .map(f => numericTagPath(m, f)).filter((p): p is Path => p !== null);
+    //
+    // A conservation law over a maybe-absent part is a DIFFERENT law (what does it mean for a
+    // part to conserve when it might not exist?) — grammar.ts's `conservation` gate rejects an
+    // optional parts/total path as absence-undecided, so an optional @balance/@total field skips
+    // the WHOLE rule here rather than silently dropping just that field from the sum.
+    const balanceFields = o.fields.filter(f => f.tags?.includes('balance'));
     const totalField = o.fields.find(f => f.tags?.includes('total'));
-    const total = totalField ? numericTagPath(m, totalField) : null;
-    if (balances.length >= 2 && total)
-      adopt.push(mk(`tpl-1-${o.name}`, `Conservation_${o.name}`,
-        { kind: 'conservation', aggregate: o.name, parts: balances, total }));
+    if (balanceFields.length >= 2 && totalField && ![...balanceFields, totalField].some(f => f.optional)) {
+      const balances = balanceFields.map(f => numericTagPath(m, f)).filter((p): p is Path => p !== null);
+      const total = numericTagPath(m, totalField);
+      if (balances.length >= 2 && total)
+        adopt.push(mk(`tpl-1-${o.name}`, `Conservation_${o.name}`,
+          { kind: 'conservation', aggregate: o.name, parts: balances, total }));
+    }
 
-    // #8 monotonic from @monotonic tag
-    for (const f of o.fields.filter(f => f.tags?.includes('monotonic')))
+    // #8 monotonic from @monotonic tag. An optional path is absence-undecided for `monotonic`
+    // too (grammar.ts:318) — same reasoning as conservation above.
+    for (const f of o.fields.filter(f => f.tags?.includes('monotonic') && !f.optional))
       adopt.push(mk(`tpl-8-${o.name}-${f.name}`, `Monotonic_${o.name}_${f.name}`,
         { kind: 'monotonic', aggregate: o.name, field: [f.name] }));
 
@@ -72,8 +83,10 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
           seeds.push(mk(`tpl-7-${o.name}-${f.name}`, `UniquePer_${o.name}_${f.name}`,
             { kind: 'unique', aggregate: o.name, whileStates: { region: r.name, states: actives }, by: [[f.name]] }, 0.4));
 
-      // #6+#11 grace-window shell: @active states + a Duration field + a (possibly one-hop) Date path
-      const duration = o.fields.find(f => f.type.kind === 'prim' && f.type.prim === 'Duration');
+      // #6+#11 grace-window shell: @active states + a Duration field + a (possibly one-hop) Date path.
+      // Stay conservative on the duration field itself; findDatePath applies the same filter to
+      // the date side (direct, ref-hop, and target-date lookups).
+      const duration = o.fields.find(f => f.type.kind === 'prim' && f.type.prim === 'Duration' && !f.optional);
       const datePath = findDatePath(m, o);
       if (actives.length && duration && datePath)
         seeds.push(mk(`tpl-11-${o.name}`, `DeadlineBound_${o.name}`,
@@ -94,11 +107,11 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
 }
 
 function findDatePath(m: DomainModel, o: AggregateDef | EntityDef): string[] | null {
-  const direct = o.fields.find(f => f.type.kind === 'prim' && f.type.prim === 'Date');
+  const direct = o.fields.find(f => f.type.kind === 'prim' && f.type.prim === 'Date' && !f.optional);
   if (direct) return [direct.name];
-  for (const f of o.fields) if (f.type.kind === 'ref' && !isQualifiedRef(f.type)) {
+  for (const f of o.fields) if (f.type.kind === 'ref' && !isQualifiedRef(f.type) && !f.optional) {
     const t = owners(m).find(x => x.name === (f.type as any).target);
-    const d = t?.fields.find(x => x.type.kind === 'prim' && x.type.prim === 'Date');
+    const d = t?.fields.find(x => x.type.kind === 'prim' && x.type.prim === 'Date' && !x.optional);
     if (d) return [f.name, d.name];
   }
   return null;

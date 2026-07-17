@@ -481,8 +481,14 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         const diags = [...validateModel(m as DomainModel), ...undecidedMoneySigns(m as DomainModel),
                        ...derivedNameCollisions(m as DomainModel)];
         if (diags.length) return { error: 'ill-formed-model', diagnostics: diags };
-        s.model = m as DomainModel;
         const { adopt, seeds } = matchTemplates(m as DomainModel);
+        // Belt for the filters in templates.ts: the template layer must never author a candidate
+        // the grammar rejects from a human. Unreachable if templates.ts and grammar.ts agree —
+        // which is exactly the drift this catches.
+        const templateDiags = [...adopt, ...seeds].flatMap(i =>
+          validateCandidate(i.candidate, m as DomainModel).map(d => ({ ...d, candidate: i.id })));
+        if (templateDiags.length) return { error: 'template-out-of-grammar', diagnostics: templateDiags };
+        s.model = m as DomainModel;
         for (const inv of adopt) {
           s.candidates.push({ inv, status: 'adopted' });
           appendLedger(dir, { kind: 'adopted', at: now(), invariant: inv, provenance: `template ${inv.id}` });

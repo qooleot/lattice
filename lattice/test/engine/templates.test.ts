@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { matchTemplates, numericTagPath } from '../../src/engine/templates.js';
 import { impliedInvariants, isImplied } from '../../src/engine/implied.js';
+import { validateCandidate } from '../../src/ast/grammar.js';
 import type { DomainModel, ValueDef } from '../../src/ast/domain.js';
-import { periodModel } from '../fixtures.js';
+import { periodModel, traceAModel, traceBModel } from '../fixtures.js';
 import { astToCode } from '../../src/emit/code.js';
 import { loadLatText } from '../../src/parse/fromLangium.js';
 
@@ -335,5 +336,125 @@ describe('conservation on a child subject (owners widened, slice B2)', () => {
     const c = matchTemplates(m).adopt.find(i => i.candidate.kind === 'conservation')!.candidate;
     expect(c).toEqual({ kind: 'conservation', aggregate: 'Posting',
       parts: [['paid'], ['due']], total: ['total'] });
+  });
+});
+
+// Task 5: matchTemplates must never author a candidate validateCandidate would reject from a
+// human proposer (absence-undecided: monotonic field, conservation parts/total, unique by-path
+// ends). Before this fix, matchTemplates derived these shapes from optional-tagged fields without
+// filtering, so `init` (cli.ts) adopted candidates that `propose` would refuse outright — the
+// engine enforced rules its own grammar called undecided.
+describe('matchTemplates — optional fields are absence-undecided, so templates skip them', () => {
+  it('does not adopt monotonic over an optional @monotonic field (absence-undecided shape)', () => {
+    const m: DomainModel = {
+      context: 'M', ticksPerDay: 24, enums: [], values: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Approval', fields: [
+        { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'approvedAt', type: { kind: 'prim', prim: 'Date' }, optional: true, tags: ['monotonic'] }] }],
+      events: [], services: []
+    };
+    const { adopt } = matchTemplates(m);
+    expect(adopt.some(a => a.candidate.kind === 'monotonic')).toBe(false);
+  });
+
+  it('skips conservation entirely when any @balance/@total field is optional', () => {
+    const m: DomainModel = {
+      context: 'M', ticksPerDay: 24, enums: [], values: [], entities: [],
+      aggregates: [{ kind: 'aggregate', name: 'Bill', fields: [
+        { name: 'billId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'a', type: { kind: 'prim', prim: 'Money' }, tags: ['balance', 'unsigned'] },
+        { name: 'b', type: { kind: 'prim', prim: 'Money' }, optional: true, tags: ['balance', 'unsigned'] },
+        { name: 't', type: { kind: 'prim', prim: 'Money' }, tags: ['total', 'unsigned'] }] }],
+      events: [], services: []
+    };
+    const { adopt } = matchTemplates(m);
+    expect(adopt.some(a => a.candidate.kind === 'conservation')).toBe(false);
+  });
+
+  it('unique seeds never key on an optional ref (by-path would be rejected at propose)', () => {
+    const m: DomainModel = {
+      context: 'Billing', ticksPerDay: 24, enums: [], values: [],
+      entities: [{ kind: 'entity', name: 'Customer', fields: [{ name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
+      aggregates: [{ kind: 'aggregate', name: 'Subscription', fields: [
+        { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'customer', type: { kind: 'ref', target: 'Customer' }, optional: true }],
+        machine: { regions: [{ name: 'Access', initial: 'Trialing', states: [
+          { name: 'Trialing' }, { name: 'Active', tags: ['active'] }] }], transitions: [] } }],
+      events: [], services: []
+    };
+    const { seeds } = matchTemplates(m);
+    expect(seeds.some(s => s.candidate.kind === 'unique')).toBe(false);
+  });
+
+  // Every model this test file (and fixtures.ts, via import) builds — the property this pins is
+  // structural: whatever matchTemplates derives from ANY of these shapes must already be
+  // something a human could `propose` without tripping absence-undecided. Recreated here (rather
+  // than reaching into other describe blocks' closures) because those fixtures are declared
+  // inside `it`/`describe` callbacks and are not in scope at this point in the file.
+  const billerModel: DomainModel = {
+    context: 'BillPayments', ticksPerDay: 24, enums: [], values: [], entities: [],
+    aggregates: [{ kind: 'aggregate', name: 'Biller', fields: [
+      { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'name', type: { kind: 'prim', prim: 'Text' } }],
+      machine: { regions: [{ name: 'Lifecycle', initial: 'Active', states: [
+        { name: 'Active', tags: ['active'] }, { name: 'Retired', tags: ['terminal'] }] }], transitions: [] } }],
+    events: [], services: []
+  };
+  const signedModel: DomainModel = {
+    context: 'Ledger', ticksPerDay: 24, enums: [], values: [], entities: [],
+    aggregates: [{ kind: 'aggregate', name: 'Account', fields: [
+      { name: 'accountId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'balance', type: { kind: 'prim', prim: 'Money' }, tags: ['signed'] },
+      { name: 'lifetimeFees', type: { kind: 'prim', prim: 'Money' } }] }],
+    events: [], services: []
+  };
+  const cleanModel: DomainModel = {
+    context: 'Billing', ticksPerDay: 24, enums: [], values: [],
+    entities: [{ kind: 'entity', name: 'Biller', fields: [{ name: 'billerId', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Bill', fields: [
+      { name: 'billId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'biller', type: { kind: 'ref', target: 'Biller' } },
+      { name: 'amountPaid', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+      { name: 'amountDue', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+      { name: 'total', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] }],
+      machine: { regions: [{ name: 'settlement', initial: 'draft', states: [
+        { name: 'draft' }, { name: 'issued', tags: ['active'] }, { name: 'void', tags: ['terminal'] }] }],
+        transitions: [] } }],
+    events: [], services: []
+  };
+  const valueAmount: ValueDef = { kind: 'value', name: 'Amount', fields: [
+    { name: 'amount', type: { kind: 'prim', prim: 'Money' } },
+    { name: 'currency', type: { kind: 'prim', prim: 'Text' } }] };
+  const valueConservationModel: DomainModel = {
+    context: 'L', enums: [], values: [valueAmount], entities: [], events: [], services: [],
+    aggregates: [{ kind: 'aggregate', name: 'Bill', fields: [
+      { name: 'billId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'paid', type: { kind: 'value', value: 'Amount' }, tags: ['balance', 'unsigned'] },
+      { name: 'due', type: { kind: 'value', value: 'Amount' }, tags: ['balance', 'unsigned'] },
+      { name: 'total', type: { kind: 'value', value: 'Amount' }, tags: ['total', 'unsigned'] }] }],
+  };
+  const childSubjectModel: DomainModel = {
+    context: 'L', enums: [], values: [], entities: [], events: [], services: [],
+    aggregates: [{ kind: 'aggregate', name: 'Txn', fields: [
+      { name: 'txnId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'legs', type: { kind: 'list', of: { kind: 'ref', target: 'Posting' } } }],
+      entities: [{ kind: 'entity', name: 'Posting', fields: [
+        { name: 'pid', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'paid', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+        { name: 'due', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+        { name: 'total', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] }] }] }],
+  };
+
+  const allTemplateFixtureModels: DomainModel[] = [
+    revrecMini, billerModel, signedModel, cleanModel, valueConservationModel, childSubjectModel,
+    periodModel, traceAModel, traceBModel
+  ];
+
+  it('every template-authored candidate passes validateCandidate', () => {
+    for (const m of allTemplateFixtureModels) {
+      const { adopt, seeds } = matchTemplates(m);
+      for (const i of [...adopt, ...seeds])
+        expect(validateCandidate(i.candidate, m), i.id).toEqual([]);
+    }
   });
 });

@@ -483,6 +483,18 @@ describe('engine CLI', () => {
     expect(typeof r.detail).toBe('string');
   });
 
+  // Belt test (task 5): the filters in templates.ts make matchTemplates output that always
+  // passes validateCandidate, so a valid model can never trip the belt — asserting the belt
+  // exists by shape (no template-out-of-grammar on a clean init), not by manufacturing a
+  // monkey-model that would be impossible to build once the filters land.
+  it('init on a valid model never trips the template-out-of-grammar belt', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    const r: any = await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+    expect(r.error).not.toBe('template-out-of-grammar');
+    expect(r.ok).toBe(true);
+  });
+
   it('unknown command still returns a structured error', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cli-'));
     const r: any = await runCommand(['bogus-command', '--session', dir], fakeDeps);
