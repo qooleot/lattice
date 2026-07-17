@@ -48,7 +48,8 @@ describe('quint — optional fields (integration, real quint)', () => {
     const p = r.witness!.entities.find(e => e.type === 'Payment');
     expect(p, 'the counterexample must name a Payment').toBeDefined();
     expect(p!.fields['intent.state']).toBe('requiresPaymentMethod');
-    expect(p!.fields['paymentMethodPresent']).toBe(false);
+    expect('paymentMethod' in p!.fields, 'absent optional ref must be a MISSING key for the judge').toBe(false);
+    expect('paymentMethodPresent' in p!.fields).toBe(false);
   }, 180_000);
 
   // The ref-hop existence gate on `present` (the `(allExist) and flag` conjunction in predToQuint).

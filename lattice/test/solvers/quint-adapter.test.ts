@@ -244,6 +244,25 @@ describe('quint adapter leaves a value-FREE record alone', () => {
   });
 });
 
+describe('quint adapter strips Present companion flags', () => {
+  it('flag-false drops the placeholder value; flag-true drops only the flag', () => {
+    const itf = { states: [{
+      payments: { '#map': [['p1', {
+        exists: true, bal: { '#bigint': '24' }, balPresent: false,
+        tip: { '#bigint': '7' }, tipPresent: true,
+        intent_state: 'pending',
+      }]] },
+    }] };
+    const w = parseITF(itf, { payments: 'Payment' });
+    const p = w.entities.find(e => e.type === 'Payment')!;
+    expect('bal' in p.fields, 'flag-false: placeholder must not become a fact').toBe(false);
+    expect('balPresent' in p.fields).toBe(false);
+    expect(p.fields['tip']).toBe(7);
+    expect('tipPresent' in p.fields).toBe(false);
+    expect(p.fields['intent.state']).toBe('pending');
+  });
+});
+
 describe('runQuintVerify flag construction', () => {
   it('passes a custom --init and --invariant when given', async () => {
     const exec = vi.fn().mockRejectedValue(failWith('error: parsing failed\nsyntax error'));

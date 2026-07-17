@@ -120,10 +120,24 @@ function stateToEntities(st: Record<string, any>, varTypes: Record<string, strin
     const pairs: [any, any][] = raw && raw['#map'] ? raw['#map'] : [];
     for (const [id, rec] of pairs) {
       if (rec.exists === false) continue;
+      // `${f}Present` companions (quint.ts presentInitValue): interpret and strip them HERE so the
+      // judge sees absence as a missing key — evaluate.ts's present() and cmp both define absence
+      // as `undefined`, and a flag-false field's value is placeholder data, not a fact. A boolean
+      // is decisive: no .lat prim encodes to bool (prims→int, enums/refs→str), so a bool key
+      // ending in 'Present' whose base key exists can only be the companion.
+      const presentFlags = new Set<string>();
+      const absentBases = new Set<string>();
+      for (const [fk, fv] of Object.entries(rec)) {
+        if (fk.endsWith('Present') && typeof fv === 'boolean' && fk.slice(0, -'Present'.length) in (rec as any)) {
+          presentFlags.add(fk);
+          if (fv === false) absentBases.add(fk.slice(0, -'Present'.length));
+        }
+      }
       const fields: Record<string, string | number | boolean> = {};
       const children: CaseEntity[] = [];
       for (const [fk, fv] of Object.entries(rec)) {
         if (fk === 'exists') continue;
+        if (presentFlags.has(fk) || absentBases.has(fk)) continue;
         // Owned collection (design §6.1): ITF encodes the bounded map as `{'#map': [[k, v], …]}`.
         // Only entries below the companion `<f>Count` are live; the rest are unreachable filler.
         if (fv !== null && typeof fv === 'object' && '#map' in (fv as any)) {
