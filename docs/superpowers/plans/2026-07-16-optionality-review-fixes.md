@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript, vitest, Langium (parser is generated — run `npm run langium:generate` once per fresh worktree), Quint/Apalache via the `quint` npm binary (available), Alloy via `vendor/alloy.jar` (integration tests guard with `describe.skipIf(!existsSync(ALLOY_JAR))`).
 
+**Rebase note (2026-07-17):** this plan was re-verified after rebasing onto `b7a879f` (Slice B2: nested types — refs/values inside owned children, use-site money sign; +6090/−220). Every task's target survives; quoted code was re-checked byte-for-byte where a task performs an exact replacement (the quint unique arm, `refHopsIn`, `multiSegmentPaths`, `canonicalSet`, `adoptGuard`, the `hasVerdicts` block). Line numbers shifted — key anchors now: `refHopsIn` quint.ts:187, refsResolve optional filter implied.ts:118, `optional-owned-child` validate.ts:355, `undecidedMoneySigns` validate.ts:447, `writeProjections` cli.ts:79, `adoptGuard` cli.ts:213, `hasVerdicts` cli.ts:530, `canonicalSet` reconcile.ts:49. Relocate by quoted code, and prefer B2's new shared helpers where they exist (`moneyFieldPaths` in domain.ts, `sumFieldPath` in invariant.ts).
+
 ## Global Constraints
 
 - Working directory for all commands: `lattice/` (the package root; `npx vitest run <file>` paths below are relative to it).
@@ -17,6 +19,7 @@
 - Commit after every task; message style follows the repo's `fix(scope): sentence` convention.
 - **Non-goals** (reviewed and deliberately excluded): the `apply`-path money-sign gate (explicitly-argued design decision — raise with the user separately, do not change); a rename bridge for pre-slice `classified` ledger entries (low impact, converges after one re-classify); absence gates for `cardinality.where`/`leadsTo` (documented open decision in invariant.md); reuse/efficiency refactors beyond the `refHopGates` consolidation Task 1 performs.
 - **Deferred to a design slice, not this plan** (verified real, but each needs an "open question" grouping concept the session state does not have — a mechanical patch would guess the design): per-session `alternativeAttempts`/`regenAttempts`/`probesAsked` counters starving every question after the first (session.ts:22-24, hypothesis.ts:27-31, planner.ts:158); `pruneOnVerdict` annihilating unrelated candidates proposed in one flat batch; cross-kind conjunctions being inexpressible (an `and` Predicate cannot hold a `sumOverCollection`). Write a kickoff doc (repo pattern: docs/superpowers/specs/*-kickoff-prompt.md) instead of patching.
+- Slice B2's carried-findings triage (`.superpowers/sdd/carried-findings.md` in the B2 worktree; not committed to this tree) lists ten open items. #5 (Quint conservation/sum lack hop gates) is absorbed into Task 1 Step 4b — it is the same gate family Task 1 owns. The other nine stay with that triage; they are not this plan's mandate.
 - Agent 1's proposed new `'retired'` ledger kind is deliberately NOT added: `apply --force-remove` already appends `{kind: 'declined', invariant, reason}` (reconcile.ts:107) and `decline --id --reason` writes the same kind — the defect is that adoption paths never CONSULT it (Task 12), not that the record is missing. A third removal kind would split one meaning across two spellings.
 
 ---
@@ -149,6 +152,26 @@ In `src/emit/method-guard.ts`: import `refHopGates` instead of `refHopsIn`; `ref
 
 Run: `npx vitest run test/emit/quint-optional-hop.test.ts test/emit/quint-optional.test.ts test/emit/quint-emission-valid.test.ts`
 Expected: PASS. (Required-hop strings are unchanged — `refHopGates` emits the same `.exists` atom the old code appended.)
+
+- [ ] **Step 4b: Gate Quint's conservation and sumOverCollection arms too (carried finding #5 from Slice B2)**
+
+The B2 branch's own review carried this sibling gap forward unfixed: `conservation` (quint.ts:386-389) and `sumOverCollection`'s total read (quint.ts:408+) call `pathToQuint` bare — no hop gate at all, so a part/total path that crosses a ref lets Apalache read a never-created (or, post-B2, absent-optional) record's placeholder and convict where the judge permits. Task 1 owns the gate helper, so close it here rather than leave a fourth polarity site ungated. In the conservation arm:
+
+```typescript
+  if (c.kind === 'conservation') {
+    const parts = c.parts.map(p => pathToQuint(m, p, 'x', c.aggregate)).join(' + ');
+    // Same permit polarity as the cmp arm: an ungrounded read is unknown, and unknown facts
+    // don't convict — gate the equation, not the quantifier.
+    const gates = [...new Set([...c.parts, c.total].flatMap(p => refHopGates(m, p, 'x', c.aggregate)))];
+    const eq = `${parts} == ${pathToQuint(m, c.total, 'x', c.aggregate)}`;
+    const body = gates.length ? `(${gates.join(' and ')}) implies (${eq})` : eq;
+    return `val ${name} = ${v}.keys().forall(k => { val x = ${v}.get(k) not(x.exists) or (${body}) })`;
+  }
+```
+
+Apply the same wrap to the sumOverCollection arm's total-vs-fold comparison (gates from `refHopGates(m, c.total, 'x', c.aggregate)` — the summed child field never crosses a ref hop). Unit test in `test/emit/quint-optional-hop.test.ts`: a conservation candidate whose total path is `['method', 'fee']` (through the optional ref) must emit `x.methodPresent` and the `implies` wrap; one with own-field paths must emit unchanged.
+
+Run: `npx vitest run test/emit/quint-optional-hop.test.ts test/emit/quint-emission-valid.test.ts` — expected: PASS.
 
 - [ ] **Step 5: Add the real-Quint integration test (spurious counterexample dies)**
 
@@ -350,7 +373,7 @@ git commit -m "fix(validate): reserve the <f>Present companion name beside an op
 
 ### Task 4: Generated-code `present()` — flatten registration and null-safe, NULL-aware rendering
 
-Two bugs in generated invariant checks: (a) `multiSegmentPaths`' `walkPred` (src/generate/render/commands.ts:30-38) has no `present` case, so a present-only ref hop is never registered with `flattenForChecks` and the check reads the raw FK column; (b) `predToTs`'s present arm (src/generate/invariantCheck.ts:26) renders `row.a.b !== undefined`, which throws on an absent ref and — because SQLite encodes absence as `NULL`, not `undefined` — answers *true* for a NULL column even in the single-segment case.
+Two bugs in generated invariant checks: (a) `multiSegmentPaths`' `walkPred` (src/generate/render/commands.ts:23-38) has no `present` case, so a present-only ref hop is never registered with `flattenForChecks` and the check reads the raw FK column; (b) `predToTs`'s present arm (src/generate/invariantCheck.ts:26) renders `row.a.b !== undefined`, which throws on an absent ref and — because SQLite encodes absence as `NULL`, not `undefined` — answers *true* for a NULL column even in the single-segment case. Note: main's ad41b47 already added the `present` case to `refReachPaths` in render/tests.ts:175 — that renderer is covered; commands.ts and invariantCheck.ts are not.
 
 **Files:**
 - Modify: `src/generate/render/commands.ts:30-38`, `src/generate/invariantCheck.ts:26`
@@ -619,6 +642,8 @@ Run: `npx vitest run test/parse/fromLangium.test.ts test/ast/validate-sign.test.
 Expected: the new tests FAIL (loads clean today).
 
 - [ ] **Step 3: Implement**
+
+Slice B2 rewrote `undecidedMoneySigns` (now validate.ts:447): values are no longer owners (sign is decided at each USE site), and "is a money field" is `carriesMoney` via the shared `moneyFieldPaths` helper (domain.ts) — a `Money` prim or a value type carrying one. Preserve BOTH properties in the split: `contradictoryMoneySigns` must use the same owners list and the same `carriesMoney` predicate, so a use-site contradiction on a value-typed field (`total : Amount @signed @unsigned`) is caught identically to a prim one. Add that value-carrying case to the Step 1 tests alongside the `Money` prim case.
 
 In `src/ast/validate.ts`: extract the owners enumeration + contradictory loop from `undecidedMoneySigns` into:
 
