@@ -23,7 +23,9 @@ export function predToTs(p: Predicate, rowVar: string): string {
   switch (p.kind) {
     case 'cmp': return `${term(p.left, rowVar)} ${TS_OPS[p.op]} ${term(p.right, rowVar)}`;
     case 'inState': return `[${p.states.map(s => `'${s}'`).join(', ')}].includes(${rowVar}.${p.region})`;
-    case 'present': return `${rowVar}.${p.path.join('.')} !== undefined`;
+    // `?.` survives an absent/NULL ref hop (the exact case present() answers); `!= null` reads
+    // SQLite's NULL — not just undefined — as absence, while 0/'' stay facts.
+    case 'present': return `${rowVar}.${p.path.join('?.')} != null`;
     case 'and': return p.args.map(a => `(${predToTs(a, rowVar)})`).join(' && ');
     case 'or': return p.args.map(a => `(${predToTs(a, rowVar)})`).join(' || ');
     case 'not': return `!(${predToTs(p.arg, rowVar)})`;

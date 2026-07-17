@@ -31,6 +31,7 @@ function multiSegmentPaths(inv: PlanInvariant): string[][] {
     switch (p.kind) {
       case 'cmp': walkTerm(p.left); walkTerm(p.right); break;
       case 'inState': break;
+      case 'present': if (p.path.length > 1) paths.push([...p.path]); break;
       case 'and': case 'or': p.args.forEach(walkPred); break;
       case 'not': walkPred(p.arg); break;
       case 'implies': walkPred(p.left); walkPred(p.right); break;
