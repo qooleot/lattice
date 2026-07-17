@@ -196,6 +196,10 @@ carries semantic weight or is `Text`/`Id`.
   collection, and both encodings fix every one of its fields as present — so absence is
   unrepresentable there. The same field on a **top-level** entity or on the aggregate itself is
   fine; only owned children are affected.
+- An optional field `f` and a sibling field literally named `<f>Present` on the same owner report
+  `present-name-collision` — the Quint encoding already emits a `<f>Present: bool` companion flag
+  beside every optional field (see [invariant](invariant.md)), so a same-named hand-declared field
+  would collide with it. Rename one of them.
 - A field named `state` is always rejected (`reserved-field-name`), regardless of type — `state`
   is reserved for lifecycle-state path accessors.
 

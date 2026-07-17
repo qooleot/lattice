@@ -60,9 +60,11 @@ follows):
 1. **Structure questions** (no solver) — the agent proposes aggregates, entities, enums,
    lifecycle states/transitions, guards, events, and service methods for your domain, one
    question at a time; you correct it. This is recorded to a session ledger as it happens.
-2. **Free template invariants** — once the structure is initialized, a set of invariants come
-   for free from field tags (e.g. `@balance`, `@monotonic`) and lifecycle shape (e.g.
-   terminal-state, no-skip-transition rules). You're shown the list and can object.
+2. **Free template invariants** — once the structure is initialized, a set of invariants come for
+   free from field tags and lifecycle shape: conservation from ≥2 `@balance` fields plus a
+   `@total` (all required — an optional field on either side is skipped, not covered, since a
+   sum can't say what an absent part means), a bound from `@monotonic`, and terminal-state rules
+   from `@terminal`. You're shown the list and can object.
 3. **Solver-generated concrete cases** — for everything else, the engine proposes a candidate
    invariant, asks Alloy or Quint/Apalache for the single most-informative concrete case, and
    presents it to you as a witness table. You judge each case **permit**, **forbid**, or

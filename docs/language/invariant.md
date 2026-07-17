@@ -139,8 +139,11 @@ The gate is reported for the invariant's **body** — and only there. A `where` 
 shape but not for absence, so a guard that itself compares an optional path draws no diagnostic.
 Some [invariant forms](invariant-forms.md) reject an optional path outright with
 `absence-undecided` rather than offering a form: `unique`'s `by` paths, `monotonic`'s `field`,
-`conservation`'s `parts` and `total`, and `sumOverCollection`'s summed child field and `total`. For
-these, make the field required or drop it from the rule.
+`conservation`'s `parts` and `total`, and `sumOverCollection`'s `total`. For these, make the field
+required or drop it from the rule. `sumOverCollection`'s *summed child field* has no such gate —
+there is no way to write one, because an optional field on an aggregate-owned child is already
+rejected at the model level (`optional-owned-child` in `validateModel`, see
+[field types](field-types.md)); no candidate carrying one can ever reach this check.
 
 The gate does not reach every predicate the language has. `leadsTo`'s `from`/`to` and
 `cardinality`'s `where` are predicates, yet an optional path read in one of them draws no
@@ -180,10 +183,13 @@ existence, and it has to be read directly, with `present(paymentMethod)` in the 
 
 This is not a second rule bolted on for optionality. **Every ref-hop in this language resolves
 vacuously when its target is absent, in all three engines**: the evaluator returns `undefined` for
-a hop it cannot resolve and its comparison then permits (`evaluate.ts`); the Quint emitter wraps
-each comparison as `allExist implies cmp` so Apalache cannot manufacture a counterexample by
-reading through a record no action ever created (`quint.ts`); and the Alloy emitter wraps each
-comparison as `(some <hop>) implies cmp` for every optional hop it crosses (`alloy.ts`). Alloy
+a hop it cannot resolve and its comparison then permits (`evaluate.ts`); the Quint emitter gates
+each comparison on a conjunction built hop by hop — every hop contributes its target's `.exists`,
+and an **optional** hop contributes its own `Present` companion flag as well — so the comparison
+reads `(gates) implies cmp` and Apalache cannot manufacture a counterexample by reading through a
+record no action ever created, or through a hop whose own flag says it was never taken
+(`refHopGates` in `quint.ts`); and the Alloy emitter wraps each comparison as
+`(some <hop>) implies cmp` for every optional hop it crosses (`alloy.ts`). Alloy
 needed that gate only once optionality existed — before `lone`, every relation was `one`, so a hop
 could not be empty and the vacuity was free. It is not free now: Alloy's empty join **decides**
 rather than permits (`x.paymentMethod.fee > 0` is *false*, not vacuous, on an empty

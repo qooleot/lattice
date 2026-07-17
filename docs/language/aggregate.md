@@ -56,8 +56,13 @@ scoped to this aggregate (no `on` needed; see [invariant](invariant.md)).
 - A nested `entity` block declares a child the aggregate owns; a `List<Child>` field ranging over
   a nested entity's name is an **owned collection**. Nested entities follow their own rules
   (`missing-key`, `nested-entity-flat`, uniqueness against the flat name pool) — see
-  [entity § Nested in an aggregate](entity.md#nested-in-an-aggregate). Owned collections are not
-  yet part of the solver encoding (list-typed fields are dropped before solving).
+  [entity § Nested in an aggregate](entity.md#nested-in-an-aggregate). Owned collections **are**
+  solver-encoded: Quint gives the owner a bounded `<field>: int -> { … }` map plus a
+  `<field>Count: int` companion, Alloy gives the child its own sig with an `owner: one <Parent>`
+  relation, and `sumOverCollection` is checked against them (Quint-routed only — see
+  [invariant forms](invariant-forms.md)). A candidate path may still not reach *into* a collection
+  except via `sum over` it; a list field that is not an owned collection (`List<Int>`, `List<ref
+  TopLevel>`) is dropped before solving.
 
 ## Example
 

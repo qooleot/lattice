@@ -57,9 +57,11 @@ context Billing {
 
 ## 3. `refsResolve` — every ref on this owner resolves
 
-`refs resolve` — every `ref` field on the owner must resolve to a real instance. Normally implied
-automatically by the presence of any `ref` field (see [derived invariants](derived-invariants.md));
-writing it explicitly still parses and loads successfully, flagged as redundant.
+`refs resolve` — every **present** same-context `ref` field on the owner must resolve to a real
+instance; an absent optional `ref` is not an orphan, so it is skipped rather than convicted. Normally
+implied automatically, one rule per owner, for every same-context `ref` field the owner declares —
+required or optional alike (see [derived invariants](derived-invariants.md)); writing it explicitly
+still parses and loads successfully, flagged as redundant.
 
 ```lat
 context Billing {

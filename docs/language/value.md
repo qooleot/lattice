@@ -26,7 +26,9 @@ context Billing {
 ```
 
 `value <PascalId> { <field>* <invariant>* }`, with an optional leading `///` doc. Fields use the
-same `<camelId> : <type> [@<tag>]*` grammar as an entity's, minus `key` — see below. Any number of
+same `<camelId> : <type> [@<tag>]*` grammar as an entity's, minus `key` — and minus the optional
+marker: `<type>?` is entity/aggregate-only; on a value sub-field it reports `optional-value` (see
+[field types](field-types.md)). See below for both rules. Any number of
 `invariant` blocks follow, each an ordinary [invariant](invariant.md) predicate body scoped to the
 value's own fields (no `on`, no `where` — see Semantic Rules).
 
