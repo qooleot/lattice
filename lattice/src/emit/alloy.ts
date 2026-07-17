@@ -1,10 +1,11 @@
 import type { DomainModel, AggregateDef, EntityDef, Field } from '../ast/domain.js';
 import { isQualifiedRef, ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, Path, Predicate, Term } from '../ast/invariant.js';
+import { sumFieldPath } from '../ast/invariant.js';
 import type { SalientFact } from '../engine/session.js';
 
 const ownerByName = (m: DomainModel, name: string): AggregateDef | EntityDef | undefined =>
-  [...m.entities, ...m.aggregates].find(o => o.name === name);
+  [...m.entities, ...m.aggregates, ...m.aggregates.flatMap(a => a.entities ?? [])].find(o => o.name === name);
 
 export interface AlloyQuery {
   kind: 'distinguish' | 'probe-forbid' | 'probe-permit';
@@ -30,6 +31,30 @@ export interface AlloyQuery {
 
 const isIntPrim = (p: string) => ['Int', 'Money', 'Date', 'Duration'].includes(p);
 
+/**
+ * Value fields (design §3.5) flatten to underscore-joined sig relations — `period: Period{start,end}`
+ * becomes `period_start: one Int, period_end: one Int` — never a nested sig, because values have no
+ * identity for Alloy to quantify over. Shared by emitOwnerSig and emitChildSigs so the owner and
+ * child encodings cannot drift; `mult` is the owner's multiplicity (`one`/`lone`), and sub-fields
+ * always take `one` (a value's sub-field cannot be optional — validate.ts's optional-value).
+ */
+function valueSubRelations(m: DomainModel, f: Field, mult: string): string[] {
+  if (f.type.kind !== 'value') return [];
+  const valueName = f.type.value;
+  const vdef = m.values.find(v => v.name === valueName);
+  const out: string[] = [];
+  for (const sub of vdef?.fields ?? []) {
+    if (sub.type.kind === 'enum') out.push(`  ${f.name}_${sub.name}: ${mult} ${sub.type.enum}`);
+    else if (sub.type.kind === 'prim' && isIntPrim(sub.type.prim)) out.push(`  ${f.name}_${sub.name}: ${mult} Int`);
+    // Nested value (slice B2): flatten recursively, joining each level with `_` — matches
+    // alloyFieldPath's renderer and quint's already-recursive fieldQType.
+    else if (sub.type.kind === 'value')
+      out.push(...valueSubRelations(m, { ...sub, name: `${f.name}_${sub.name}` }, mult));
+    // Text/Id sub-fields dropped, same convention as top-level fields
+  }
+  return out;
+}
+
 function emitOwnerSig(m: DomainModel, o: AggregateDef | EntityDef): string {
   const fields: string[] = [];
   for (const f of o.fields) {
@@ -44,18 +69,7 @@ function emitOwnerSig(m: DomainModel, o: AggregateDef | EntityDef): string {
     }
     else if (f.type.kind === 'enum') fields.push(`  ${f.name}: ${mult} ${f.type.enum}`);
     else if (f.type.kind === 'prim' && isIntPrim(f.type.prim)) fields.push(`  ${f.name}: ${mult} Int`);
-    // Value fields (design §3.5): a keyless, flat structural type flattens to underscore-joined
-    // sig relations — `period: Period{start,end}` becomes `period_start: one Int, period_end: one
-    // Int` — never a nested sig (values have no identity for Alloy to quantify over).
-    else if (f.type.kind === 'value') {
-      const valueName = f.type.value;
-      const vdef = m.values.find(v => v.name === valueName);
-      for (const sub of vdef?.fields ?? []) {
-        if (sub.type.kind === 'enum') fields.push(`  ${f.name}_${sub.name}: one ${sub.type.enum}`);
-        else if (sub.type.kind === 'prim' && isIntPrim(sub.type.prim)) fields.push(`  ${f.name}_${sub.name}: one Int`);
-        // Text/Id sub-fields dropped, same convention as top-level fields
-      }
-    }
+    else if (f.type.kind === 'value') fields.push(...valueSubRelations(m, f, mult));
     // Text/Id dropped — atom identity suffices
   }
   const machine = (o as AggregateDef).machine;
@@ -72,7 +86,7 @@ function emitOwnerSig(m: DomainModel, o: AggregateDef | EntityDef): string {
  * across the board (entity.md); within-parent key uniqueness is enforced by validateModel +
  * evaluator convention only, never by the solver encoding.
  */
-function emitChildSigs(a: AggregateDef): string[] {
+function emitChildSigs(m: DomainModel, a: AggregateDef): string[] {
   const out: string[] = [];
   for (const f of a.fields) {
     const child = ownedCollectionChild(a, f);
@@ -80,8 +94,16 @@ function emitChildSigs(a: AggregateDef): string[] {
     const fields = [`  owner: one ${a.name}`];
     for (const cf of child.fields) {
       if (cf.key) continue;
-      if (cf.type.kind === 'enum') fields.push(`  ${cf.name}: one ${cf.type.enum}`);
+      // Mirrors emitOwnerSig (:40-58) arm for arm. `one` throughout, never `lone`: validateModel's
+      // optional-owned-child rejects an optional child field, so there is no multiplicity to vary.
+      if (cf.type.kind === 'ref') {
+        const target = cf.type.target;
+        if (isQualifiedRef(cf.type)) continue;   // cross-context — the target sig is never declared here
+        fields.push(`  ${cf.name}: one ${target}`);
+      }
+      else if (cf.type.kind === 'enum') fields.push(`  ${cf.name}: one ${cf.type.enum}`);
       else if (cf.type.kind === 'prim' && isIntPrim(cf.type.prim)) fields.push(`  ${cf.name}: one Int`);
+      else if (cf.type.kind === 'value') fields.push(...valueSubRelations(m, cf, 'one'));
       // Text/Id dropped — atom identity suffices, same convention as emitOwnerSig
     }
     out.push(`sig ${child.name} {\n${fields.join(',\n')}\n}`);
@@ -100,17 +122,40 @@ const alloyPath = (v: string, p: Path) => [v, ...p].join('.');
 
 /**
  * Value-aware field path rendering (design §3.5): a path hopping through a value-typed field
- * flattens with `_` for that hop (matching emitOwnerSig's `<field>_<subfield>` sig relations) —
- * every other hop (ref hops, the leading var) still joins with `.`. Values are flat/keyless (v1:
- * one hop, no nesting — see resolveFieldPath's value-hop case in grammar.ts), so this only needs
- * to special-case a path whose FIRST segment names a value-typed field on `ownerName` — deeper
- * ref-hop paths (e.g. `plan.family`) never cross a value field in v1's closed grammar.
+ * flattens with `_` for that hop, matching the `<field>_<subfield>` sig relations valueSubRelations
+ * emits; every other hop (ref hops, the leading var) joins with `.`.
+ *
+ * Walks the path resolving each hop's kind rather than special-casing a value at segment 0. The old
+ * version checked only `p[0]`, so a value reached THROUGH a ref (`plan.period.start` — legal per
+ * resolveFieldPath, reachable on the alloy route via a `unique` by-path or an enum-eq
+ * statePredicate) rendered `a.plan.period.start`, a relation no sig declares.
  */
 function alloyFieldPath(m: DomainModel, ownerName: string, v: string, p: Path): string {
-  const owner = ownerByName(m, ownerName);
-  const head = owner?.fields.find(f => f.name === p[0]);
-  if (head?.type.kind === 'value' && p.length >= 2) return [v, `${p[0]}_${p[1]}`, ...p.slice(2)].join('.');
-  return alloyPath(v, p);
+  let def: AggregateDef | EntityDef | undefined = ownerByName(m, ownerName);
+  const segs: string[] = [v];
+  for (let i = 0; i < p.length; i++) {
+    const seg = p[i]!;
+    const f: Field | undefined = def?.fields.find(x => x.name === seg);
+    if (f?.type.kind === 'value') {
+      // Consume every remaining value hop into one underscore-joined relation name.
+      let vdef = m.values.find(x => x.name === (f.type as { kind: 'value'; value: string }).value);
+      let name = seg;
+      let j = i + 1;
+      for (; j < p.length; j++) {
+        const sub: Field | undefined = vdef?.fields.find(x => x.name === p[j]);
+        name = `${name}_${p[j]}`;
+        if (sub?.type.kind !== 'value') { j++; break; }
+        vdef = m.values.find(x => x.name === (sub.type as { kind: 'value'; value: string }).value);
+      }
+      segs.push(name);
+      def = undefined;
+      i = j - 1;
+      continue;
+    }
+    segs.push(seg);
+    def = f?.type.kind === 'ref' ? ownerByName(m, f.type.target) : undefined;
+  }
+  return segs.join('.');
 }
 
 /**
@@ -228,7 +273,9 @@ function candidateToPred(m: DomainModel, c: Candidate, name: string): string {
     // `x.total <op> (sum …)` as-is, no op flip needed.
     case 'sumOverCollection': {
       const ops = { eq: '=', le: '<=', ge: '>=' } as const;
-      return `pred ${name} { all x: ${c.aggregate} | ${alloyFieldPath(m, c.aggregate, 'x', c.total)} ${ops[c.op]} (sum l: { l: ${c.child} | l.owner = x } | l.${c.field}) }`;
+      // Underscore relation: alloy flattens a value into `<field>_<sub>` sig relations
+      // (valueSubRelations), so a value sub-field reads `l.amount_amount`.
+      return `pred ${name} { all x: ${c.aggregate} | ${alloyFieldPath(m, c.aggregate, 'x', c.total)} ${ops[c.op]} (sum l: { l: ${c.child} | l.owner = x } | ${alloyFieldPath(m, c.child, 'l', sumFieldPath(c))}) }`;
     }
     default: throw new Error(`${c.kind} routes to quint, not alloy`);
   }
@@ -265,9 +312,12 @@ function shapeToPred(m: DomainModel, facts: SalientFact[], subject: Candidate, n
     const mCount = f.dim.match(/^(\w+)\.count$/);
     if (mCount && subject.kind === 'sumOverCollection')
       { conj.push(`#{ l: ${subject.child} | l.owner = a } = ${f.value}`); continue; }
-    const mSum = f.dim.match(/^sum\((\w+)\.(\w+)\)$/);
+    // Dotted field half (slice B2), same as shapeToQuint's mSum: `sum(legs.amount.amount)`. Unlike
+    // quint, the dotted dim is NOT alloy's accessor — it must be walked back through
+    // alloyFieldPath against the child sig to reach the flattened `l.amount_amount` relation.
+    const mSum = f.dim.match(/^sum\((\w+)\.([\w.]+)\)$/);
     if (mSum && subject.kind === 'sumOverCollection')
-      { conj.push(`(sum l: { l: ${subject.child} | l.owner = a } | l.${mSum[2]}) = ${f.value}`); continue; }
+      { conj.push(`(sum l: { l: ${subject.child} | l.owner = a } | ${alloyFieldPath(m, subject.child, 'l', mSum[2]!.split('.'))}) = ${f.value}`); continue; }
     const mTot = f.dim.match(/^([\w.]+) value$/);
     if (mTot) { conj.push(`${alloyFieldPath(m, agg, 'a', mTot[1]!.split('.'))} = ${f.value}`); continue; }
     const mEq = f.dim.match(/^(.+) equal$/);
@@ -358,7 +408,7 @@ export function astToAlloy(m: DomainModel, q: AlloyQuery): string {
   const parts: string[] = [`module lattice_q`];
   for (const e of m.enums) parts.push(`abstract sig ${e.name} {}\n` + e.values.map(v => `one sig ${v} extends ${e.name} {}`).join('\n'));
   for (const e of m.entities) parts.push(emitOwnerSig(m, e));
-  for (const a of m.aggregates) { parts.push(emitStateSigs(a)); parts.push(emitOwnerSig(m, a)); parts.push(...emitChildSigs(a)); }
+  for (const a of m.aggregates) { parts.push(emitStateSigs(a)); parts.push(emitOwnerSig(m, a)); parts.push(...emitChildSigs(m, a)); }
   parts.push(candidateToPred(m, q.hi, 'Hi'));
   if (q.hj) parts.push(candidateToPred(m, q.hj, 'Hj'));
   q.exclusions.forEach((facts, i) => parts.push(shapeToPred(m, facts, q.hi, `shape${i}`)));

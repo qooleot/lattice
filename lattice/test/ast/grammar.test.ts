@@ -252,8 +252,46 @@ describe('resolveFieldPath — value hop', () => {
   it('rejects an unknown sub-field of a value type', () => {
     expect(resolveFieldPath(periodModel, 'Subscription', ['period', 'bogus'])).toBeNull();
   });
-  it('rejects a path with more than one hop past a value field (v1: flat values only)', () => {
+  it('rejects a hop past a value field\'s PRIM sub-field (start is a Date, not a value)', () => {
     expect(resolveFieldPath(periodModel, 'Subscription', ['period', 'start', 'extra'])).toBeNull();
+  });
+});
+
+// Values nest (slice B2), so a value hop is no longer capped at one sub-field. These drive
+// resolveFieldPath directly: the emitter tests reach astToAlloy/astToQuint without ever routing
+// through resolveFieldPath, so absent these the uncap has no guard at all (verified by reverting it
+// — the whole ast+emit suite still passed).
+describe('resolveFieldPath — nested value hops (slice B2)', () => {
+  const nestedModel: DomainModel = {
+    context: 'L', enums: [], events: [], services: [], entities: [],
+    values: [
+      { kind: 'value', name: 'Amount', fields: [
+        { name: 'amount', type: { kind: 'prim', prim: 'Money' } },
+        { name: 'currency', type: { kind: 'prim', prim: 'Text' } }] },
+      { kind: 'value', name: 'TaxedAmount', fields: [
+        { name: 'net', type: { kind: 'value', value: 'Amount' } },
+        { name: 'tax', type: { kind: 'value', value: 'Amount' } }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Bill', fields: [
+      { name: 'billId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'line', type: { kind: 'value', value: 'TaxedAmount' } }] }],
+  };
+
+  it('resolves a two-hop nested value path to the terminal prim', () => {
+    expect(resolveFieldPath(nestedModel, 'Bill', ['line', 'net', 'amount'])?.type)
+      .toEqual({ kind: 'prim', prim: 'Money' });
+    expect(resolveFieldPath(nestedModel, 'Bill', ['line', 'tax', 'currency'])?.type)
+      .toEqual({ kind: 'prim', prim: 'Text' });
+  });
+  it('resolves an intermediate nested value field as a terminal segment', () => {
+    expect(resolveFieldPath(nestedModel, 'Bill', ['line', 'net'])?.type)
+      .toEqual({ kind: 'value', value: 'Amount' });
+  });
+  it('rejects an unknown sub-field at the nested level', () => {
+    expect(resolveFieldPath(nestedModel, 'Bill', ['line', 'net', 'bogus'])).toBeNull();
+    expect(resolveFieldPath(nestedModel, 'Bill', ['line', 'bogus', 'amount'])).toBeNull();
+  });
+  it('rejects a hop past the nested value\'s terminal prim', () => {
+    expect(resolveFieldPath(nestedModel, 'Bill', ['line', 'net', 'amount', 'extra'])).toBeNull();
   });
   it('validateCandidate accepts a statePredicate comparing period.start vs period.end', () => {
     const c: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
@@ -272,5 +310,36 @@ describe('validateCandidate — cross-context ref exclusion (spec §4.2)', () =>
         left: { kind: 'field', owner: 'self', path: ['plan', 'licenseFee'] },
         right: { kind: 'int', value: 0 } } };
     expect(validateCandidate(c, m).some(d => d.code === 'cross-context-ref-unsupported')).toBe(true);
+  });
+});
+
+describe('a nested child is a nameable candidate subject (slice B2)', () => {
+  const m: DomainModel = {
+    context: 'L', enums: [], values: [], events: [], services: [],
+    entities: [{ kind: 'entity', name: 'Account', fields: [
+      { name: 'accId', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Txn', fields: [
+      { name: 'txnId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'legs', type: { kind: 'list', of: { kind: 'ref', target: 'Posting' } } }],
+      entities: [{ kind: 'entity', name: 'Posting', fields: [
+        { name: 'pid', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'account', type: { kind: 'ref', target: 'Account' } },
+        { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }] }],
+  };
+
+  it('accepts a candidate whose aggregate names a child', () => {
+    const c: Candidate = { kind: 'statePredicate', aggregate: 'Posting',
+      body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['amount'] },
+              right: { kind: 'int', value: 0 } } };
+    expect(validateCandidate(c, m)).toEqual([]);
+  });
+
+  it('resolves a path on a child', () => {
+    expect(resolveFieldPath(m, 'Posting', ['amount'])?.name).toBe('amount');
+  });
+
+  it('still reports unknown-aggregate for a name that is nothing', () => {
+    const c: Candidate = { kind: 'refsResolve', aggregate: 'Nope', fields: ['x'] };
+    expect(validateCandidate(c, m).map(d => d.code)).toContain('unknown-aggregate');
   });
 });

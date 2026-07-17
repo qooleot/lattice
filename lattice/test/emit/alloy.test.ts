@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { astToAlloy } from '../../src/emit/alloy.js';
 import type { Candidate } from '../../src/ast/invariant.js';
+import type { DomainModel } from '../../src/ast/domain.js';
 import { traceAModel, invoiceLinesModel, someStatePredicateOnInvoice, someCardinalityOnInvoice, sumCandidate, periodModel } from '../fixtures.js';
 
 const h1: Candidate = { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] };
@@ -177,5 +178,104 @@ describe('astToAlloy', () => {
     const paramLeak: Candidate = { kind: 'statePredicate', aggregate: 'Subscription',
       body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['customer'] }, right: { kind: 'param', name: 'delta' } } };
     expect(() => astToAlloy(traceAModel, { kind: 'probe-forbid', hi: paramLeak, exclusions: [], scope: 4 })).toThrow(/param terms/);
+  });
+});
+
+describe('child sigs carry refs and value fields (slice B2)', () => {
+  const m: DomainModel = {
+    context: 'L', enums: [{ name: 'Currency', values: ['usd', 'eur'] }],
+    values: [{ kind: 'value', name: 'Amount', fields: [
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' } },
+      { name: 'currency', type: { kind: 'enum', enum: 'Currency' } }] }],
+    entities: [{ kind: 'entity', name: 'Account', fields: [
+      { name: 'accId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'code', type: { kind: 'prim', prim: 'Int' } }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Txn', fields: [
+      { name: 'txnId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'legs', type: { kind: 'list', of: { kind: 'ref', target: 'Posting' } } }],
+      entities: [{ kind: 'entity', name: 'Posting', fields: [
+        { name: 'pid', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'account', type: { kind: 'ref', target: 'Account' } },
+        { name: 'amount', type: { kind: 'value', value: 'Amount' } }] }] }],
+    events: [], services: [],
+  };
+  const src = astToAlloy(m, { kind: 'probe-permit', exclusions: [], scope: 4,
+    hi: { kind: 'refsResolve', aggregate: 'Posting', fields: ['account'] } });
+
+  it('emits a child ref as `one <Target>`', () => {
+    expect(src).toMatch(/sig Posting \{[^}]*account: one Account/s);
+  });
+  it('flattens a child value field to underscore-joined relations', () => {
+    expect(src).toMatch(/sig Posting \{[^}]*amount_amount: one Int/s);
+    expect(src).toMatch(/sig Posting \{[^}]*amount_currency: one Currency/s);
+  });
+  it('keeps the by-construction owner relation', () => {
+    expect(src).toMatch(/sig Posting \{\s*owner: one Txn/s);
+  });
+  it('declares a sig for the ref target', () => {
+    expect(src).toMatch(/sig Account \{/);
+  });
+});
+
+describe('nested value flattening and path rendering (slice B2)', () => {
+  const m: DomainModel = {
+    context: 'L', enums: [], events: [], services: [], entities: [],
+    values: [
+      { kind: 'value', name: 'Amount', fields: [{ name: 'amount', type: { kind: 'prim', prim: 'Money' } }] },
+      { kind: 'value', name: 'TaxedAmount', fields: [
+        { name: 'net', type: { kind: 'value', value: 'Amount' } }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Bill', fields: [
+      { name: 'billId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'line', type: { kind: 'value', value: 'TaxedAmount' } }] }],
+  };
+
+  it('flattens a nested value recursively', () => {
+    const src = astToAlloy(m, { kind: 'probe-permit', exclusions: [], scope: 4,
+      hi: { kind: 'statePredicate', aggregate: 'Bill',
+        body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['line', 'net', 'amount'] },
+                right: { kind: 'int', value: 0 } } } });
+    expect(src).toMatch(/sig Bill \{[^}]*line_net_amount: one Int/s);
+  });
+
+  it('renders a deep value path as the flattened relation, not a dotted join', () => {
+    const src = astToAlloy(m, { kind: 'probe-permit', exclusions: [], scope: 4,
+      hi: { kind: 'statePredicate', aggregate: 'Bill',
+        body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['line', 'net', 'amount'] },
+                right: { kind: 'int', value: 0 } } } });
+    expect(src).toContain('.line_net_amount');
+    expect(src).not.toContain('.line.net.amount');
+  });
+});
+
+// The latent bug the alloyFieldPath rewrite fixes, guarded directly. The old renderer special-cased
+// a value at segment 0 ONLY, so a value reached THROUGH a ref hop rendered `x.plan.period.start` —
+// a relation no sig declares (Plan's sig declares the FLATTENED `period_start`). resolveFieldPath
+// accepts this path, and it is reachable on the alloy route via a `unique` by-path or an enum-eq
+// statePredicate, so the emitter could hand Alloy an undeclared relation. Independent of value
+// NESTING: this model's Period is a plain one-level value.
+describe('alloyFieldPath: a value reached through a ref hop (latent bug)', () => {
+  const m: DomainModel = {
+    context: 'L', enums: [], events: [], services: [],
+    values: [{ kind: 'value', name: 'Period', fields: [
+      { name: 'start', type: { kind: 'prim', prim: 'Date' } },
+      { name: 'end', type: { kind: 'prim', prim: 'Date' } }] }],
+    entities: [{ kind: 'entity', name: 'Plan', fields: [
+      { name: 'planId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'period', type: { kind: 'value', value: 'Period' } }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Sub', fields: [
+      { name: 'subId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'plan', type: { kind: 'ref', target: 'Plan' } }] }],
+  };
+  const src = astToAlloy(m, { kind: 'probe-permit', exclusions: [], scope: 4,
+    hi: { kind: 'statePredicate', aggregate: 'Sub',
+      body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['plan', 'period', 'start'] },
+              right: { kind: 'int', value: 0 } } } });
+
+  it('renders the ref hop with `.` and the value hop with `_`', () => {
+    expect(src).toContain('x.plan.period_start');
+    expect(src).not.toContain('x.plan.period.start');
+  });
+  it('emits the relation it renders — Plan declares period_start', () => {
+    expect(src).toMatch(/sig Plan \{[^}]*period_start: one Int/s);
   });
 });

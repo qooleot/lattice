@@ -23,14 +23,14 @@ import { runQuint, runQuintVerify } from './solvers/quint-adapter.js';
 import { astToProse, renderCandidateEnglish } from './emit/prose.js';
 import { astToCode } from './emit/code.js';
 import { specDiagramFiles } from './emit/mermaid/docs.js';
-import { impliedInvariants, canonicalCandidate } from './engine/implied.js';
+import { impliedInvariants, canonicalCandidate, derivedNameCollisions } from './engine/implied.js';
 import { loadLatText } from './parse/fromLangium.js';
 import { reconcile } from './engine/reconcile.js';
 import type { RenameSpec, RenameScope } from './engine/renames.js';
 import { renameEntries, currentInvariantName } from './engine/renames.js';
 import { compileWorkspace } from './engine/workspace.js';
 import { remapValueKeys } from './engine/witness.js';
-import { loadGenInput, loadGenInputFromLat, LatParseFailure } from './generate/load.js';
+import { loadGenInput, loadGenInputFromLat, LatParseFailure, LatModelInvalid } from './generate/load.js';
 import { generateService } from './generate/generate.js';
 
 // Both solver adapters hand back CaseStates with underscore-flattened value-field keys (design
@@ -408,6 +408,9 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         return { written };
       } catch (err) {
         if (err instanceof LatParseFailure) return { error: 'parse-failed', diagnostics: err.diagnostics };
+        // Same code init and apply return for a derived-name collision: one condition, one code,
+        // whichever door it comes through.
+        if (err instanceof LatModelInvalid) return { error: 'ill-formed-model', diagnostics: err.diagnostics };
         throw err;
       }
     }
@@ -464,7 +467,19 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // undecidedMoneySigns is init-only on purpose: loadLatText keeps the language's
         // Money ⇒ non-negative default (see validate.ts). Adding it to validateModel would
         // reject every hand-written .lat and doc example.
-        const diags = [...validateModel(m as DomainModel), ...undecidedMoneySigns(m as DomainModel)];
+        //
+        // derivedNameCollisions is here for a different reason: it is a claim about the names
+        // impliedInvariants DERIVES, not about the model's own well-formedness, so validateModel is
+        // the wrong home for it. This is the --model JSON door; `apply` calls it again on the .lat
+        // door (see the apply case). Both doors need it — an earlier revision of this comment
+        // claimed init was the SOLE gate because matchTemplates has one caller, which was true but
+        // about the wrong function: impliedInvariants is what mints the names, and reconcile.ts's
+        // canonicalSet and the §5.8 fresh-session branch both call it without ever passing init.
+        // It is the derived-side twin of `propose`'s `name-collision` guard below: both refuse to
+        // guess which of two rules a shared name means. Refusing here, before the adopt loop, is
+        // what keeps a shadowed rule out of s.candidates and out of the ledger.
+        const diags = [...validateModel(m as DomainModel), ...undecidedMoneySigns(m as DomainModel),
+                       ...derivedNameCollisions(m as DomainModel)];
         if (diags.length) return { error: 'ill-formed-model', diagnostics: diags };
         s.model = m as DomainModel;
         const { adopt, seeds } = matchTemplates(m as DomainModel);
@@ -637,6 +652,21 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         catch (err) { return { error: 'unreadable-lat', message: String(err) }; }
         const loaded = loadLatText(text);
         if (!loaded.ok) return { error: 'parse-failed', diagnostics: loaded.diagnostics };
+
+        // The derived-name gate for the .lat side. It sits HERE — after the parse, before the
+        // fresh-session/reconcile split below — because that is the single point every path that
+        // turns this file into a session passes through. Both branches derive names from
+        // `loaded.model`: the fresh-session branch (§5.8) adopts it with no init at all, and the
+        // reconcile branch feeds it to canonicalSet → impliedInvariants. loadLatText's own
+        // validateModel does not include this check (it is a claim about DERIVED names, not the
+        // model's well-formedness), so without this line an edit that introduces a collision applies
+        // clean and silently shadows one of the two rules. `init` gates the --model JSON side.
+        //
+        // Reported as 'ill-formed-model', matching init, rather than folding into apply's
+        // 'parse-failed': one condition should carry one code whichever door it comes through, and a
+        // Diagnostic (code/at/message) is not a ParseDiagnostic — there is no line/col to give.
+        const derivedDiags = derivedNameCollisions(loaded.model);
+        if (derivedDiags.length) return { error: 'ill-formed-model', diagnostics: derivedDiags };
 
         const sessionExists = existsSync(join(dir, 'state.json'));
         if (sessionExists && isSessionBusy(s) && s.model)

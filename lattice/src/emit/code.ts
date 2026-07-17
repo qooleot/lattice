@@ -1,5 +1,6 @@
 import type { DomainModel, Field, Machine } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term } from '../ast/invariant.js';
+import { sumFieldPath } from '../ast/invariant.js';
 import { isImplied } from '../engine/implied.js';
 import type { ContextMapModel } from '../ast/contextmap.js';
 import { defaultPath } from '../ast/contextmap.js';
@@ -54,7 +55,10 @@ export function candidateBodyText(c: Candidate): string {
     case 'leadsTo': return `from ${predToText(c.from)} leads to ${predToText(c.to)} under fairness "${c.fairness}"`;
     case 'sumOverCollection': {
       const ops = { eq: '==', le: '<=', ge: '>=' } as const;
-      return `${c.total.join('.')} ${ops[c.op]} sum(${c.collection}, ${c.field})`;
+      // Dot-joined via sumFieldPath, never `${c.field}`: a Path interpolates comma-joined, so the
+      // bare template would silently emit `sum(legs, amount,amount)`. The .langium surface is
+      // `field=PathExpr`, so this dotted form re-parses — see fromLangium's SumBody.
+      return `${c.total.join('.')} ${ops[c.op]} sum(${c.collection}, ${sumFieldPath(c).join('.')})`;
     }
     case 'guard': throw new Error('candidateBodyText: a guard is a transition enablement, not an always-property — it has no invariant-source rendering (guards are never authored)');
   }

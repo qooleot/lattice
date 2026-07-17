@@ -1,4 +1,5 @@
 import type { Candidate, Cmp, Path, Predicate, Term } from '../ast/invariant.js';
+import { sumFieldPath } from '../ast/invariant.js';
 import { resolveValue, type CaseState } from './evaluate.js';
 import type { SalientFact } from './session.js';
 export type { SalientFact } from './session.js';
@@ -141,7 +142,7 @@ export function extractSalient(cands: Candidate[], s: CaseState): SalientFact[] 
       const subjects = s.entities.filter(e => e.type === c.aggregate);
       const per = subjects.map(e => {
         const kids = s.entities.filter(x => x.type === c.child && x.fields['owner'] === e.id);
-        const vals = kids.map(k => k.fields[c.field]);
+        const vals = kids.map(k => resolveValue(s, k, sumFieldPath(c)));
         const total = resolveValue(s, e, c.total);
         return { n: kids.length,
           sum: vals.every(v => typeof v === 'number') ? (vals as number[]).reduce((a, b) => a + b, 0) : undefined,
@@ -157,7 +158,11 @@ export function extractSalient(cands: Candidate[], s: CaseState): SalientFact[] 
       };
       const n = agree(per.map(p => p.n)), sum = agree(per.map(p => p.sum)), total = agree(per.map(p => p.total));
       if (n !== undefined) facts.set(`${c.collection}.count`, { dim: `${c.collection}.count`, value: n });
-      if (sum !== undefined) facts.set(`sum(${c.collection}.${c.field})`, { dim: `sum(${c.collection}.${c.field})`, value: sum });
+      // Dot-join the field PATH (slice B2): a bare `${c.field}` would render an array as the
+      // comma-joined `sum(legs.amount,amount)`, which neither shape emitter's mSum regex matches —
+      // the exclusion would be dropped and the loop would re-show the same witness.
+      const fdim = `sum(${c.collection}.${sumFieldPath(c).join('.')})`;
+      if (sum !== undefined) facts.set(fdim, { dim: fdim, value: sum });
       if (total !== undefined) facts.set(`${c.total.join('.')} value`, { dim: `${c.total.join('.')} value`, value: total });
     }
   }

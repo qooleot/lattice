@@ -8,7 +8,8 @@ import { loadLatText, loadContextMapText } from '../../src/parse/fromLangium.js'
 import { isImplied } from '../../src/engine/implied.js';
 import { PRIM_NAMES } from '../../src/ast/reserved.js';
 import type { DomainModel, TypeRef } from '../../src/ast/domain.js';
-import type { CandidateInvariant } from '../../src/ast/invariant.js';
+import type { Candidate, CandidateInvariant } from '../../src/ast/invariant.js';
+import { sumFieldPath } from '../../src/ast/invariant.js';
 
 const FIXTURES = join(import.meta.dirname, '../../fixtures/domains');
 const SESSION = join(import.meta.dirname, '../../../.lattice-session-subscriptions');
@@ -72,6 +73,84 @@ describe('round-trip: parse ∘ print = id (spec §7.1)', () => {
   it('holds on generated specs (property)', () => {
     fc.assert(fc.property(arbSpec, ({ model, invariants }) => { roundTrip(model, invariants); }),
       { numRuns: 200 });
+  });
+
+  // The slice's own motivating candidate: a ledger's defining law summing a value-typed money
+  // field. `Posting.amount : Amount` means the summed field is the two-segment `amount.amount`,
+  // which the printer emits dotted. The surface rule was `field=ID` — a single name — so this
+  // printed but did NOT re-parse, and an adopted ledger invariant could not round-trip through
+  // `.lat` at all. Text-first (not model-first like the property above): the gap was in the
+  // concrete syntax, so the test has to start from source to exercise it.
+  it('holds on a dotted sum field over a value-typed child money field', () => {
+    const text = `context Ledgers {
+
+  value Amount {
+    amount : Money
+  }
+
+  aggregate Txn {
+    txnId     : Id key
+    netAmount : Amount
+    postings  : List<Posting>
+
+    entity Posting {
+      postingId : Id key
+      amount    : Amount
+    }
+
+    /// the ledger's defining law
+    invariant balanced { netAmount.amount == sum(postings, amount.amount) }
+  }
+}
+`;
+    const r = loadLatText(text);
+    expect(r.ok, `parse failed:\n${JSON.stringify(!r.ok && r.diagnostics, null, 2)}`).toBe(true);
+    if (!r.ok) return;
+    // the dotted field survives the parse as a real two-segment Path, not a bare ID
+    const c = r.invariants.find(i => i.name === 'balanced')!.candidate as Candidate & { kind: 'sumOverCollection' };
+    expect(c.kind).toBe('sumOverCollection');
+    expect(sumFieldPath(c)).toEqual(['amount', 'amount']);
+    expect(c.total).toEqual(['netAmount', 'amount']);
+    expect(c.child).toBe('Posting');
+    // print ∘ parse = id, and one more round is a fixed point
+    const printed = astToCode(r.model, r.invariants);
+    expect(printed).toContain('sum(postings, amount.amount)');
+    const again = loadLatText(printed);
+    expect(again.ok, `re-parse failed:\n${printed}\n${JSON.stringify(!again.ok && again.diagnostics, null, 2)}`).toBe(true);
+    if (!again.ok) return;
+    expect(again.model).toEqual(r.model);
+    expect(again.invariants).toEqual(r.invariants);
+    expect(astToCode(again.model, again.invariants)).toBe(printed);
+  });
+
+  // A SINGLE-segment sum field must re-parse as the legacy bare `string`, not `['amount']`. Both
+  // forms print identically, so the parser has to pick one, and `canonicalCandidate` (a raw
+  // key-sorted JSON.stringify) does not normalize `field` — re-parsing a stored `field: 'amount'`
+  // as a Path would change its canonical form and break candidate identity in reconcile.
+  it('maps a single-segment sum field back to the legacy string form', () => {
+    const text = `context Ledgers {
+
+  aggregate Txn {
+    txnId    : Id key
+    net      : Money
+    postings : List<Posting>
+
+    entity Posting {
+      postingId : Id key
+      amount    : Money
+    }
+
+    invariant balanced { net == sum(postings, amount) }
+  }
+}
+`;
+    const r = loadLatText(text);
+    expect(r.ok, `parse failed:\n${JSON.stringify(!r.ok && r.diagnostics, null, 2)}`).toBe(true);
+    if (!r.ok) return;
+    const c = r.invariants.find(i => i.name === 'balanced')!.candidate as Candidate & { kind: 'sumOverCollection' };
+    expect(c.field).toBe('amount');           // the string, NOT ['amount']
+    expect(sumFieldPath(c)).toEqual(['amount']);
+    expect(astToCode(r.model, r.invariants)).toContain('sum(postings, amount)');
   });
 
   it('holds on all fixture domains', () => {

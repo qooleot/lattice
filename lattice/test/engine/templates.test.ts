@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { matchTemplates } from '../../src/engine/templates.js';
+import { matchTemplates, numericTagPath } from '../../src/engine/templates.js';
 import { impliedInvariants, isImplied } from '../../src/engine/implied.js';
-import type { DomainModel } from '../../src/ast/domain.js';
+import type { DomainModel, ValueDef } from '../../src/ast/domain.js';
 import { periodModel } from '../fixtures.js';
 import { astToCode } from '../../src/emit/code.js';
 import { loadLatText } from '../../src/parse/fromLangium.js';
@@ -258,5 +258,82 @@ describe('matchTemplates — invariant names follow the camelCase convention (sp
     };
     const names = matchTemplates(m).seeds.map(s => s.name);
     expect(new Set(names).size).toBe(names.length);
+  });
+});
+
+describe('conservation sees through a value (slice B2)', () => {
+  const amount: ValueDef = { kind: 'value', name: 'Amount', fields: [
+    { name: 'amount', type: { kind: 'prim', prim: 'Money' } },
+    { name: 'currency', type: { kind: 'prim', prim: 'Text' } }] };
+  const m: DomainModel = {
+    context: 'L', enums: [], values: [amount], entities: [], events: [], services: [],
+    aggregates: [{ kind: 'aggregate', name: 'Bill', fields: [
+      { name: 'billId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'paid', type: { kind: 'value', value: 'Amount' }, tags: ['balance', 'unsigned'] },
+      { name: 'due', type: { kind: 'value', value: 'Amount' }, tags: ['balance', 'unsigned'] },
+      { name: 'total', type: { kind: 'value', value: 'Amount' }, tags: ['total', 'unsigned'] }] }],
+  };
+
+  it('emits two-segment paths through the value', () => {
+    const c = matchTemplates(m).adopt.find(i => i.candidate.kind === 'conservation')!.candidate;
+    expect(c).toEqual({ kind: 'conservation', aggregate: 'Bill',
+      parts: [['paid', 'amount'], ['due', 'amount']], total: ['total', 'amount'] });
+  });
+
+  it('still emits single-segment paths for plain Money', () => {
+    const flat: DomainModel = { ...m, values: [],
+      aggregates: [{ kind: 'aggregate', name: 'Bill', fields: [
+        { name: 'billId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'paid', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+        { name: 'due', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+        { name: 'total', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] }] }] };
+    const c = matchTemplates(flat).adopt.find(i => i.candidate.kind === 'conservation')!.candidate;
+    expect(c).toEqual({ kind: 'conservation', aggregate: 'Bill',
+      parts: [['paid'], ['due']], total: ['total'] });
+  });
+});
+
+describe('numericTagPath recurses through two value hops (slice B2 recursion decision)', () => {
+  // total : Outer, Outer { inner : Amount }, Amount { amount : Money } — mirrors domain.ts's
+  // moneyFieldPaths doc example. Non-recursive would stop after one hop and return null here,
+  // silently dropping conservation on a field two value-levels deep even though quint's
+  // pathToQuint already renders arbitrarily deep value paths (x.total.inner.amount).
+  const amount: ValueDef = { kind: 'value', name: 'Amount', fields: [
+    { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] };
+  const outer: ValueDef = { kind: 'value', name: 'Outer', fields: [
+    { name: 'inner', type: { kind: 'value', value: 'Amount' } }] };
+  const m: DomainModel = {
+    context: 'L', enums: [], values: [amount, outer], entities: [], events: [], services: [],
+    aggregates: [{ kind: 'aggregate', name: 'Bill', fields: [
+      { name: 'billId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'total', type: { kind: 'value', value: 'Outer' }, tags: ['total'] }] }],
+  };
+
+  it('resolves a two-hop value path to its single numeric leaf', () => {
+    const f = m.aggregates[0]!.fields.find(x => x.name === 'total')!;
+    expect(numericTagPath(m, f)).toEqual(['total', 'inner', 'amount']);
+  });
+});
+
+describe('conservation on a child subject (owners widened, slice B2)', () => {
+  // A child-subject conservation now has a real Quint encoding (Task 6's candidateToQuint
+  // childContext/overChildren branch), so tagging a nested-entity's fields is no longer silently
+  // unmatched by templates.ts's owner list the way it would have been before that encoding existed.
+  const m: DomainModel = {
+    context: 'L', enums: [], values: [], entities: [], events: [], services: [],
+    aggregates: [{ kind: 'aggregate', name: 'Txn', fields: [
+      { name: 'txnId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'legs', type: { kind: 'list', of: { kind: 'ref', target: 'Posting' } } }],
+      entities: [{ kind: 'entity', name: 'Posting', fields: [
+        { name: 'pid', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'paid', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+        { name: 'due', type: { kind: 'prim', prim: 'Money' }, tags: ['balance'] },
+        { name: 'total', type: { kind: 'prim', prim: 'Money' }, tags: ['total'] }] }] }],
+  };
+
+  it('matches conservation on the nested child entity, not just top-level owners', () => {
+    const c = matchTemplates(m).adopt.find(i => i.candidate.kind === 'conservation')!.candidate;
+    expect(c).toEqual({ kind: 'conservation', aggregate: 'Posting',
+      parts: [['paid'], ['due']], total: ['total'] });
   });
 });

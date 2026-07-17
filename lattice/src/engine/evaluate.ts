@@ -1,4 +1,5 @@
 import type { Candidate, Path, Predicate, Term } from '../ast/invariant.js';
+import { sumFieldPath } from '../ast/invariant.js';
 
 export interface CaseEntity { type: string; id: string; fields: Record<string, string | number | boolean> }
 export interface CaseState { now?: number; entities: CaseEntity[]; trace?: CaseEntity[][] }
@@ -146,7 +147,9 @@ export function evaluateCandidate(c: Candidate, s: CaseState): Verdict {
     case 'sumOverCollection': {
       for (const e of subjects()) {
         const kids = s.entities.filter(x => x.type === c.child && x.fields['owner'] === e.id);
-        const vals = kids.map(k => k.fields[c.field]);
+        // resolveValue, not a raw key read: a value sub-field arrives as the dotted `amount.amount`
+        // (witness.ts's remapValueKeys, which covers children as of slice B2).
+        const vals = kids.map(k => resolveValue(s, k, sumFieldPath(c)));
         const total = resolveValue(s, e, c.total);
         if (vals.some(v => typeof v !== 'number') || typeof total !== 'number') continue;  // unknown facts don't convict
         const sum = (vals as number[]).reduce((a, b) => a + b, 0);

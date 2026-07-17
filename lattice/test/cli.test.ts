@@ -499,4 +499,106 @@ describe('engine CLI', () => {
     const spec = inferRenameSpec('InvoiceLine.amount', 'net', invoiceLinesModel, new Set());
     expect(spec).toEqual({ scope: 'field', path: 'InvoiceLine.amount', from: 'amount', to: 'net' });
   });
+
+  // Review finding: derived non-negativity names join owner+path segments with no separator, so
+  // `totalAmount : Money` and `total : Amount{amount : Money}` both mint
+  // `nonNegativeInvoiceTotalAmount`. init is the only caller of matchTemplates, hence the one gate
+  // where derived names enter a session — it must refuse rather than silently shadow one rule.
+  const collidingModel = {
+    context: 'L', enums: [], events: [], services: [], entities: [],
+    values: [{ kind: 'value', name: 'Amount', fields: [
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Invoice', fields: [
+      { name: 'invId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'totalAmount', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] },
+      { name: 'total', type: { kind: 'value', value: 'Amount' }, tags: ['unsigned'] }] }],
+  };
+
+  it('init REFUSES a model whose derived names collide, naming both paths and the owner', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-collide-'));
+    const f = join(dir, 'm.json');
+    writeFileSync(f, JSON.stringify(collidingModel));
+
+    const init: any = await runCommand(['init', '--session', dir, '--model', f], fakeDeps);
+    expect(init.error).toBe('ill-formed-model');
+    const d = init.diagnostics.find((x: any) => x.code === 'derived-name-collision');
+    expect(d).toBeDefined();
+    expect(d.at).toBe('Invoice');
+    expect(d.message).toContain('nonNegativeInvoiceTotalAmount');
+    expect(d.message).toContain('Invoice.totalAmount');
+    expect(d.message).toContain('Invoice.total.amount');
+    // Refused BEFORE the adopt loop: nothing shadowed into the session, nothing ledgered.
+    expect(init.adopted).toBeUndefined();
+    expect(existsSync(join(dir, 'ledger.jsonl'))).toBe(false);
+  });
+
+  it('init ACCEPTS the same model once the colliding field is renamed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-collide-ok-'));
+    const f = join(dir, 'm.json');
+    const fixed = JSON.parse(JSON.stringify(collidingModel));
+    fixed.aggregates[0].fields[1].name = 'surcharge';       // was totalAmount
+    writeFileSync(f, JSON.stringify(fixed));
+
+    const init: any = await runCommand(['init', '--session', dir, '--model', f], fakeDeps);
+    expect(init.error).toBeUndefined();
+    const names = init.adopted.map((a: any) => a.name);
+    expect(names).toContain('nonNegativeInvoiceSurcharge');
+    expect(names).toContain('nonNegativeInvoiceTotalAmount');   // readable name survives untouched
+  });
+
+  // Carried finding #1: the gate covered init and apply but not `generate --spec`, which reaches
+  // impliedInvariants through plan.ts's canonicalSet. It is the door that most needed it — init and
+  // apply produce a session and prose, `generate` writes runtime CHECK CODE, so a silently shadowed
+  // rule ships as one check where two were meant.
+  // Collides via `terminal${owner}${region}${state}`, not the value-typed `nonNegative...` pair the
+  // other tests here use: `access`+`closedOut` and `accessClosed`+`out` both mint
+  // terminalSubAccessClosedOut. Deliberate — generate's TS renderer throws on ANY value-typed field
+  // (render/types.ts's tsType), so a value-based collision could never reach the emitter and the
+  // control below could not prove the spec is otherwise generable. This one generates a full
+  // artifact set with the gate removed, which is exactly the hole being closed.
+  const COLLIDING_LAT = `context L {
+  aggregate Sub {
+    subId : Id key
+    lifecycle access {
+      states { open @initial, closedOut @terminal }
+      transition shut { from open to closedOut }
+    }
+    lifecycle accessClosed {
+      states { entered @initial, out @terminal }
+      transition leave { from entered to out }
+    }
+  }
+}
+`;
+
+  it('generate --spec REFUSES a colliding spec, and writes nothing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-collide-gen-'));
+    const spec = join(dir, 'spec.lat'), out = join(dir, 'out');
+    writeFileSync(spec, COLLIDING_LAT);
+
+    const r: any = await runCommand(['generate', '--spec', spec, '--out', out], fakeDeps);
+    expect(r.error).toBe('ill-formed-model');   // same code init/apply give — not 'parse-failed'
+    const d = r.diagnostics.find((x: any) => x.code === 'derived-name-collision');
+    expect(d).toBeDefined();
+    expect(d.at).toBe('Sub');
+    expect(d.message).toContain('terminalSubAccessClosedOut');
+    expect(d.message).toContain('Sub.access.closedOut');
+    expect(d.message).toContain('Sub.accessClosed.out');
+    // The point of the gate: refused BEFORE any artifact is emitted. Without it this spec writes a
+    // complete service (types.ts, schema.sql, invariant checks) carrying one check for two rules.
+    expect(r.written).toBeUndefined();
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('generate --spec ACCEPTS the same spec once the collision is gone', async () => {
+    // Pins the refusal to the COLLISION and nothing else about this spec: rename the second
+    // region's terminal state so the two names differ, and the identical call generates.
+    const dir = mkdtempSync(join(tmpdir(), 'cli-collide-gen-ok-'));
+    const spec = join(dir, 'spec.lat'), out = join(dir, 'out');
+    writeFileSync(spec, COLLIDING_LAT.replace(/\bout\b/g, 'departed'));
+
+    const r: any = await runCommand(['generate', '--spec', spec, '--out', out], fakeDeps);
+    expect(r.error).toBeUndefined();
+    expect(r.written.length).toBeGreaterThan(0);
+  });
 });

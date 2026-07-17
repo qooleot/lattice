@@ -1,12 +1,36 @@
-import type { AggregateDef, DomainModel, EntityDef } from '../ast/domain.js';
-import { isQualifiedRef } from '../ast/domain.js';
-import type { Candidate, CandidateInvariant } from '../ast/invariant.js';
+import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
+import { isQualifiedRef, numericFieldPaths } from '../ast/domain.js';
+import type { Candidate, CandidateInvariant, Path } from '../ast/invariant.js';
 import { impliedInvariants } from './implied.js';
 import { toCamelName } from '../ast/naming.js';
 
-const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
+// Children included (slice B2): a child-subject conservation now has a real Quint encoding
+// (candidateToQuint's childContext/overChildren), so a @balance/@total tag on a nested entity's
+// fields is no longer silently unmatched here the way it would have been before Task 6.
+const owners = (m: DomainModel): (AggregateDef | EntityDef)[] =>
+  [...m.aggregates, ...m.entities, ...m.aggregates.flatMap(a => a.entities ?? [])];
 const mk = (id: string, name: string, candidate: Candidate, prior = 0.9): CandidateInvariant =>
   ({ id, name, prior, source: 'template', candidate });
+
+/**
+ * The numeric path a `@balance`/`@total` tag on `f` names (slice B2): `[f.name]` for a numeric prim,
+ * or `[f.name, ...sub]` for the single solver-numeric sub-field a value-typed field resolves to
+ * (recursing through however many value hops it takes, exactly as domain.ts's `moneyFieldPaths`
+ * does for "what carries money") — so `total : Amount` conserves as `total.amount` wherever
+ * `total : Money` conserves as `total`, and `total : Outer` with `Outer { inner : Amount }` conserves
+ * as `total.inner.amount` two hops down. Non-recursive would silently miss that last case even
+ * though quint's pathToQuint already renders arbitrarily deep value paths — exactly the kind of
+ * silent miss this slice exists to remove, so this recurses too.
+ *
+ * Null when the tag names nothing summable (no numeric sub-field) or is ambiguous (two or more
+ * across the whole recursive descent). validateModel's `ambiguous-numeric-tag` reports that case at
+ * load; this returns null so the template stays silent rather than guessing which sub-field was
+ * meant.
+ */
+export function numericTagPath(m: DomainModel, f: Field): Path | null {
+  const paths = numericFieldPaths(m, f);
+  return paths.length === 1 ? paths[0]! : null;
+}
 
 export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; seeds: CandidateInvariant[] } {
   // The structure-implied families (non-negativity, refs-resolve, terminal, value laws) are NOT
@@ -22,12 +46,15 @@ export function matchTemplates(m: DomainModel): { adopt: CandidateInvariant[]; s
     const refs = o.fields.filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type));
     const machine = (o as AggregateDef).machine;
 
-    // #1 conservation: >=2 @balance + a @total
-    const balances = o.fields.filter(f => f.tags?.includes('balance'));
-    const total = o.fields.find(f => f.tags?.includes('total'));
+    // #1 conservation: >=2 @balance + a @total. Paths resolve THROUGH a value type (slice B2) —
+    // before this, tagging a value-typed money field silently stopped conservation firing.
+    const balances = o.fields.filter(f => f.tags?.includes('balance'))
+      .map(f => numericTagPath(m, f)).filter((p): p is Path => p !== null);
+    const totalField = o.fields.find(f => f.tags?.includes('total'));
+    const total = totalField ? numericTagPath(m, totalField) : null;
     if (balances.length >= 2 && total)
       adopt.push(mk(`tpl-1-${o.name}`, `Conservation_${o.name}`,
-        { kind: 'conservation', aggregate: o.name, parts: balances.map(b => [b.name]), total: [total.name] }));
+        { kind: 'conservation', aggregate: o.name, parts: balances, total }));
 
     // #8 monotonic from @monotonic tag
     for (const f of o.fields.filter(f => f.tags?.includes('monotonic')))

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { runQuint, parseITF, runQuintVerify } from '../../src/solvers/quint-adapter.js';
 import type { QuintEmission } from '../../src/emit/quint.js';
+import { childVarKey } from '../../src/engine/owned.js';
 
 const em: QuintEmission = { source: 'module m {}', invariantName: 'q_inv', varTypes: {} };
 
@@ -154,6 +155,92 @@ describe('quint adapter flattens nested value-record fields to underscore keys',
     const state = parseITF(itf, varTypes);
     const sub = state.entities.find(e => e.type === 'Subscription')!;
     expect(sub.fields).toEqual({ period_start: 3, period_end: 9 });
+  });
+
+  // Slice B2 legalised value-in-value, so quint's fieldQType nests records to arbitrary depth —
+  // but this flatten step stopped after ONE level, leaving `total_inner` bound to the raw,
+  // un-deBig'd ITF sub-record. Downstream that means no `total_inner_amount` key for the judge to
+  // read (it PERMITS what Apalache FORBADE) and `total.inner: [object Object]` for the human.
+  it('flattens a TWO-level nested record to leaf keys, every leaf de-big\'d', () => {
+    const varTypes = { bills: 'Bill' };
+    const itf = {
+      states: [{
+        bills: { '#map': [['b1', { exists: true,
+          total: { inner: { amount: { '#bigint': '-5' }, currency: 'usd' } } }]] },
+      }],
+    };
+    const bill = parseITF(itf, varTypes).entities.find(e => e.type === 'Bill')!;
+    expect(bill.fields).toEqual({ total_inner_amount: -5, total_inner_currency: 'usd' });
+    // Stated separately from the toEqual above: this is the property that matters (no raw ITF
+    // object survives anywhere), and it holds at any depth, not just for these two keys.
+    expect(Object.values(bill.fields).every(v => typeof v !== 'object')).toBe(true);
+  });
+
+  it('flattens a value record on an owned-collection CHILD too', () => {
+    const varTypes = { txns: 'Txn', [childVarKey('txns', 'legs')]: 'Posting' };
+    const itf = {
+      states: [{
+        txns: { '#map': [['t1', { exists: true, legsCount: { '#bigint': '1' },
+          legs: { '#map': [[{ '#bigint': '0' },
+            { amount: { inner: { amount: { '#bigint': '-7' } } } }]] } }]] },
+      }],
+    };
+    const posting = parseITF(itf, varTypes).entities.find(e => e.type === 'Posting')!;
+    expect(posting.fields).toEqual({ owner: 't1', amount_inner_amount: -7 });
+  });
+});
+
+// The other half of isValueRecord's contract, and the level the unit tests missed: what must NOT
+// flatten. Every test above feeds the walker a record that IS a value, so all of them stay green
+// under a predicate that answers "yes" too often — and the only coverage of the value-FREE case
+// was cli-strengthen.integration.test.ts, a ~5.5-minute real-Apalache test whose model
+// (test/fixtures.ts's subscriptionsModel) declares `values: []`. These states are transcribed from
+// that test's actual ITF, captured by instrumenting stateToEntities.
+//
+// The shape matters because fieldQType renders EVERY field of such a model as a scalar: refs and
+// enums to `str`, Int/Money to `int`, Id/Text dropped. So an over-eager isValueRecord cannot mangle
+// a value here — there are none — it can only flatten a scalar carrier into keys the judge does not
+// know, or (for a record with no leaves) delete the key outright. Pinned here so that fails in
+// milliseconds rather than via a real-solver integration run.
+describe('quint adapter leaves a value-FREE record alone', () => {
+  it('passes scalars, #bigints, refs-as-str and _state through unflattened', () => {
+    const varTypes = { invoices: 'Invoice' };
+    const itf = {
+      states: [{
+        invoices: {
+          '#map': [[
+            'invoice1',
+            {
+              exists: true,
+              subscription: 'subscription1',            // ref — fieldQType renders it `str`
+              amountPaid: { '#bigint': '24' },
+              totalDue: { '#bigint': '100' },
+              retryCount: { '#bigint': '0' },
+              settlement_state: 'draft',                // machine region — dotted, not flattened
+            },
+          ]],
+        },
+      }],
+    };
+    const invoice = parseITF(itf, varTypes).entities.find(e => e.type === 'Invoice')!;
+    // Exact: names an over-eager flatten either way — a vanished key OR an invented `x_y` one.
+    expect(invoice.fields).toEqual({
+      subscription: 'subscription1', amountPaid: 24, totalDue: 100,
+      retryCount: 0, 'settlement.state': 'draft',
+    });
+    // The property behind the toEqual: no underscore-joined key can exist for a model with no
+    // values, since underscore keys are the value convention remapValueKeys later dots.
+    expect(Object.keys(invoice.fields).some(k => k.includes('_'))).toBe(false);
+  });
+
+  // `#bigint` is the tag the walker is most likely to swallow: it is the ONE composite that wraps a
+  // scalar, so mistaking it for a value record binds `x_#bigint` and drops `x` — silently changing
+  // a number the judge reads into a key it never looks up.
+  it('never descends INTO a #bigint wrapper', () => {
+    const varTypes = { invoices: 'Invoice' };
+    const itf = { states: [{ invoices: { '#map': [['i1', { exists: true, totalDue: { '#bigint': '100' } }]] } }] };
+    const invoice = parseITF(itf, varTypes).entities.find(e => e.type === 'Invoice')!;
+    expect(invoice.fields).toEqual({ totalDue: 100 });
   });
 });
 

@@ -177,3 +177,20 @@ describe('evaluateCandidate', () => {
     expect(() => evaluateCandidate(paramLeak, s)).toThrow(/param terms/);
   });
 });
+
+describe('refsResolve judges a child (slice B2)', () => {
+  const c: Candidate = { kind: 'refsResolve', aggregate: 'Posting', fields: ['account'] };
+
+  it('forbids a posting pointing at no account', () => {
+    expect(evaluateCandidate(c, { entities: [
+      { type: 'Txn', id: 't1', fields: {} },
+      { type: 'Posting', id: 'p1', fields: { owner: 't1', account: 'ghost' } }] })).toBe('forbid');
+  });
+
+  it('permits a posting pointing at a real account', () => {
+    expect(evaluateCandidate(c, { entities: [
+      { type: 'Txn', id: 't1', fields: {} },
+      { type: 'Account', id: 'a1', fields: {} },
+      { type: 'Posting', id: 'p1', fields: { owner: 't1', account: 'a1' } }] })).toBe('permit');
+  });
+});

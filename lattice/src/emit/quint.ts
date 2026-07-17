@@ -1,6 +1,7 @@
 import type { AggregateDef, DomainModel, EntityDef, Field } from '../ast/domain.js';
 import { isQualifiedRef, ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, Cmp, Path, Predicate, Term } from '../ast/invariant.js';
+import { sumFieldPath } from '../ast/invariant.js';
 import type { SalientFact } from '../engine/session.js';
 import { OWNED_BOUND, childVarKey } from '../engine/owned.js';
 
@@ -34,6 +35,15 @@ export const isEvolvingPrim = (p: string) => ['Int', 'Money'].includes(p);
 export const isEvolvingField = (f: Field) => f.type.kind === 'prim' && isEvolvingPrim(f.type.prim) && !f.const;
 export const INT_POOL = 'Set(0, 24, 72, 100)';
 export const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.aggregates, ...m.entities];
+/**
+ * Owners a candidate SUBJECT or path may name, including aggregate-owned children (slice B2).
+ * Distinct from `owners(m)` above, which drives var and `<TARGET>_IDS` pool declaration and must
+ * stay top-level-only — a child has neither. Safe because validateModel's `ref-target-nested-child`
+ * makes a child unreachable as a ref TARGET, so the ref-hop rebinds in pathToQuint/refHopsIn can
+ * never land on one: a child is a subject, never a hop.
+ */
+const ownersAndChildren = (m: DomainModel): (AggregateDef | EntityDef)[] =>
+  [...owners(m), ...m.aggregates.flatMap(a => a.entities ?? [])];
 
 function fieldQType(m: DomainModel, f: Field): string | null {
   if (f.key) return null;
@@ -134,6 +144,14 @@ function termToQuint(m: DomainModel, t: Term, self: string, ownerName: string): 
 }
 export function pathToQuint(m: DomainModel, path: Path, self: string, ownerName: string): string {
   let expr = self, owner = ownerName;
+  // Once a value hop is taken the walk continues inside the ValueDef's own fields, not the owner's
+  // (slice B2: values nest, so there may be several such hops). A value embeds as a nested record
+  // (fieldQType recurses), so every segment inside one is a plain dotted accessor and no map hop is
+  // possible — a value cannot hold a ref (validate.ts's value-flat). Before this, `owner` was never
+  // rebound on a value hop, so the segment after a NESTED value was looked up on the owner's fields
+  // and threw; the one-level case survived only because the `i < path.length - 1` guard below
+  // short-circuits before touching `f.type` on the final segment.
+  let vfields: Field[] | null = null;
   for (let i = 0; i < path.length; i++) {
     const seg = path[i]!;
     // Ref-hop machine-state segment: '<Region>.state' reads the owner's region-state field
@@ -141,10 +159,15 @@ export function pathToQuint(m: DomainModel, path: Path, self: string, ownerName:
     // a declared field, so it must skip the def/field lookup and the map-hop logic below.
     const stateMatch = seg.match(/^(\w+)\.state$/);
     if (stateMatch && i === path.length - 1) return `${expr}.${stateMatch[1]}_state`;
-    const def = owners(m).find(o => o.name === owner)!;
-    const f = def.fields.find(x => x.name === seg)!;
+    // Children included: a candidate subject may be a nested child (slice B2), whose fields this
+    // walks exactly as an owner's (see ownersAndChildren).
+    const f: Field | undefined = vfields
+      ? vfields.find(x => x.name === seg)
+      : ownersAndChildren(m).find(o => o.name === owner)!.fields.find(x => x.name === seg);
     expr = `${expr}.${seg}`;
-    if (i < path.length - 1 && f.type.kind === 'ref') {
+    if (f?.type.kind === 'value') {
+      vfields = m.values.find(v => v.name === (f.type as { kind: 'value'; value: string }).value)?.fields ?? [];
+    } else if (i < path.length - 1 && f?.type.kind === 'ref') {
       owner = f.type.target;
       expr = `${varName(owner)}.get(${expr})`;
     }
@@ -164,6 +187,10 @@ export function pathToQuint(m: DomainModel, path: Path, self: string, ownerName:
 export function refHopsIn(m: DomainModel, path: Path, self: string, ownerName: string): string[] {
   const hops: string[] = [];
   let expr = self, owner = ownerName;
+  // Value hops walk the ValueDef's fields, never the owner's — see pathToQuint, which this mirrors
+  // hop for hop. A value cannot hold a ref (value-flat), so no hop is ever pushed from inside one;
+  // this only has to keep the lookup from running off the owner's field list and throwing.
+  let vfields: Field[] | null = null;
   for (let i = 0; i < path.length; i++) {
     const seg = path[i]!;
     // Ref-hop machine-state segment: not a declared field, so it can't be looked up on `def` —
@@ -171,10 +198,17 @@ export function refHopsIn(m: DomainModel, path: Path, self: string, ownerName: s
     // iteration, so the existence gate on that referenced record still composes correctly.
     const stateMatch = seg.match(/^(\w+)\.state$/);
     if (stateMatch && i === path.length - 1) { expr = `${expr}.${stateMatch[1]}_state`; break; }
-    const def = owners(m).find(o => o.name === owner)!;
-    const f = def.fields.find(x => x.name === seg)!;
+    // Children included, exactly as pathToQuint above — a child-subject candidate's every path
+    // segment is looked up here (not only ref-hop segments), so a top-level-only lookup throws on
+    // even a single-segment path like `amount >= 0` (predToQuint's `cmp`/`present` cases and
+    // candidateToQuint's `unique` branch all route here).
+    const f: Field | undefined = vfields
+      ? vfields.find(x => x.name === seg)
+      : ownersAndChildren(m).find(o => o.name === owner)!.fields.find(x => x.name === seg);
     expr = `${expr}.${seg}`;
-    if (i < path.length - 1 && f.type.kind === 'ref') {
+    if (f?.type.kind === 'value') {
+      vfields = m.values.find(v => v.name === (f.type as { kind: 'value'; value: string }).value)?.fields ?? [];
+    } else if (i < path.length - 1 && f?.type.kind === 'ref') {
       owner = f.type.target;
       expr = `${varName(owner)}.get(${expr})`;
       hops.push(expr);
@@ -280,8 +314,70 @@ export function buildOwnerInit(
   return { inits, nondets };
 }
 
+/**
+ * The owning aggregate + collection field for a candidate subject that names an aggregate-owned
+ * child, or null for an ordinary top-level subject (slice B2).
+ *
+ * A child has no top-level Quint var: it is inlined into its owner as `<coll>: int -> {…}` plus a
+ * `<coll>Count: int` companion (design §6.1, astToQuint's owned-collection branch). So a
+ * child-subject candidate cannot bind `varName(c.aggregate)` — that names a var the module never
+ * declares, which is invalid Quint. It must instead quantify over the owner's map.
+ *
+ * Returns null only for a subject that is NOT a nested child at all — the legitimate top-level
+ * case. A nested child that no `List<ref Child>` field owns THROWS rather than returning null:
+ * falling through to `varName(c.aggregate)` would emit that same undeclared var, silently, which is
+ * the exact bug this function exists to remove. Such a child reaches no solver encoding whatsoever
+ * (no var, no owner record field), so a rule about it is meaningless — loud beats silent.
+ */
+export function childContext(m: DomainModel, name: string):
+    { owner: AggregateDef; collection: string; child: EntityDef } | null {
+  for (const a of m.aggregates)
+    for (const f of a.fields) {
+      const child = ownedCollectionChild(a, f);
+      if (child?.name === name) return { owner: a, collection: f.name, child };
+    }
+  const declaring = m.aggregates.find(a => (a.entities ?? []).some(e => e.name === name));
+  if (declaring)
+    throw new Error(`childContext: the nested entity ${name}, declared inside aggregate ${declaring.name}, has no List<...> field in ${declaring.name} owning it, so it reaches no solver encoding (no quint var, no owner record field) — a rule about it cannot be checked`);
+  return null;
+}
+
+/**
+ * Wrap a predicate rendered over one child slot in the owner+slot quantification. Mirrors
+ * sumOverCollection's bounded fold (:317): walk every slot up to OWNED_BOUND, ignore slots at or
+ * above the live count. `foldl` with `and` rather than `.forall` because `range(...)` is a list and
+ * foldl is the shape the rest of this emitter already uses over it.
+ *
+ * `render` receives the slot's accessor as its `self` and inlines it (`o.legs.get(i).amount`)
+ * rather than being handed a block-bound `val c` — a child slot is a plain record read, so there is
+ * nothing to bind, and inlining keeps this identical to how sumOverCollection reads a slot's field.
+ */
+function overChildren(
+  ctx: { owner: AggregateDef; collection: string }, name: string, render: (self: string) => string,
+): string {
+  const ov = varName(ctx.owner.name);
+  const slot = `range(0, ${OWNED_BOUND}).foldl(true, (acc, i) => acc and (i >= o.${ctx.collection}Count or ${render(`o.${ctx.collection}.get(i)`)}))`;
+  return `val ${name} = ${ov}.keys().forall(k => { val o = ${ov}.get(k) not(o.exists) or ${slot} })`;
+}
+
 export function candidateToQuint(m: DomainModel, c: Candidate, name: string): string {
   if (c.kind === 'guard') throw new Error('candidateToQuint: a guard candidate is a transition enablement, not an always-property — conjoin it into its trans_ action, do not render it as a val');
+  const kid = childContext(m, c.aggregate);
+  if (kid) {
+    // Only the two kinds a child subject is ever derived with today (refsResolve on a child is
+    // alloy-routed and never reaches here). Anything else is a real gap, not a silent skip.
+    if (c.kind === 'statePredicate') {
+      return overChildren(kid, name, self => {
+        const guard = c.where ? `${predToQuint(m, c.where, self, c.aggregate)} implies ` : '';
+        return `(${guard}${predToQuint(m, c.body, self, c.aggregate)})`;
+      });
+    }
+    if (c.kind === 'conservation') {
+      return overChildren(kid, name, self =>
+        `(${c.parts.map(p => pathToQuint(m, p, self, c.aggregate)).join(' + ')} == ${pathToQuint(m, c.total, self, c.aggregate)})`);
+    }
+    throw new Error(`candidateToQuint: ${c.kind} on the aggregate-owned child ${c.aggregate} has no child-map encoding — only statePredicate and conservation are derived with a child subject (slice B2)`);
+  }
   const v = varName(c.aggregate);
   if (c.kind === 'statePredicate') {
     const guard = c.where ? `${predToQuint(m, c.where, 'x', c.aggregate)} implies ` : '';
@@ -314,7 +410,9 @@ export function candidateToQuint(m: DomainModel, c: Candidate, name: string): st
     // `fCount: int` encoding) — walks every slot up to OWNED_BOUND, only counting slots below the
     // live count. Mirrors evaluate.ts's sumOverCollection judge (sum of live children's field,
     // compared with `total` on the left — see QuintQuery.adopted / the op-flip note there).
-    const fold = `range(0, ${OWNED_BOUND}).foldl(0, (acc, i) => if (i < x.${c.collection}Count) acc + x.${c.collection}.get(i).${c.field} else acc)`;
+    // Dotted accessor: quint embeds a value as a nested record (fieldQType), so a value sub-field
+    // reads `.get(i).amount.amount`.
+    const fold = `range(0, ${OWNED_BOUND}).foldl(0, (acc, i) => if (i < x.${c.collection}Count) acc + x.${c.collection}.get(i).${sumFieldPath(c).join('.')} else acc)`;
     const ops = { eq: '==', le: '<=', ge: '>=' } as const;
     return `val ${name} = ${v}.keys().forall(k => { val x = ${v}.get(k) not(x.exists) or (${pathToQuint(m, c.total, 'x', c.aggregate)} ${ops[c.op]} ${fold}) })`;
   }
@@ -339,31 +437,52 @@ function splitPathStr(s: string): string[] {
   return parts;
 }
 
-/** Rebuild judged shapes: match salient dims against the candidates' comparisons + enum-eq facts. */
+/**
+ * Rebuild judged shapes: match salient dims against the candidates' comparisons + enum-eq facts.
+ *
+ * Child subjects (slice B2) get the same treatment candidateToQuint gives them: a child has no
+ * quint var, so the conjunction is rendered against an owner slot accessor rather than a bound `x`
+ * and wrapped in the owner+slot quantification. Note the quantifier DUAL versus overChildren: a
+ * shape is `exists`, so the fold seeds `false`, combines with `or`, and gates on the LIVE slot
+ * (`i < count and <pred>`) — where overChildren's `forall` seeds `true`, combines with `and`, and
+ * gates the DEAD slot away (`i >= count or <pred>`).
+ */
 function shapeToQuint(m: DomainModel, facts: SalientFact[], cands: Candidate[], name: string): string {
   const agg = cands[0]!.aggregate;
-  const v = varName(agg);
-  const conj: string[] = [];
-  for (const f of facts) {
-    // Sum-over-collection dims (design §6.2/§6.4 — see salient.ts's extractSalient sumOverCollection
-    // branch) must be matched BEFORE the generic `<path> = <value>`/comparison branches below: e.g.
-    // `sum(lines.amount)` would otherwise mis-parse as a bare dotted path.
-    const mCount = f.dim.match(/^(\w+)\.count$/);
-    if (mCount) { conj.push(`x.${mCount[1]}Count == ${f.value}`); continue; }
-    const mSum = f.dim.match(/^sum\((\w+)\.(\w+)\)$/);
-    if (mSum) { conj.push(`range(0, ${OWNED_BOUND}).foldl(0, (acc, i) => if (i < x.${mSum[1]}Count) acc + x.${mSum[1]}.get(i).${mSum[2]} else acc) == ${f.value}`); continue; }
-    const mTot = f.dim.match(/^([\w.]+) value$/);
-    if (mTot) { conj.push(`${pathToQuint(m, splitPathStr(mTot[1]!), 'x', agg)} == ${f.value}`); continue; }
-    const mVal = f.dim.match(/^([\w.]+) = (\w+)$/);
-    if (mVal) { conj.push(`${pathToQuint(m, splitPathStr(mVal[1]!), 'x', agg)} == "${mVal[2]}"`); continue; }
-    const mCmp = f.dim.match(/^(.+) (eq|ne|lt|le|gt|ge) (.+)$/);
-    if (mCmp) {
-      const ops: Record<string, string> = { eq: '==', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' };
-      const render = (s: string) => s.split(' + ').map(part => part === 'now' || /^\d+$/.test(part) ? part : pathToQuint(m, splitPathStr(part), 'x', agg)).join(' + ');
-      conj.push(`(${render(mCmp[1]!)} ${ops[mCmp[2]!]} ${render(mCmp[3]!)}) == ${f.value}`);
+  const kid = childContext(m, agg);
+  const v = varName(kid ? kid.owner.name : agg);
+  const build = (self: string): string => {
+    const conj: string[] = [];
+    for (const f of facts) {
+      // Sum-over-collection dims (design §6.2/§6.4 — see salient.ts's extractSalient sumOverCollection
+      // branch) must be matched BEFORE the generic `<path> = <value>`/comparison branches below: e.g.
+      // `sum(lines.amount)` would otherwise mis-parse as a bare dotted path.
+      const mCount = f.dim.match(/^(\w+)\.count$/);
+      if (mCount) { conj.push(`${self}.${mCount[1]}Count == ${f.value}`); continue; }
+      // The field half is a DOTTED PATH, not a single name (slice B2): salient.ts renders the dim
+      // as `sum(legs.amount.amount)` for a value sub-field. `(\w+)` there would silently fail to
+      // match, dropping the exclusion and re-showing the witness — so match `[\w.]+`. The dim's
+      // dotted form is already exactly quint's record accessor, so it inlines as-is.
+      const mSum = f.dim.match(/^sum\((\w+)\.([\w.]+)\)$/);
+      if (mSum) { conj.push(`range(0, ${OWNED_BOUND}).foldl(0, (acc, i) => if (i < ${self}.${mSum[1]}Count) acc + ${self}.${mSum[1]}.get(i).${mSum[2]} else acc) == ${f.value}`); continue; }
+      const mTot = f.dim.match(/^([\w.]+) value$/);
+      if (mTot) { conj.push(`${pathToQuint(m, splitPathStr(mTot[1]!), self, agg)} == ${f.value}`); continue; }
+      const mVal = f.dim.match(/^([\w.]+) = (\w+)$/);
+      if (mVal) { conj.push(`${pathToQuint(m, splitPathStr(mVal[1]!), self, agg)} == "${mVal[2]}"`); continue; }
+      const mCmp = f.dim.match(/^(.+) (eq|ne|lt|le|gt|ge) (.+)$/);
+      if (mCmp) {
+        const ops: Record<string, string> = { eq: '==', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' };
+        const render = (s: string) => s.split(' + ').map(part => part === 'now' || /^\d+$/.test(part) ? part : pathToQuint(m, splitPathStr(part), self, agg)).join(' + ');
+        conj.push(`(${render(mCmp[1]!)} ${ops[mCmp[2]!]} ${render(mCmp[3]!)}) == ${f.value}`);
+      }
     }
+    return conj.join(' and ') || 'true';
+  };
+  if (kid) {
+    const slot = `range(0, ${OWNED_BOUND}).foldl(false, (acc, i) => acc or (i < o.${kid.collection}Count and (${build(`o.${kid.collection}.get(i)`)})))`;
+    return `val ${name} = ${v}.keys().exists(k => { val o = ${v}.get(k) o.exists and ${slot} })`;
   }
-  return `val ${name} = ${v}.keys().exists(k => { val x = ${v}.get(k) x.exists and ${conj.join(' and ') || 'true'} })`;
+  return `val ${name} = ${v}.keys().exists(k => { val x = ${v}.get(k) x.exists and ${build('x')} })`;
 }
 
 export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {

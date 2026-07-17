@@ -5,6 +5,7 @@
 // by emit/quint-classify.ts, Task 1). No solver calls here; the classifier (Task 3) wires this in.
 import type { DomainModel, Field } from '../ast/domain.js';
 import type { Candidate, Path, Predicate, Term } from '../ast/invariant.js';
+import { sumFieldPath } from '../ast/invariant.js';
 import { isEvolvingField } from '../emit/quint.js';
 
 // The set of field NAMES that actually EVOLVE (non-const Int/Money — exactly the fields the emitter
@@ -101,7 +102,10 @@ export function conjunctTier(m: DomainModel, c: Candidate): 'sound' | 'abstract'
       paths.push(...c.parts, c.total);
       break;
     case 'sumOverCollection':
-      paths.push([c.field], c.total);
+      // sumFieldPath, not `[c.field]`: the Path form would nest to [[...]] and every
+      // `evolving.has(seg)` below would compare a Set of names against an ARRAY — always false,
+      // silently mis-tiering an evolving sum field as 'sound'.
+      paths.push(sumFieldPath(c), c.total);
       break;
     case 'leadsTo':
       paths.push(...fieldsIn(c.from).paths, ...fieldsIn(c.to).paths);

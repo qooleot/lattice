@@ -421,3 +421,111 @@ describe('engine apply: guard-change staleness warning (item 3a)', () => {
     expect(guardChangeWarnings(stored, fresh, new Set())).toEqual([]);
   });
 });
+
+// Review finding: derivedNameCollisions was wired into `init` only, on the rationale that
+// matchTemplates has a single caller. True, but about the wrong function — `impliedInvariants` mints
+// the names, and apply reaches it on BOTH its branches without ever passing init: reconcile.ts's
+// canonicalSet, and the §5.8 fresh-session branch that builds a whole session with no init at all.
+// apply gates only on loadLatText → validateModel, which does not include this check. Before the
+// fix, both branches returned ok:true and wrote a prose projection carrying two distinct rules under
+// one derived name.
+describe('apply refuses a .lat whose derived names collide', () => {
+  // `total : Amount{amount : Money}` alone — derives nonNegativeInvoiceTotalAmount exactly once.
+  const cleanModel = {
+    context: 'L', enums: [], events: [], services: [], entities: [],
+    values: [{ kind: 'value', name: 'Amount', fields: [
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Invoice', fields: [
+      { name: 'invId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'total', type: { kind: 'value', value: 'Amount' }, tags: ['unsigned'] }] }],
+  };
+  // Adding `totalAmount : Money` makes a SECOND rule fold onto that same name.
+  const COLLIDING_LAT = `context L {
+  value Amount {
+    amount : Money
+  }
+  aggregate Invoice {
+    invId : Id key
+    totalAmount : Money @unsigned
+    total : Amount @unsigned
+  }
+}
+`;
+  const expectCollisionRefusal = (r: any) => {
+    expect(r.error).toBe('ill-formed-model');
+    const d = r.diagnostics.find((x: any) => x.code === 'derived-name-collision');
+    expect(d).toBeDefined();
+    expect(d.at).toBe('Invoice');
+    expect(d.message).toContain('nonNegativeInvoiceTotalAmount');
+    expect(d.message).toContain('Invoice.totalAmount');
+    expect(d.message).toContain('Invoice.total.amount');
+  };
+
+  it('branch 1 (reconcile): an init-ed session refuses an edit that introduces a collision', async () => {
+    const d = mkdtempSync(join(tmpdir(), 'lat-collide-recon-'));
+    const session = join(d, 'session'), spec = join(d, 'spec');
+    const modelFile = join(d, 'm.json');
+    writeFileSync(modelFile, JSON.stringify(cleanModel));
+
+    // init the CLEAN model — the collision must be introduced by the hand edit, not present at init,
+    // or init's own gate would be what refuses and this would prove nothing about apply.
+    const init: any = await runCommand(['init', '--session', session, '--model', modelFile], realDeps);
+    expect(init.error).toBeUndefined();
+    expect(init.adopted.map((a: any) => a.name)).toEqual(['nonNegativeInvoiceTotalAmount']);
+
+    // apply operates on a converged session (see isSessionBusy); init leaves it mid-elicitation.
+    const st = JSON.parse(readFileSync(join(session, 'state.json'), 'utf8'));
+    st.phase = 'converged';
+    writeFileSync(join(session, 'state.json'), JSON.stringify(st));
+
+    await runCommand(['emit', '--session', session, '--out', spec], realDeps);
+    const lat = join(spec, 'spec.lat');
+    const ledgerBefore = readFileSync(join(session, 'ledger.jsonl'), 'utf8');
+    const stateBefore = readFileSync(join(session, 'state.json'), 'utf8');
+    const proseBefore = readFileSync(join(spec, 'spec.prose.md'), 'utf8');
+    writeFileSync(lat, COLLIDING_LAT);
+
+    const r: any = await runCommand(['apply', '--session', session, '--lat', lat, '--no-classify'], realDeps);
+    expectCollisionRefusal(r);
+    // Refused before anything is written: no shadowed rule in the ledger, session, or projection.
+    // The prose check is the one that matters — pre-fix it grew a SECOND bullet under the same
+    // derived name (`totalAmount ≥ 0` beside `total.amount ≥ 0`), which is the shadowing made
+    // visible. model.json is apply-only (init does not write one), so its absence is the assertion.
+    expect(readFileSync(join(session, 'ledger.jsonl'), 'utf8')).toBe(ledgerBefore);
+    expect(readFileSync(join(session, 'state.json'), 'utf8')).toBe(stateBefore);
+    expect(readFileSync(join(spec, 'spec.prose.md'), 'utf8')).toBe(proseBefore);
+    expect(proseBefore).not.toContain('totalAmount ≥ 0');
+    expect(existsSync(join(session, 'model.json'))).toBe(false);
+  });
+
+  it('branch 2 (fresh session, §5.8): apply --lat onto an empty session dir refuses', async () => {
+    const d = mkdtempSync(join(tmpdir(), 'lat-collide-fresh-'));
+    const session = join(d, 'session'), spec = join(d, 'spec');
+    mkdirSync(spec, { recursive: true });
+    const lat = join(spec, 'spec.lat');
+    writeFileSync(lat, COLLIDING_LAT);
+
+    // No init, no state.json — this branch builds the whole session from the .lat.
+    expect(existsSync(join(session, 'state.json'))).toBe(false);
+    const r: any = await runCommand(['apply', '--session', session, '--lat', lat, '--no-classify'], realDeps);
+    expectCollisionRefusal(r);
+    expect(existsSync(join(session, 'ledger.jsonl'))).toBe(false);
+    expect(existsSync(join(session, 'model.json'))).toBe(false);
+  });
+
+  it('the same .lat applies clean once the colliding field is renamed', async () => {
+    // Guards against the fix over-refusing: it is the COLLISION that is rejected, not the shape.
+    const d = mkdtempSync(join(tmpdir(), 'lat-collide-ok-'));
+    const session = join(d, 'session'), spec = join(d, 'spec');
+    mkdirSync(spec, { recursive: true });
+    const lat = join(spec, 'spec.lat');
+    writeFileSync(lat, COLLIDING_LAT.replace('totalAmount : Money', 'surcharge : Money'));
+
+    const r: any = await runCommand(['apply', '--session', session, '--lat', lat, '--no-classify'], realDeps);
+    expect(r.error).toBeUndefined();
+    expect(r.ok).toBe(true);
+    const prose = readFileSync(join(spec, 'spec.prose.md'), 'utf8');
+    expect(prose).toContain('nonNegativeInvoiceSurcharge');
+    expect(prose).toContain('nonNegativeInvoiceTotalAmount');
+  });
+});

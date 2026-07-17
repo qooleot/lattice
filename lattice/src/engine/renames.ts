@@ -2,6 +2,7 @@ import type { CaseState, CaseEntity } from './evaluate.js';
 import type { DomainModel } from '../ast/domain.js';
 import type { LedgerEntry } from './session.js';
 import type { CandidateInvariant, Path, Predicate, Term } from '../ast/invariant.js';
+import { sumFieldPath } from '../ast/invariant.js';
 
 export type RenameScope = 'field' | 'state' | 'transition' | 'enumValue' | 'enum' | 'entity'
   | 'aggregate' | 'event' | 'invariant' | 'region';
@@ -192,7 +193,12 @@ export function applyRenamesToInvariant(i: CandidateInvariant, renames: RenameSp
       case 'sumOverCollection':
         if (r.scope === 'field' && owner === c.aggregate && c.collection === r.from) c.collection = r.to;
         if ((r.scope === 'entity' || r.scope === 'aggregate') && c.child === r.from) c.child = r.to;
-        if (r.scope === 'field' && owner === c.child && c.field === r.from) c.field = r.to;
+        // Rename the HEAD segment only — that is the field declared on the child; later segments
+        // are sub-fields of a value type and belong to the value's own rename scope. The written
+        // form mirrors the read form (legacy string stays a string) so a stored candidate that
+        // never needed widening round-trips byte-identically.
+        if (r.scope === 'field' && owner === c.child && sumFieldPath(c)[0] === r.from)
+          c.field = typeof c.field === 'string' ? r.to : [r.to, ...sumFieldPath(c).slice(1)];
         renPath(c.total);
         break;
       case 'leadsTo': walkPred(c.from); walkPred(c.to); break;

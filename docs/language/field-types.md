@@ -32,12 +32,17 @@ A field is `<camelId> : <type>[?] [key] [const] [@<tag>]*`. `<type>` is one of:
 
 - **Primitives:** `Int`, `Text`, `Date`, `Duration`, `Money`, `Id`.
 - **An enum name** — any [enum](enum.md) declared in the same context.
-- **A [value](value.md) name** — any `value` declared in the same context. Structural, keyless,
-  and flat (prim/enum fields only) — see `value.md` for its own rules.
+- **A [value](value.md) name** — any `value` declared in the same context. Structural and keyless;
+  its own fields are prims, enums, or other values — no `ref`, no `List` — see `value.md`.
 - **`ref <Target>`** — a same-context reference: `<Target>` must be an entity or aggregate
-  declared in this file.
+  declared in this file, and it must be **top-level** (see below).
 - **`ref Context.Type`** — a qualified, cross-context reference (see below).
-- **`List<T>`** — a homogeneous list of any of the above, including nested lists.
+- **`List<T>`** — a homogeneous list, but only where a collection has an encoding: on an aggregate
+  or a top-level entity, ranging over a nested child (an **owned collection**, see
+  [entity](entity.md)) or over a prim/enum. Not inside an aggregate-owned child
+  (`nested-entity-flat`), not inside a value (`value-flat`) — neither has a list encoding to give
+  it. A nested list (`List<List<T>>`) parses, but only an owned collection is solver-encoded; every
+  other list is dropped before solving, nested or not.
 
 A bare identifier resolves in this order: primitive → declared value → declared entity/aggregate
 (`ref`) → enum (the fallback, `unresolved-enum` if it matches nothing declared).
@@ -85,6 +90,37 @@ context Billing {
   mutable numeric fields. Only non-`const` `Int`/`Money` fields evolve; `const` fields, `Date`/
   `Duration`, refs, and enums are frozen. This affects the classifier's solver model only — it has no
   bearing on generation or on non-classifier emission.
+
+## A `ref` target must be top-level
+
+`ref <Target>` names a top-level entity or aggregate. A `ref` whose target is an entity **nested
+inside an aggregate** reports `ref-target-nested-child`, whoever holds it — another child, the
+owning aggregate itself, a top-level entity, an event, or a value alike:
+
+```
+aggregate Invoice {
+  entity InvoiceLine { lineId : Id key }
+}
+aggregate Payment {
+  appliedTo : ref InvoiceLine     // rejected: ref-target-nested-child
+}
+```
+
+This is an encoding constraint being honest about itself, not a language opinion. An owned child has
+no identity to reference: both solvers inline a child into its owner — Quint as a bounded map inside
+the owner's record, Alloy as a sig reachable only through its `owner` relation — so neither mints an
+id pool a reference could draw a target from. It is also true of the thing being encoded: a child
+exists only as part of its owner, which is what nesting it *says*. Reference the owning aggregate
+instead, or promote the child to a top-level entity.
+
+The one `ref` that may name a child is the **owned-collection declaration itself** — `List<Child>`
+on the child's own aggregate. That is how ownership is written, not a reference to a child, and it
+is the only route by which a child is reachable at all. `List<List<ref Child>>`, or a `List<ref
+Child>` on any other owner, is not an owned collection and is rejected like any other ref.
+
+A child is a nameable *subject* — an invariant may be written about `Posting`, and derived rules
+(`refsResolve`, non-negativity) fire on one — but never a *hop*: no path can reach into a child from
+outside, because no ref can name it. That asymmetry is exactly the one the encodings have.
 
 ## Cross-context refs are structural only
 

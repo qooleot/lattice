@@ -2,7 +2,7 @@ import fc from 'fast-check';
 import type { DomainModel, AggregateDef, EntityDef, Field, EventDef, Machine, StateDef,
   TransitionDef, TypeRef, ValueDef, ServiceDef, MethodDef, ParamDef } from '../../src/ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Cmp } from '../../src/ast/invariant.js';
-import { ownedCollectionChild } from '../../src/ast/domain.js';
+import { ownedCollectionChild, numericFieldPaths } from '../../src/ast/domain.js';
 import { PRIM_NAMES, RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
 import type { ContextMapModel, Relationship, RelationshipKind, Role } from '../../src/ast/contextmap.js';
 import { defaultPath } from '../../src/ast/contextmap.js';
@@ -37,23 +37,40 @@ const constDrawArb = fc.oneof({ weight: 3, arbitrary: fc.constant(false) }, { we
 
 // AGGREGATE fields: prim/enum/value only — never 'ref'/'list'. candidateArb's refsResolve arm
 // depends on there being no ref fields (see its comment); roundtrip.test.ts asserts the invariant
-// executably. `valueNames` (optional, Task 10) lets a field draw a declared value type — kept a
+// executably. `valueDefs` (optional, Task 10) lets a field draw a declared value type — kept a
 // low-weight option since value fields are excluded from every invariant path (see `representable`
 // above): no solver encoding yet, so they must never end up load-bearing in a generated candidate.
-export function fieldArb(name: string, enumNames: string[], valueNames: string[] = []): fc.Arbitrary<Field> {
+//
+// The whole ValueDef is taken, not just its name: the legality of a @balance/@total tag depends on
+// the value's SHAPE (see `tagsFor`), so the name alone is not enough to draw a valid field.
+export function fieldArb(name: string, enumNames: string[], valueDefs: ValueDef[] = []): fc.Arbitrary<Field> {
   const prim = fc.constantFrom('Int', 'Money', 'Date', 'Duration', 'Text', 'Id').map(p => ({ kind: 'prim' as const, prim: p as any }));
   const options: fc.WeightedArbitrary<TypeRef>[] = [{ weight: 4, arbitrary: prim }];
   if (enumNames.length) options.push({ weight: 1,
     arbitrary: fc.constantFrom(...enumNames).map(e => ({ kind: 'enum' as const, enum: e })) });
-  if (valueNames.length) options.push({ weight: 1,
-    arbitrary: fc.constantFrom(...valueNames).map(v => ({ kind: 'value' as const, value: v })) });
+  if (valueDefs.length) options.push({ weight: 1,
+    arbitrary: fc.constantFrom(...valueDefs.map(v => v.name)).map(v => ({ kind: 'value' as const, value: v })) });
   const type = fc.oneof(...options);
-  return fc.record({
-    type,
+  // The tag pool is drawn conditioned on the ALREADY-DRAWN type, not independently of it:
+  // validateModel rejects @balance/@total on a value-typed field unless the value type has exactly
+  // ONE solver-numeric (Int/Money/Date/Duration) sub-field (`ambiguous-numeric-tag` — the tag must
+  // name the one summable number, and zero or several cannot). Drawn blind, this generator emitted
+  // `w : Rpr @total` for a `value Rpr { m : Money, t : Duration }` — a model the validator rejects,
+  // so loadLatText returned ok:false and the round-trip property failed before print∘parse was even
+  // attempted. Asked with numericFieldPaths — the same walk validate.ts itself uses — so the two
+  // cannot drift apart on the same shape. @signed carries no such rule at a use site (only INSIDE a
+  // value declaration, which valueArb never tags), so it stays available on every type.
+  const tagsFor = (t: TypeRef): fc.Arbitrary<string[] | undefined> => {
+    const numericTagLegal = t.kind !== 'value'
+      || numericFieldPaths({ values: valueDefs } as DomainModel, { name, type: t }).length === 1;
+    const pool: string[][] = numericTagLegal ? [['total'], ['balance'], ['signed']] : [['signed']];
+    return fc.option(fc.constantFrom(...pool), { nil: undefined });
+  };
+  return type.chain(type => fc.record({
     isConst: constDrawArb,
     isOptional: fc.boolean(),
-    tags: fc.option(fc.constantFrom(['total'], ['balance'], ['signed']), { nil: undefined }),
-  }).map(({ type, isConst, isOptional, tags }) => {
+    tags: tagsFor(type),
+  }).map(({ isConst, isOptional, tags }) => {
     const f: Field = { name, type };
     if (isConst) f.const = true;
     // `?` is illegal on a key field (optional-key), on a list (optional-list) and on a value-typed
@@ -62,7 +79,7 @@ export function fieldArb(name: string, enumNames: string[], valueNames: string[]
     if (isOptional && type.kind !== 'list' && type.kind !== 'value') f.optional = true;
     if (tags) f.tags = tags;
     return f;
-  });
+  }));
 }
 
 // ENTITY fields additionally cover ref and List types (entities carry no explicit invariants,
@@ -257,9 +274,11 @@ const machineArb = (fieldNames: string[], eventNames: string[], numFieldNames: s
 // Nested entity + owned collection: when `childName` is supplied (caller decides, with
 // probability ~1/3, from a name pool disjoint across ALL aggregates — see arbSpec), attach one
 // flat child entity to the aggregate and a parent field ranging over it (`List<Child>` → owned
-// collection per ownedCollectionChild). Child fields reuse fieldArb (prim/enum only — nested
-// children carry no ref/list per nested-entity-flat) with a forced keyed first field, mirroring
-// aggArb's own shape.
+// collection per ownedCollectionChild). Child fields reuse fieldArb with a forced keyed first
+// field, mirroring aggArb's own shape. They come out prim/enum-typed because fieldArb is called
+// with no valueDefs and never draws a ref — a generator choice, NOT the rule: `nested-entity-flat`
+// was narrowed earlier in this slice to reject `list` ONLY, so a child's ref and value-typed fields
+// are now structurally legal and simply aren't covered here.
 //
 // The `?` marker is stripped from every child field: fieldArb draws it freely, but a field of an
 // aggregate-owned child may not be optional (validateModel's optional-owned-child — the solver
@@ -305,10 +324,10 @@ const valueArb = (name: string): fc.Arbitrary<ValueDef> =>
             });
         }));
 
-const aggArb = (name: string, enums: { name: string; values: string[] }[], eventNames: string[], childName?: string, valueName?: string): fc.Arbitrary<AggregateDef> =>
+const aggArb = (name: string, enums: { name: string; values: string[] }[], eventNames: string[], childName?: string, valueDefs: ValueDef[] = []): fc.Arbitrary<AggregateDef> =>
   fc.tuple(uniqNames(camel.filter(n => n !== 'state'), 2, 4), fc.boolean(), fc.option(docText, { nil: undefined }))
     .chain(([fieldNames, hasMachine, aggDoc]) =>
-      fc.tuple(...fieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name), valueName ? [valueName] : [])))
+      fc.tuple(...fieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name), valueDefs)))
         .chain(rest =>
           nestedArb(childName, enums, fieldNames).chain(nested => {
             const fields: Field[] = [{ name: fieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest];
@@ -465,22 +484,27 @@ export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateIn
               { nil: undefined })
             .chain(serviceName => {
               const valuesArb: fc.Arbitrary<ValueDef[]> = valueName ? valueArb(valueName).map(v => [v]) : fc.constant([]);
-              return fc.tuple(...aggNames.map(() => fc.boolean()))
+              // `values` are drawn BEFORE the aggregates that may reference them (Task 12b), rather
+              // than alongside them in one fc.tuple. fieldArb needs the value's SHAPE, not just its
+              // name, to decide whether a @balance/@total tag on a value-typed field is legal
+              // (`ambiguous-numeric-tag` — see fieldArb's tagsFor). Independent draws could not
+              // express that dependency, and produced models the validator rejects.
+              return valuesArb.chain(values =>
+                fc.tuple(...aggNames.map(() => fc.boolean()))
                 .chain(wantsChild => {
                   let pi = 0;
                   const childNames = wantsChild.map(w => w && pi < childNamePool.length ? childNamePool[pi++] : undefined);
                   return fc.tuple(
-                    fc.tuple(...aggNames.map((name, i) => aggArb(name, enums, eventNames, childNames[i], valueName))),
+                    fc.tuple(...aggNames.map((name, i) => aggArb(name, enums, eventNames, childNames[i], values))),
                     fc.tuple(...entityNames.map(name =>
                       entityArb(name, enums.map(e => e.name), [...aggNames, ...entityNames]))),
-                    fc.tuple(...eventNames.map(name => eventArb(name))),
-                    valuesArb);
+                    fc.tuple(...eventNames.map(name => eventArb(name))));
                 })
-                .chain(([aggs, entities, events, values]) => {
+                .chain(([aggs, entities, events]) => {
                   const servicesArb: fc.Arbitrary<ServiceDef[]> = serviceName ? serviceArb(serviceName, aggs).map(s => [s]) : fc.constant([]);
                   return servicesArb.chain(services =>
                     finalSpecArb(context, doc, ticksPerDay, enums, aggs, entities, events, values, services));
-                });
+                }));
             })))))));
 
 export const arbContextMap: fc.Arbitrary<ContextMapModel> = (() => {

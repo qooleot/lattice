@@ -1,6 +1,6 @@
 import type { Diagnostic, Predicate, Term } from './invariant.js';
 import type { DomainModel, Field, TypeRef } from './domain.js';
-import { ownedCollectionChild } from './domain.js';
+import { isQualifiedRef, moneyFieldPaths, numericFieldPaths, ownedCollectionChild } from './domain.js';
 import { PRIM_NAMES, RESERVED_WORDS } from './reserved.js';
 
 export const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -155,6 +155,44 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   const values = new Set(m.values.map(v => v.name));
   const events = new Set(m.events.map(e => e.name));
 
+  /**
+   * child entity name -> the aggregate that owns it. A nested child is inlined into its owner in
+   * BOTH solver encodings (quint.ts's `f: int -> {…}` record; alloy.ts's child sig with `owner: one
+   * <Parent>`), so it has no id and no `<TARGET>_IDS` pool to draw a ref from (quint.ts:407 declares
+   * pools per TOP-LEVEL owner only). A ref naming one therefore emits invalid Quint — this rule is
+   * the encoding being honest, and it matches the DDD notion the child encodes: an owned child has
+   * no identity outside its owner, so nothing may reference it.
+   */
+  const childOwner = new Map<string, string>();
+  for (const a of m.aggregates) for (const e of a.entities ?? []) childOwner.set(e.name, a.name);
+
+  /**
+   * `ownerAgg` is the aggregate whose body this field is declared in, or null (top-level entity,
+   * event, value). The ONE legal ref-to-a-child is the owned-collection declaration itself —
+   * `List<ref Child>` on the child's own owning aggregate (design §3.2, ownedCollectionChild) —
+   * which checkType would otherwise walk into via its `list` recursion.
+   */
+  const checkRefTarget = (t: TypeRef, at: string, ownerAgg: string | null) => {
+    if (t.kind === 'list') {
+      // The ONE legal ref-to-a-child is the owned-collection declaration: `List<ref Child>` declared
+      // DIRECTLY on the child's own owning aggregate (design §3.2 — ownedCollectionChild only ever
+      // inspects an aggregate's OWN fields, and requires `of.kind === 'ref'`, so neither a deeper
+      // list nor a child's own list is one). Recursing with ownerAgg: null is what keeps the
+      // exception from re-firing at depth — `List<List<ref Child>>` is not an owned collection.
+      if (ownerAgg !== null && t.of.kind === 'ref' && childOwner.get(t.of.target) === ownerAgg) return;
+      checkRefTarget(t.of, at, null);
+      return;
+    }
+    if (t.kind !== 'ref') return;
+    const target = t.target;   // capture before isQualifiedRef narrows t (its predicate type equals
+                                // this branch's narrowed type exactly, so the false branch is `never`)
+    if (isQualifiedRef(t)) return;
+    const owner = childOwner.get(target);
+    if (owner)
+      out.push({ code: 'ref-target-nested-child', at,
+        message: `ref target ${target} is an entity owned by aggregate ${owner} — an owned child has no identity to reference (both solver encodings inline it into its owner, with no id pool to draw from). Reference ${owner} instead, or promote ${target} to a top-level entity.` });
+  };
+
   const checkType = (t: TypeRef, at: string) => {
     if (t.kind === 'ref') {
       if (t.target.includes('.')) {
@@ -173,14 +211,29 @@ export function validateModel(m: DomainModel): Diagnostic[] {
     if (f.name === 'state')
       out.push({ code: 'reserved-field-name', message: `'state' is reserved for machine-state keys (<Region>.state)`, at });
   };
-  const checkFields = (fs: Field[], owner: string, needKey: boolean) => {
+  const checkFields = (fs: Field[], owner: string, needKey: boolean, ownerAgg: string | null = null) => {
     fs.forEach(f => { checkType(f.type, `${owner}.${f.name}`); checkReservedField(f, `${owner}.${f.name}`);
+      checkRefTarget(f.type, `${owner}.${f.name}`, ownerAgg);
       if (f.optional && f.key)
         out.push({ code: 'optional-key', message: `${owner}.${f.name} is a key field and cannot be optional — identity is never absent`, at: `${owner}.${f.name}` });
       if (f.optional && f.type.kind === 'list')
         out.push({ code: 'optional-list', message: `${owner}.${f.name} is a List and cannot be optional — an absent list and an empty list are the same fact; List<T> already means zero or more`, at: `${owner}.${f.name}` });
       if (f.optional && f.type.kind === 'value')
         out.push({ code: 'optional-value', message: `${owner}.${f.name} has a value type and cannot be optional — a value type flattens into its sub-fields for the solvers, so there is no single field for the optionality marker to attach to`, at: `${owner}.${f.name}` });
+      // A @balance/@total tag must name exactly one summable number (slice B2). On a value-typed
+      // field that means exactly one solver-numeric path reachable through it (domain.ts's
+      // numericFieldPaths, recursing through however many value hops it takes — the same walk
+      // templates.ts's numericTagPath uses to resolve the tag, so the two cannot disagree); zero or
+      // several is ambiguous, and numericTagPath returns null there — so without this diagnostic the
+      // tag would be silently accepted and do nothing, which is the inertness this slice exists to
+      // remove.
+      if ((f.tags?.includes('balance') || f.tags?.includes('total')) && f.type.kind === 'value') {
+        const vdef = m.values.find(v => v.name === (f.type as { kind: 'value'; value: string }).value);
+        const nums = numericFieldPaths(m, f).map(p => p.slice(1).join('.'));
+        if (nums.length !== 1)
+          out.push({ code: 'ambiguous-numeric-tag', at: `${owner}.${f.name}`,
+            message: `${owner}.${f.name} is tagged @${f.tags?.includes('total') ? 'total' : 'balance'} but its value type ${vdef?.name ?? '?'} has ${nums.length} numeric sub-field${nums.length === 1 ? '' : 's'} (${nums.join(', ') || 'none'}) — the tag must name exactly one summable number. Tag a field whose value type has a single numeric sub-field.` });
+      }
     });
     if (needKey && !fs.some(f => f.key)) out.push({ code: 'missing-key', message: `${owner} has no key field`, at: owner });
   };
@@ -189,6 +242,7 @@ export function validateModel(m: DomainModel): Diagnostic[] {
     for (const f of v.fields) {
       checkType(f.type, `${v.name}.${f.name}`);
       checkReservedField(f, `${v.name}.${f.name}`);
+      checkRefTarget(f.type, `${v.name}.${f.name}`, null);
       if (f.key) out.push({ code: 'value-no-key', message: `value ${v.name}.${f.name}: value types are keyless — structural equality replaces identity (design §3.5)`, at: `${v.name}.${f.name}` });
       // Same rule as the field-level optional-value above, one level down and for the same reason:
       // the whole value flattens into `<field>_<sub>` sig relations, so a sub-field has no more of
@@ -200,25 +254,93 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       if (f.const) out.push({ code: 'value-no-const', message: `value ${v.name}.${f.name} cannot be const — value types are immutable by structure`, at: `${v.name}.${f.name}` });
       // Note: `const` on a KEY field (entity/aggregate) is deliberately tolerated silently — a key
       // is immutable by nature, so redundant `const` there is harmless and not worth a diagnostic.
-      if (f.type.kind !== 'prim' && f.type.kind !== 'enum')
-        out.push({ code: 'value-flat', message: `value ${v.name}.${f.name}: value fields carry prim/enum types only in v1`, at: `${v.name}.${f.name}` });
+      // Values nest (slice B2): quint's fieldQType already recurses (quint.ts:57) and alloy's
+      // valueSubRelations now does too. `ref` stays out — a value is keyless and compared by
+      // structure, so a reference from inside one has no identity to belong to; `list` stays out for
+      // the same reason it does on a child (no quint list encoding).
+      if (f.type.kind === 'ref' || f.type.kind === 'list')
+        out.push({ code: 'value-flat', message: `value ${v.name}.${f.name}: a value's fields are prim, enum, or another value — not ${f.type.kind} (a value is keyless and structural; it has no identity for a reference to belong to)`, at: `${v.name}.${f.name}` });
+      // Sign is a USE-SITE decision (slice B2): the same `value Amount` is @unsigned at Bill.total
+      // and @signed at LedgerAccount.balance, so a tag here could not express both even in
+      // principle — and implied.ts's moneyPaths reads the use site, so a tag here would be inert.
+      if (f.tags?.includes('signed') || f.tags?.includes('unsigned'))
+        out.push({ code: 'value-money-sign-inert', at: `${v.name}.${f.name}`,
+          message: `value ${v.name}.${f.name} carries @signed/@unsigned, but money sign is decided where the value is USED, not where it is declared — the same value type may be non-negative at one field and signed at another. Tag the field typed '${v.name}' instead.` });
     }
     for (const inv of v.invariants ?? [])
       checkScopedPred(v.fields, [], enumMap, `value ${v.name}.${inv.name}`, `${v.name}.${inv.name}`, inv.body, out, 'value-cross-field');
   });
 
+  /**
+   * Value-type reference cycle (design precedent: `unowned-nested-entity` above is reported here,
+   * at init, rather than left to an emission-time throw — same call, same reason). A value flattens
+   * into its fields for both solver encodings (alloy.ts's valueSubRelations, quint.ts's fieldQType,
+   * and ast/domain.ts's moneyFieldPaths), each recursing through nested value fields. A DAG flattens
+   * to a finite tree (`Outer{inner:Amount}` -> `inner_amount`); a cycle (`A{b:B}` + `B{a:A}`, or a
+   * self-cycle `A{a:A}`) has no finite flattening, so all three recursions stack-overflow instead —
+   * verified by hand before this fix (`Maximum call stack size exceeded` in both emitters).
+   *
+   * DFS over the value -> value field-type edges, classic white/grey/black cycle detection: a
+   * back-edge into a 'visiting' (grey) node closes a cycle. Reported ONCE per cycle, not once per
+   * participant or per field — a 3-value chain has 3 back-edges into the same loop if you count
+   * naively, and would otherwise flood the output 3x. The representative location is the
+   * ALPHABETICALLY-FIRST value name among the cycle's participants: it is a property of the cycle's
+   * node SET, not of which value happened to be visited first by this forEach (declaration order),
+   * so reordering the file's `value` blocks does not change which name the diagnostic points at or
+   * how the path reads. The cycle is rotated (not re-traversed) to start at that name, so the
+   * printed path is deterministic too — e.g. always "A -> B -> A", never "B -> A -> B" for the same
+   * cycle. Once a node finishes DFS ('done'/black) it is never revisited, so the same cycle cannot
+   * be found a second time from a different starting point either.
+   */
+  {
+    const byName = new Map(m.values.map(v => [v.name, v]));
+    const state = new Map<string, 'visiting' | 'done'>();
+    const path: string[] = [];
+    const visit = (name: string): void => {
+      const st = state.get(name);
+      if (st === 'done') return;
+      if (st === 'visiting') {
+        const start = path.indexOf(name);
+        const participants = path.slice(start);   // the loop, in traversal order, name not repeated
+        let minIdx = 0;
+        for (let i = 1; i < participants.length; i++) if (participants[i]! < participants[minIdx]!) minIdx = i;
+        const rotated = [...participants.slice(minIdx), ...participants.slice(0, minIdx)];
+        const rep = rotated[0]!;
+        const cyclePath = [...rotated, rep].join(' -> ');
+        out.push({ code: 'value-cycle', at: rep,
+          message: `value ${rep} is part of a value-type cycle: ${cyclePath} — a value is a structural type flattened into its fields, and a cycle has no finite flattening; both solver encodings (alloy's valueSubRelations, quint's fieldQType) recurse through nested values and would stack-overflow on this shape. Break the cycle by removing one of the fields in the chain.` });
+        return;
+      }
+      state.set(name, 'visiting');
+      path.push(name);
+      const v = byName.get(name);
+      if (v) for (const f of v.fields) if (f.type.kind === 'value' && byName.has(f.type.value)) visit(f.type.value);
+      path.pop();
+      state.set(name, 'done');
+    };
+    for (const v of m.values) visit(v.name);
+  }
+
   m.entities.forEach(e => checkFields(e.fields, e.name, true));
-  m.events.forEach(e => e.fields.forEach(f => { checkType(f.type, `${e.name}.${f.name}`); checkReservedField(f, `${e.name}.${f.name}`); }));
+  m.events.forEach(e => e.fields.forEach(f => { checkType(f.type, `${e.name}.${f.name}`); checkReservedField(f, `${e.name}.${f.name}`); checkRefTarget(f.type, `${e.name}.${f.name}`, null); }));
   m.aggregates.forEach(a => {
-    checkFields(a.fields, a.name, true);
+    checkFields(a.fields, a.name, true, a.name);
     for (const child of a.entities ?? []) {
       // nested children share the type namespace (duplicate-name pool above, `owners` below), so a
       // prim-named child has its bare form hijacked exactly as a top-level entity's would be
       checkTypeName('entity', child.name, `${a.name}.${child.name}`);
-      checkFields(child.fields, `${a.name}.${child.name}`, true);   // missing-key covers child-key-required
+      checkFields(child.fields, `${a.name}.${child.name}`, true, null);   // missing-key covers child-key-required
       for (const f of child.fields) {
-        if (f.type.kind === 'ref' || f.type.kind === 'list' || f.type.kind === 'value')
-          out.push({ code: 'nested-entity-flat', message: `nested entity ${a.name}.${child.name}.${f.name}: children carry prim/enum fields only in v1 (design §5.2)`, at: `${a.name}.${child.name}.${f.name}` });
+        // `ref` and value-typed child fields are structurally legal as of this slice — List is the
+        // one remaining rejection below. A child's ref must name a TOP-LEVEL owner —
+        // checkRefTarget's ref-target-nested-child (already in this file) enforces that.
+        //
+        // `List` stays rejected: quint has no list encoding at all (fieldQType returns null), so a
+        // collection inside a collection needs nested bounded maps, an OWNED_BOUND^2 state blowup,
+        // and a revisit of the bitwidth policy that already rises to 7 for a single-level sum
+        // (alloy.ts:385-391). That is its own slice — see the design doc's "Not in this slice".
+        if (f.type.kind === 'list')
+          out.push({ code: 'nested-entity-flat', message: `nested entity ${a.name}.${child.name}.${f.name}: a child cannot own a collection — List inside an aggregate-owned child is not yet encodable (quint has no list encoding; see design B2 "Not in this slice")`, at: `${a.name}.${child.name}.${f.name}` });
         // Checked here, not in the shared checkFields — this is the only site that knows a field
         // belongs to an aggregate-owned child rather than a top-level entity, where `Type?` is legal.
         // alloy.ts's emitChildSigs has no multiplicity to vary: it emits `one` whatever the marker
@@ -232,6 +354,15 @@ export function validateModel(m: DomainModel): Diagnostic[] {
         if (f.optional)
           out.push({ code: 'optional-owned-child', message: `${a.name}.${child.name}.${f.name} is a field of an aggregate-owned child and cannot be optional — the solver encodings give a child's field no multiplicity of its own, so absence is unrepresentable there`, at: `${a.name}.${child.name}.${f.name}` });
       }
+      // A child is reachable ONLY through an owned collection: quint inlines it into its owner as
+      // `<coll>: int -> {…}` (no var, no id pool of its own — see emit/quint.ts's owners/pools), and
+      // alloy emits its sig only for a child an owned collection ranges over. Nothing may reference
+      // one either (checkRefTarget's ref-target-nested-child). So a child no `List<...>` field owns
+      // is unreachable in every encoding — a dead declaration. Reported here rather than left to
+      // childContext's emission-time throw, so it lands at init with every other structural error.
+      if (!a.fields.some(f => ownedCollectionChild(a, f)?.name === child.name))
+        out.push({ code: 'unowned-nested-entity', at: `${a.name}.${child.name}`,
+          message: `nested entity ${a.name}.${child.name} is not owned by any collection — give ${a.name} a 'List<${child.name}>' field, or declare ${child.name} at context level. A nested entity is reachable only through its owner's owned collection, so nothing can read or constrain this one.` });
     }
     const collectionOwners = new Map<string, string>();   // child entity name -> first owning field
     for (const f of a.fields) {
@@ -315,12 +446,19 @@ export function validateModel(m: DomainModel): Diagnostic[] {
  */
 export function undecidedMoneySigns(m: DomainModel): Diagnostic[] {
   const out: Diagnostic[] = [];
+  // Values are NOT owners here (slice B2): sign is decided at each USE SITE. m.values was in this
+  // list while implied.ts's owner list excluded it, so init demanded a decision the engine then
+  // ignored — the two lists disagreed and this one was wrong.
   const owners: { name: string; fields: Field[] }[] = [
-    ...m.entities, ...m.values,
+    ...m.entities,
     ...m.aggregates.flatMap(a => [a as { name: string; fields: Field[] }, ...(a.entities ?? [])]),
   ];
+  // A sign site is any field that IS money or CARRIES money: a `Money` prim, or a value type with at
+  // least one `Money` sub-field. Shares domain.ts's moneyFieldPaths with implied.ts's moneyPaths (the
+  // DERIVATION side) so the two cannot independently drift on the same shape fact.
+  const carriesMoney = (f: Field): boolean => moneyFieldPaths(m, f).length > 0;
   for (const o of owners) {
-    const moneyFields = o.fields.filter(f => f.type.kind === 'prim' && f.type.prim === 'Money');
+    const moneyFields = o.fields.filter(carriesMoney);
     const contradictory = moneyFields
       .filter(f => f.tags?.includes('signed') && f.tags?.includes('unsigned'))
       .map(f => f.name);

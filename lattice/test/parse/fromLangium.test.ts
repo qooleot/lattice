@@ -238,8 +238,10 @@ describe('nested entities in aggregates', () => {
     if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'missing-key')).toBe(true);
   });
 
-  it('rejects a ref/list field inside a nested entity (nested-entity-flat)', () => {
-    const bad = loadLatText(SPEC.replace('amount : Money', 'amount : Money\n      bad : ref Invoice'));
+  it('rejects a List field inside a nested entity (nested-entity-flat)', () => {
+    // `ref Invoice` here would be legal now (Task 1 only forbids a ref TARGETING a nested
+    // child; Invoice is the top-level aggregate) — nested-entity-flat narrows to List-only.
+    const bad = loadLatText(SPEC.replace('amount : Money', 'amount : Money\n      bad : List<Money>'));
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'nested-entity-flat')).toBe(true);
   });
@@ -254,6 +256,44 @@ describe('nested entities in aggregates', () => {
     expect(reparsed.ok, JSON.stringify(!reparsed.ok && reparsed.diagnostics)).toBe(true);
     if (!reparsed.ok) return;
     expect(reparsed.model.aggregates[0]!.entities).toEqual(r.model.aggregates[0]!.entities);
+  });
+
+  it('accepts a nested child field carrying both a ref to a top-level entity and a value-typed field', () => {
+    // End-to-end through the real grammar → mapType path (not a hand-built DomainModel): pins that
+    // a bare `ref Customer` on a child resolves to TypeRef kind 'ref' targeting the top-level
+    // entity, and that a bare `Discount` (a declared value name) resolves to kind 'value' — not
+    // 'enum', which is mapType's fallback for any unrecognized bare name.
+    const spec = `context Billing {
+  entity Customer {
+    customerId : Id key
+  }
+
+  value Discount {
+    percent : Int
+  }
+
+  aggregate Invoice {
+    invoiceId : Id key
+    lines     : List<InvoiceLine>
+
+    entity InvoiceLine {
+      lineId   : Id key
+      amount   : Money
+      customer : ref Customer
+      discount : Discount
+    }
+  }
+}
+`;
+    const r = loadLatText(spec);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    const a = r.model.aggregates[0] as AggregateDef;
+    const line = a.entities!.find(e => e.name === 'InvoiceLine')!;
+    const customerField = line.fields.find(f => f.name === 'customer')!;
+    const discountField = line.fields.find(f => f.name === 'discount')!;
+    expect(customerField.type).toEqual({ kind: 'ref', target: 'Customer' });
+    expect(discountField.type).toEqual({ kind: 'value', value: 'Discount' });
   });
 });
 

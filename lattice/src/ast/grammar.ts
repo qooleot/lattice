@@ -1,11 +1,25 @@
 import type { Candidate, Diagnostic, Engine, Path, Predicate, Term } from './invariant.js';
+import { sumFieldPath } from './invariant.js';
 import type { DomainModel, AggregateDef, EntityDef, Field } from './domain.js';
 import { isQualifiedRef, ownedCollectionChild } from './domain.js';
 
 type Owner = AggregateDef | EntityDef;
 
+/**
+ * Resolve an owner by name, INCLUDING aggregate-owned children (slice B2) — a child is a nameable
+ * candidate SUBJECT (`{aggregate: 'Posting'}`), which is how refsResolve and non-negativity reach a
+ * child's fields at all.
+ *
+ * Admitting children here is safe only because validateModel's `ref-target-nested-child` makes a
+ * child unreachable as a ref TARGET: resolveFieldPath rebinds `def = ownerDef(m, target)` on a ref
+ * hop (:40-41), so if a ref could name a child, a path could hop INTO one — and neither encoding can
+ * address a child from outside its owner (quint inlines it with no id pool; alloy's child sig is
+ * reachable only via `owner`). A child is a subject, never a hop.
+ */
 function ownerDef(m: DomainModel, name: string): Owner | undefined {
-  return m.aggregates.find(a => a.name === name) ?? m.entities.find(e => e.name === name);
+  return m.aggregates.find(a => a.name === name)
+    ?? m.entities.find(e => e.name === name)
+    ?? m.aggregates.flatMap(a => a.entities ?? []).find(e => e.name === name);
 }
 
 /**
@@ -41,12 +55,18 @@ export function resolveFieldPath(m: DomainModel, ownerName: string, path: Path, 
       }
       def = ownerDef(m, target);
     } else if (f.type.kind === 'value') {
-      // One flat value hop (design §3.5, v1): the next segment must name a field on the ValueDef,
-      // and it must be the path's last segment — values carry prim/enum fields only, so there is
-      // never a further hop past the sub-field.
-      const vdef = m.values.find(x => x.name === (f.type as { kind: 'value'; value: string }).value);
-      const sub = vdef?.fields.find(x => x.name === path[i + 1]);
-      return i + 2 === path.length ? (sub ?? null) : null;
+      // Value hops to arbitrary depth (slice B2): values may nest, so walk sub-field by sub-field
+      // rather than capping at one hop. A `list` intermediate still falls through to `def =
+      // undefined` below and dies as unknown-path.
+      let vdef = m.values.find(x => x.name === (f.type as { kind: 'value'; value: string }).value);
+      for (let j = i + 1; j < path.length; j++) {
+        const sub: Field | undefined = vdef?.fields.find(x => x.name === path[j]);
+        if (!sub) return null;
+        if (j === path.length - 1) return sub;
+        if (sub.type.kind !== 'value') return null;
+        vdef = m.values.find(x => x.name === (sub.type as { kind: 'value'; value: string }).value);
+      }
+      return null;
     } else def = undefined;
   }
   return null;
@@ -128,7 +148,9 @@ function shapeErrors(c: any): Diagnostic[] {
       err = check(isString(c.aggregate), 'aggregate', 'string', c.aggregate)
         ?? check(isString(c.collection), 'collection', 'string', c.collection)
         ?? check(isString(c.child), 'child', 'string', c.child)
-        ?? check(isString(c.field), 'field', 'string', c.field)
+        // string is the LEGACY form (slice B2 widened `field` to a Path); both shapes are accepted
+        // on the wire and normalized on read by sumFieldPath.
+        ?? check(isString(c.field) || isPath(c.field), 'field', 'string | Path (array of string)', c.field)
         ?? check(['eq', 'le', 'ge'].includes(c.op), 'op', "'eq'|'le'|'ge'", c.op)
         ?? check(isPath(c.total), 'total', 'Path (array of string)', c.total);
       break;
@@ -318,9 +340,12 @@ export function validateCandidate(c: Candidate, m: DomainModel): Diagnostic[] {
       // resolved child Field — NOT via `isOptionalPath([c.field])`, which resolves against the
       // AGGREGATE (ownerDef walks only top-level defs, never nested children), gets null, returns
       // false, and turns the gate off silently.
-      const cf = child.fields.find(x => x.name === c.field);
+      // resolveFieldPath resolves a child subject as of slice B2 (ownerDef includes children), so a
+      // two-segment `['amount','amount']` walks the value hop exactly as any other path does.
+      const fp = sumFieldPath(c);
+      const cf = resolveFieldPath(m, c.child, fp);
       if (!cf || cf.key || cf.type.kind !== 'prim' || !SOLVER_INT_PRIMS.includes(cf.type.prim))
-        out.push({ code: 'ill-typed', message: `sum field ${c.child}.${c.field} must be a numeric (Int/Money/Date/Duration) non-key field`, at: 'field' });
+        out.push({ code: 'ill-typed', message: `sum field ${c.child}.${fp.join('.')} must be a numeric (Int/Money/Date/Duration) non-key field`, at: 'field' });
       checkPath(c.total, 'total');   // numeric own path; reuses key-path/unrepresentable-path guards
       if (isOptionalPath(c.total)) out.push({ code: 'absence-undecided', message: `total path ${c.total.join('.')} is optional — a sumOverCollection cannot say what absence means; make the field required`, at: 'total' });
       break;

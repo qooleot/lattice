@@ -177,10 +177,18 @@ context Billing {
 
 ## 9. `sumOverCollection` — a field equals/bounds the sum over an owned collection
 
-`<path> ('=='|'<='|'>=') sum(<collection>, <field>)` — the named own field on the aggregate
-equals (or bounds) the sum of `<field>` across every row of an *owned collection* (design §3.2:
+`<path> ('=='|'<='|'>=') sum(<collection>, <path>)` — the named own path on the aggregate
+equals (or bounds) the sum of a path on every row of an *owned collection* (design §3.2:
 a `List<Child>` field whose child is a nested entity declared inside the aggregate). Quint-routed
 only (spec §6.1) — Alloy encodes this form as an adopted constraint, not a checked one.
+
+The summed path is a **path**, not just a field name: it may hop through the child's value-typed
+fields — `sum(postings, amount.amount)` where `Posting.amount : Amount` and `value Amount { amount :
+Money, … }`. Both sides may: the total is an own path, so `total.amount == sum(postings,
+amount.amount)` is the ordinary shape once money is a value type rather than a bare `Money`. Either
+path must land on a non-key numeric field (`Int`/`Money`/`Date`/`Duration`) or the form reports
+`ill-typed`; a total path that is optional reports `absence-undecided`, since a sum cannot say what
+an absent total means.
 
 ```lat
 context Billing {
@@ -195,6 +203,30 @@ context Billing {
     }
 
     invariant totalMatchesLines { totalDue == sum(lines, amount) }
+  }
+}
+```
+
+The same rule with money as a value type, summing through a value hop on both sides:
+
+```lat
+context Billing {
+  value Amount {
+    amount   : Money
+    currency : Text
+  }
+
+  aggregate Invoice {
+    invId : Id key
+    total : Amount @total @unsigned
+    lines : List<InvoiceLine>
+
+    entity InvoiceLine {
+      lineId : Id key
+      net    : Amount @unsigned
+    }
+
+    invariant totalMatchesLines { total.amount == sum(lines, net.amount) }
   }
 }
 ```

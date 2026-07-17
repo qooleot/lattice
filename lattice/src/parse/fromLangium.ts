@@ -177,8 +177,25 @@ function mapBody(inv: G.InvariantDecl, aggregate: string, aggDef: AggregateDef |
       const f = aggDef?.fields.find(x => x.name === b2.collection);
       const child = aggDef && f ? ownedCollectionChild(aggDef, f) : null;
       const ops: Record<string, 'eq' | 'le' | 'ge'> = { '==': 'eq', '<=': 'le', '>=': 'ge' };
+      // `field` is now a PathExpr on the surface, so a value hop (`sum(postings, amount.amount)`)
+      // parses. A SINGLE segment maps back to the legacy bare `string`, not `['amount']`: the two
+      // forms print identically (`sumFieldPath(c).join('.')`), so the surface cannot distinguish
+      // them and the parser must pick one. It must be the string. `canonicalCandidate` is a raw
+      // key-sorted JSON.stringify — it does NOT normalize `field` — so re-parsing a stored
+      // `field: 'amount'` as `['amount']` would change its canonical form while the stored copy
+      // kept the string, and every comparison keyed on that canonical form would see a change that
+      // is not one. The one proven to fire is diff.ts's `changedInvariants` (:170-172), which
+      // compares `cjson(before.candidate) !== cjson(after.candidate)` over `canonicalSet`'s output
+      // under a matching name: re-parsing an unedited .lat would diff every stored sumOverCollection
+      // as CHANGED. (Not rehydrateIds, which matches by NAME and never reads the candidate; not
+      // isImplied, which is vacuously false here — impliedInvariants derives only terminal /
+      // refsResolve / nonNegative / value-law candidates and never mints a sumOverCollection. An
+      // earlier revision of this comment cited both; both were dead ends.) The string is also what
+      // makes print∘parse the identity for every pre-widening candidate.
+      const segs = mapPath(b2.field);
       return { kind: 'sumOverCollection', aggregate, collection: b2.collection,
-        child: child?.name ?? '', field: b2.field, op: ops[b2.op]!, total: mapPath(b2.total) };
+        child: child?.name ?? '', field: segs.length === 1 ? segs[0]! : segs,
+        op: ops[b2.op]!, total: mapPath(b2.total) };
     }
     default: {
       const c: Candidate = { kind: 'statePredicate', aggregate, body: mapPred((b as G.PredicateBody).pred, enums) };

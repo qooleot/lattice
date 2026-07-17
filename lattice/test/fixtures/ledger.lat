@@ -1,0 +1,50 @@
+/// Double-entry bill-payment ledger: the spec that motivated slice B2.
+context Ledger {
+
+  enum Currency { usd, eur }
+
+  /// Money that carries its currency — the DDD value-object encoding. Carries NO sign tag: the
+  /// same Amount is non-negative at Bill.total and signed at LedgerAccount.balance, so sign is
+  /// decided at each USE SITE (validate.ts's value-money-sign-inert rejects a tag written here).
+  value Amount {
+    amount   : Money
+    currency : Currency
+  }
+
+  entity LedgerAccount {
+    accountId : Id key
+    code      : Int
+    balance   : Amount @signed
+  }
+
+  aggregate Bill {
+    billId     : Id key
+    total      : Amount @total @unsigned
+    amountPaid : Amount @balance @unsigned
+    amountDue  : Amount @balance @unsigned
+    lines      : List<LineItem>
+
+    entity LineItem {
+      lineId : Id key
+      amount : Amount @unsigned
+    }
+  }
+
+  aggregate JournalTransaction {
+    txnId     : Id key
+    netAmount : Amount @signed
+    postings  : List<Posting>
+
+    /// Posting stays an OWNED child and still carries a real `ref` — the horn of finding 1 that
+    /// promoting it to top-level used to be the only way to get.
+    entity Posting {
+      postingId : Id key
+      account   : ref LedgerAccount
+      amount    : Amount @signed
+    }
+
+    /// Double entry: a transaction's net is exactly the sum of its postings. The OTHER horn —
+    /// sumOverCollection needs an OWNED collection, so a promoted Posting could not express it.
+    invariant netIsSumOfPostings { netAmount.amount == sum(postings, amount.amount) }
+  }
+}

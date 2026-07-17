@@ -76,6 +76,39 @@ export async function runQuintVerify(em: QuintEmission, opts: VerifyOpts, execIm
 
 const deBig = (v: any): any => (v && typeof v === 'object' && '#bigint' in v) ? Number(v['#bigint']) : v;
 
+// A value instance in ITF (design §3.5): quint encodes a value-typed field as an inline nested
+// record (astToQuint's fieldQType value case — `period: { start: int, end: int }`), which ITF
+// renders as a PLAIN object. Every other ITF composite announces itself with a `#`-prefixed tag
+// (`#map` for owned collections/refs, `#bigint` for integers, `#set`/`#tup` elsewhere), so "no
+// `#` key" is exactly "this is a value record". Checked over all keys rather than the two tags
+// that happen to appear here, so a future tagged form is never mistaken for a value.
+const isValueRecord = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) &&
+  !Object.keys(v as object).some(k => k.startsWith('#'));
+
+/**
+ * Flatten a value record to underscore-joined LEAF keys, so BOTH adapters produce the same
+ * underscore-flattened shape (Alloy does this natively via its sig relation names) — remapValueKeys
+ * (witness.ts) is the single downstream point that converts those to the dotted-path convention the
+ * rest of the engine expects.
+ *
+ * Values NEST (slice B2), so this recurses to arbitrary DEPTH, driven by the record's own structure
+ * (which IS the declaration, flattened by the emitter). It used to flatten exactly one level, which
+ * for `total : Outer` / `value Outer { inner : Amount }` bound `total_inner` to the raw, un-deBig'd
+ * ITF sub-record: no `total_inner_amount` key for the judge to read (so it PERMITTED what Apalache
+ * FORBADE), and renderWitnessTable printed `total.inner: [object Object]` to the human. Recursing
+ * to the leaves is also what guarantees every bound value is deBig'd — an object only ever reaches
+ * `out[key]` once it has no further record structure to descend.
+ */
+function flattenValueRecord(prefix: string, rec: Record<string, unknown>,
+    out: Record<string, string | number | boolean>): void {
+  for (const [sk, sv] of Object.entries(rec)) {
+    const key = `${prefix}_${sk}`;
+    if (isValueRecord(sv)) flattenValueRecord(key, sv, out);
+    else out[key] = deBig(sv);
+  }
+}
+
 function stateToEntities(st: Record<string, any>, varTypes: Record<string, string>): { now?: number; entities: CaseEntity[] } {
   const entities: CaseEntity[] = [];
   let now: number | undefined;
@@ -100,7 +133,14 @@ function stateToEntities(st: Record<string, any>, varTypes: Record<string, strin
           for (const [ck, cv] of (fv as any)['#map']) {
             if (Number(deBig(ck)) >= count) continue;     // beyond <f>Count: not live
             const cf: Record<string, string | number | boolean> = { owner: String(id) };
-            for (const [k2, v2] of Object.entries(cv as Record<string, unknown>)) cf[k2] = deBig(v2);
+            // Same value-record flatten as the owner branch below: a CHILD may declare a
+            // value-typed field too, and implied.ts's valueLawInstances derives that value's laws
+            // at the child's use site, so the child's witness keys must reach the judge in the same
+            // underscore-flattened shape remapValueKeys knows how to dot.
+            for (const [k2, v2] of Object.entries(cv as Record<string, unknown>)) {
+              if (isValueRecord(v2)) flattenValueRecord(k2, v2, cf);
+              else cf[k2] = deBig(v2);
+            }
             children.push({ type: childType, id: `${String(id)}#${fk}${Number(deBig(ck))}`, fields: cf });
           }
           continue;
@@ -108,17 +148,8 @@ function stateToEntities(st: Record<string, any>, varTypes: Record<string, strin
         if (fk.endsWith('Count') && varTypes[childVarKey(k, fk.slice(0, -'Count'.length))]) {
           fields[`${fk.slice(0, -'Count'.length)}.count`] = deBig(fv); continue;
         }
-        // Value fields (design §3.5): quint encodes them as an inline nested record (astToQuint's
-        // fieldQType value case — `period: { start: int, end: int }`), so the ITF represents a
-        // value instance as a plain object (no '#map' key, unlike owned collections/refs above).
-        // Flatten it to underscore-joined keys here so BOTH adapters produce the same
-        // underscore-flattened shape (Alloy does this natively via its sig relation names) —
-        // remapValueKeys (witness.ts) is the single downstream point that converts those to the
-        // dotted-path convention the rest of the engine expects.
-        if (fv !== null && typeof fv === 'object' && !('#map' in (fv as any)) && !('#bigint' in (fv as any))) {
-          for (const [sk, sv] of Object.entries(fv as Record<string, unknown>)) fields[`${fk}_${sk}`] = deBig(sv);
-          continue;
-        }
+        // Value fields (design §3.5) — see flattenValueRecord for the shape and the recursion.
+        if (isValueRecord(fv)) { flattenValueRecord(fk, fv, fields); continue; }
         fields[fk.replace(/_state$/, '.state')] = deBig(fv);
       }
       entities.push({ type, id: String(id), fields }, ...children);

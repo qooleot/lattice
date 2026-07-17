@@ -79,18 +79,80 @@ declared in the same aggregate, is an **owned collection** — the aggregate hol
 
 - Same key rule as a top-level entity: exactly one field must carry `key`, or the nested entity
   reports `missing-key`.
-- Nested entities carry **prim/enum fields only** in v1 — no `ref` and no `List` fields inside a
-  child. A child field of either kind reports `nested-entity-flat`; this keeps owned collections
-  one level deep until there's evidence to go further.
+- Nested entities carry prim, enum, `ref`, and value-typed fields. A child's `ref` must name a
+  **top-level** aggregate or entity: an owned child has no identity to reference, so a `ref` naming
+  one reports `ref-target-nested-child` — whoever holds it, child or top-level owner alike. Both
+  solver encodings inline a child into its owner, with no id pool to draw from. Reference the
+  owning aggregate instead, or promote the child to a top-level entity. (The one exception is the
+  owned-collection declaration itself — `List<Child>` on the child's own aggregate — which is what
+  ownership is written with, not a reference to a child.)
+- A `List` field inside a child reports `nested-entity-flat` — a child cannot own a collection.
+  This is **not yet implemented rather than deliberate**: Alloy would encode it directly (its child
+  sigs are flat), but Quint has no list encoding at all (`fieldQType` returns `null` for a list), so
+  two-level collections need nested bounded maps, an `OWNED_BOUND²` state blowup, and a revisit of
+  the bitwidth policy that already rises to 7 for a single-level sum. That is its own slice with its
+  own solver-fidelity risk. If you have a spec that needs it — a bill line with a per-line tax
+  breakdown is the usual one — that is the evidence, and the cost above is what it has to buy.
 - A nested entity's name joins the same flat namespace as top-level enums/entities/aggregates —
   it must be unique context-wide (`duplicate-name`) and is itself a valid `ref` target: a bare
   field type naming a nested entity resolves as a reference to it, the same as a top-level owner.
 - Exactly one owned-collection field per child entity: two `List<Child>` fields on the same
   aggregate targeting the same child report `duplicate-owned-collection-target` — the solver
   encodings key children by entity name, so a second field would collide.
-- No solver encoding yet: owned collections are structurally validated and round-trip through the
-  printer, but list-typed fields are dropped before solving (quint/alloy) and candidate paths that
-  reach into a collection are rejected.
+- Every child must be owned: a nested entity that no `List<...>` field on its aggregate ranges over
+  reports `unowned-nested-entity`. A child is reachable *only* through an owned collection — Quint
+  inlines it into its owner with no id pool of its own, Alloy emits its sig only for a collection
+  that ranges over it, and nothing may `ref` one — so an unowned child is unreachable in every
+  encoding, a declaration nothing can read or constrain. Give the aggregate a `List<Child>` field,
+  or declare the entity at context level.
+- Owned collections are solver-encoded: Quint gives the owner a bounded `<field>: int -> { … }` map
+  plus a `<field>Count: int` companion; Alloy gives the child its own sig with an `owner: one
+  <Parent>` relation. A list field that is *not* an owned collection (`List<Int>`, `List<ref
+  TopLevel>`) is still dropped before solving — Quint's `fieldQType` returns `null` for a list and
+  Alloy's sig emitter has no list branch.
+- A multi-segment candidate path *through* any collection fails to resolve and reports
+  `unknown-path` — a list is not a hop. A single-segment path *at* a list field is not currently
+  rejected: it resolves and then contributes nothing, which is a gap rather than a design.
+
+### What a child can hold
+
+A child carrying both a `ref` to a top-level entity and a value-typed money field — the shape a
+double-entry ledger needs, where each posting names the account it hits and the amount it moves:
+
+```lat
+context Ledger {
+  value Amount {
+    amount   : Money
+    currency : Text
+  }
+
+  entity LedgerAccount {
+    accountId : Id key
+    balance   : Amount @signed
+  }
+
+  aggregate JournalEntry {
+    entryId  : Id key
+    total    : Amount @total @unsigned
+    postings : List<Posting>
+
+    entity Posting {
+      postingId : Id key
+      account   : ref LedgerAccount
+      amount    : Amount @unsigned
+    }
+
+    invariant totalMatchesPostings { total.amount == sum(postings, amount.amount) }
+  }
+}
+```
+
+`Posting.account` is legal because `LedgerAccount` is top-level; a `ref Posting` from anywhere —
+including another `Posting` — would report `ref-target-nested-child`. `Posting.amount` is a value
+type flattened at each level (`amount_amount` in Alloy, a nested record in Quint), and its `Money`
+sub-field derives `Posting.amount.amount >= 0` per path, from the `@unsigned` written at the use
+site. The same `value Amount` is `@signed` at `LedgerAccount.balance` — sign belongs to the field,
+not the type (see [value](value.md)).
 
 ## See also
 

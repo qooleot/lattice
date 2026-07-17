@@ -126,8 +126,12 @@ ConserveBody:
 LeadsToBody:
     'from' from=Predicate 'leads' 'to' to=Predicate 'under' 'fairness' fairness=STRING;
 
+// `field` is a PathExpr, not an ID: the summed field may hop through a value type
+// (`sum(postings, amount.amount)` where `Posting.amount : Amount`) since sumOverCollection.field
+// widened from `string` to `Path`. `collection` stays an ID — it names one List field on the
+// aggregate and never hops.
 SumBody:
-    total=PathExpr op=('=='|'<='|'>=') 'sum' '(' collection=ID ',' field=ID ')';
+    total=PathExpr op=('=='|'<='|'>=') 'sum' '(' collection=ID ',' field=PathExpr ')';
 
 PredicateBody:
     pred=Predicate;

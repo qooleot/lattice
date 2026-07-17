@@ -1,5 +1,6 @@
 import type { DomainModel } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term } from '../ast/invariant.js';
+import { sumFieldPath } from '../ast/invariant.js';
 import type { LedgerEntry } from '../engine/session.js';
 
 function termEn(t: Term): string {
@@ -35,7 +36,7 @@ export function renderCandidateEnglish(c: Candidate): string {
     case 'leadsTo': return `${c.aggregate}: ${predEn(c.from)} eventually leads to ${predEn(c.to)} (under fairness: ${c.fairness}).`;
     case 'sumOverCollection': {
       const rel = c.op === 'eq' ? 'always equals' : c.op === 'le' ? 'never exceeds' : 'is never below';
-      return `On every ${c.aggregate}, ${c.total.join('.')} ${rel} the sum of ${c.field} over its ${c.collection}.`;
+      return `On every ${c.aggregate}, ${c.total.join('.')} ${rel} the sum of ${sumFieldPath(c).join('.')} over its ${c.collection}.`;
     }
     case 'guard': throw new Error('renderCandidateEnglish: a guard is a transition enablement, not an always-property invariant — it has no invariant-prose rendering');
   }

@@ -1,22 +1,63 @@
 # Derived invariants
 
-Three families of invariant are **implied by structure** (spec P9) rather than written by hand:
+Four families of invariant are **implied by structure** (spec P9) rather than written by hand:
 declare the structure and the rule exists automatically, computed fresh from the model on every
 load. They are never printed in `spec.lat` — the printer omits them — but they are first-class
 everywhere else: solver emitters see them, the prose projection lists them with an "implied by
 structure" note, and reconciliation treats removing the structure that implies one as an
 invariant-removing edit.
 
-## The three families
+## The four families
 
 | Structure | Implied rule | Derived name | Opt out |
 |---|---|---|---|
 | A state `s` tagged `@terminal` in lifecycle block `r` of owner `A` | once in `s`, stays in `s` (a `terminal` body) | `terminal<A><R><S>` | Remove the `@terminal` tag. |
 | Owner `A` has at least one **required** same-context `ref` field | every required same-context `ref` field on `A` resolves (a `refsResolve` body) | `refsResolve<A>` | None for a required `ref` — it must resolve. A **qualified** cross-context `ref` (see [field types](field-types.md)) and an **optional** `ref` do not trigger this, and are not among the fields it covers. |
-| A `Money` field `f` on owner `A`, not tagged `@signed` | `f >= 0`, or `present(f) => f >= 0` when `f` is [optional](field-types.md) (a `statePredicate` body) | `nonNegative<A><F>` | Tag the field `@signed`. |
+| A **money path** `p` on owner `A`, whose head field is not tagged `@signed` | `p >= 0`, or `present(f) => p >= 0` when the head field `f` is [optional](field-types.md) (a `statePredicate` body) | `nonNegative<A><P…>` | Tag the head field `@signed`. |
+| A field `f : V` on an **aggregate, top-level entity, or aggregate-owned child**, where [value](value.md) `V` declares its own `invariant` | each of `V`'s laws, instantiated at this use site with every path prefixed `f.` | `val<V><A><F><Inv>` | Remove the law from `V`, or stop using `V` here. |
 
-Derived names are deterministic, camelCase-joined from the owner, lifecycle/field, and state names —
-e.g. `terminalInvoiceSettlementVoid`, `refsResolveSubscription`, `nonNegativeInvoiceTotalDue`.
+"Owner" means an aggregate, a top-level entity, **or an aggregate-owned child**. All four families
+derive at a child's use site exactly as they do at an aggregate's or a top-level entity's. Only an
+aggregate has a lifecycle, so `terminal` is aggregates-only. A child is a nameable subject even
+though nothing can reference it (see [field types](field-types.md)), so `refsResolve` fires on a
+`Posting.account : ref LedgerAccount` with the child as its own subject — `refsResolvePosting` — a
+child's own money fields derive non-negativity like any other owner's, through a value and at
+whatever depth it nests (`nonNegativePostingAmountAmount`), and a value-typed field on a child
+derives its value's laws there too: given `value Period { … invariant wellOrdered { start < end } }`,
+an aggregate's `term : Period` derives `valPeriodInvoiceTermWellOrdered` and a child's
+`window : Period` derives `valPeriodPostingWindowWellOrdered` just the same. Solver-checked
+identically in both engines: Quint folds the rule over the owner's child map (a child has no var of
+its own to quantify over), and Alloy quantifies over the child's own sig.
+
+A **value** is not an owner. Its `invariant` blocks are type-carried laws instantiated at every use
+site rather than rules about the value itself, which is the fourth row above — see
+[value](value.md).
+
+## Non-negativity derives per money path
+
+A **money path** is any path from an owner's field down to a `Money` prim — `[f]` for a plain
+`Money` field, and `[f, …sub]` for each `Money` sub-field reachable through a value-typed field, at
+whatever depth the values nest. `total : Amount` where `value Amount { amount : Money, currency :
+Text }` yields the path `total.amount`, exactly where `total : Money` would yield `total`. Each path
+derives its own rule: an `@unsigned` `totals : LineTotals` carrying two `Amount`s derives two,
+`nonNegativeInvoiceTotalsNetAmount` and `nonNegativeInvoiceTotalsGrossAmount`.
+
+Sign is read off the **use site** and only the use site — the tag on the owner's field, never on the
+value declaration, which cannot know whether this use is a bill total or a ledger balance (see
+[tags](tags.md), and `value-money-sign-inert`).
+
+Derived names are deterministic, camelCase-joined from the owner, lifecycle/field/path, and state
+names — e.g. `terminalInvoiceSettlementVoid`, `refsResolveSubscription`, `nonNegativeInvoiceTotalDue`,
+`nonNegativeInvoiceTotalAmount` for the value-hop path `total.amount`.
+
+**When two derived rules collide on one name**, the model is rejected with `derived-name-collision`
+at `init`/`apply`. The segments join with no separator, so a plain `totalAmount : Money` and a
+value-typed `total : Amount { amount : Money }` on one owner both mint
+`nonNegativeInvoiceTotalAmount` — two distinct rules, one name, the second silently shadowing the
+first in every id- and name-keyed lookup. No separator fixes this (names fold through `toCamelName`,
+which splits on `_` and re-camelCases, so the collision returns) and a disambiguating suffix would
+tax the non-colliding majority to serve the exception. So it is reported rather than repaired: only
+the author can say which field should be renamed.
 
 ```lat
 context Billing {

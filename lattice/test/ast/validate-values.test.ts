@@ -110,3 +110,82 @@ describe('value objects', () => {
     expect(validateModel(m)).toEqual([]);
   });
 });
+
+describe('values nest (slice B2)', () => {
+  const amount: ValueDef = { kind: 'value', name: 'Amount',
+    fields: [{ name: 'amount', type: { kind: 'prim', prim: 'Money' } }] };
+  const taxed: ValueDef = { kind: 'value', name: 'TaxedAmount', fields: [
+    { name: 'net', type: { kind: 'value', value: 'Amount' } },
+    { name: 'tax', type: { kind: 'value', value: 'Amount' } }] };
+
+  it('accepts a value-typed sub-field', () => {
+    expect(validateModel(model([amount, taxed]))).toEqual([]);
+  });
+
+  it('still rejects a ref sub-field (value-flat)', () => {
+    const bad: ValueDef = { kind: 'value', name: 'Bad',
+      fields: [{ name: 'r', type: { kind: 'ref', target: 'Amount' } }] };
+    expect(validateModel(model([amount, bad])).map(d => d.code)).toContain('value-flat');
+  });
+
+  it('still rejects a List sub-field (value-flat)', () => {
+    const bad: ValueDef = { kind: 'value', name: 'Bad',
+      fields: [{ name: 'l', type: { kind: 'list', of: { kind: 'prim', prim: 'Money' } } }] };
+    expect(validateModel(model([amount, bad])).map(d => d.code)).toContain('value-flat');
+  });
+
+  it('reports unresolved-value for an undeclared nested value', () => {
+    const bad: ValueDef = { kind: 'value', name: 'Bad',
+      fields: [{ name: 'n', type: { kind: 'value', value: 'Nope' } }] };
+    expect(validateModel(model([bad])).map(d => d.code)).toContain('unresolved-value');
+  });
+});
+
+describe('value-type cycles (value-cycle)', () => {
+  it('rejects a two-value cycle, naming both values in the path', () => {
+    const a: ValueDef = { kind: 'value', name: 'A', fields: [{ name: 'b', type: { kind: 'value', value: 'B' } }] };
+    const b: ValueDef = { kind: 'value', name: 'B', fields: [{ name: 'a', type: { kind: 'value', value: 'A' } }] };
+    const diags = validateModel(model([a, b]));
+    const cyc = diags.filter(d => d.code === 'value-cycle');
+    expect(cyc.length).toBe(1);
+    expect(cyc[0]!.message).toContain('A');
+    expect(cyc[0]!.message).toContain('B');
+    expect(cyc[0]!.message).toContain('A -> B -> A');
+  });
+
+  it('rejects a self-cycle (value A { a : A })', () => {
+    const a: ValueDef = { kind: 'value', name: 'A', fields: [{ name: 'a', type: { kind: 'value', value: 'A' } }] };
+    const diags = validateModel(model([a]));
+    const cyc = diags.filter(d => d.code === 'value-cycle');
+    expect(cyc.length).toBe(1);
+    expect(cyc[0]!.message).toContain('A -> A');
+  });
+
+  it('rejects a three-value chain cycle (A -> B -> C -> A) exactly ONCE', () => {
+    const a: ValueDef = { kind: 'value', name: 'A', fields: [{ name: 'b', type: { kind: 'value', value: 'B' } }] };
+    const b: ValueDef = { kind: 'value', name: 'B', fields: [{ name: 'c', type: { kind: 'value', value: 'C' } }] };
+    const c: ValueDef = { kind: 'value', name: 'C', fields: [{ name: 'a', type: { kind: 'value', value: 'A' } }] };
+    const diags = validateModel(model([a, b, c]));
+    const cyc = diags.filter(d => d.code === 'value-cycle');
+    expect(cyc.length).toBe(1);
+    expect(cyc[0]!.message).toContain('A -> B -> C -> A');
+  });
+
+  it('does NOT reject a legal nested (DAG) value — Outer { inner : Amount }, Amount { amount : Money }', () => {
+    const amount: ValueDef = { kind: 'value', name: 'Amount',
+      fields: [{ name: 'amount', type: { kind: 'prim', prim: 'Money' } }] };
+    const outer: ValueDef = { kind: 'value', name: 'Outer',
+      fields: [{ name: 'inner', type: { kind: 'value', value: 'Amount' } }] };
+    expect(validateModel(model([amount, outer])).map(d => d.code)).not.toContain('value-cycle');
+  });
+
+  it('does NOT reject a diamond — Outer { l : Amount, r : Amount } — visiting Amount twice on different branches is not a cycle', () => {
+    const amount: ValueDef = { kind: 'value', name: 'Amount',
+      fields: [{ name: 'amount', type: { kind: 'prim', prim: 'Money' } }] };
+    const outer: ValueDef = { kind: 'value', name: 'Outer',
+      fields: [
+        { name: 'l', type: { kind: 'value', value: 'Amount' } },
+        { name: 'r', type: { kind: 'value', value: 'Amount' } }] };
+    expect(validateModel(model([amount, outer])).map(d => d.code)).not.toContain('value-cycle');
+  });
+});

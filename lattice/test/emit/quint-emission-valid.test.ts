@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { writeFileSync, mkdtempSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { astToQuint } from '../../src/emit/quint.js';
+import { astToQuint, candidateToQuint, childContext } from '../../src/emit/quint.js';
 import { astToQuintClassify } from '../../src/emit/quint-classify.js';
 import { astToQuintGuard } from '../../src/emit/quint-guard.js';
 import { loadLatText } from '../../src/parse/fromLangium.js';
@@ -190,4 +190,140 @@ describe('emission typecheck-validity gate (quint typecheck, no solver)', () => 
     const r = await typechecks(em.source);
     expect(r.ok, r.stderr).toBe(true);
   });
+});
+
+describe('child-subject candidates quantify over the child map (slice B2)', () => {
+  const m: DomainModel = {
+    context: 'L', enums: [], values: [], events: [], services: [], entities: [],
+    aggregates: [{ kind: 'aggregate', name: 'Txn', fields: [
+      { name: 'txnId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'legs', type: { kind: 'list', of: { kind: 'ref', target: 'Posting' } } }],
+      entities: [{ kind: 'entity', name: 'Posting', fields: [
+        { name: 'pid', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }] }],
+  };
+  const nonNeg: Candidate = { kind: 'statePredicate', aggregate: 'Posting',
+    body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['amount'] },
+            right: { kind: 'int', value: 0 } } };
+
+  it('does not bind a var for the child (postings does not exist)', () => {
+    const src = candidateToQuint(m, nonNeg, 'P');
+    expect(src).not.toMatch(/\bpostings\b/);
+  });
+
+  it('walks the owner\'s collection map, gated on the live count', () => {
+    const src = candidateToQuint(m, nonNeg, 'P');
+    expect(src).toContain('txns.keys().forall');
+    expect(src).toContain('legsCount');
+    expect(src).toContain('.legs.get(i).amount');
+  });
+
+  it('names only vars the module declares', () => {
+    // The regression that motivates this task: an undeclared var is invalid Quint.
+    const mod = astToQuint(m, { kind: 'probe-permit', exclusions: [], maxSteps: 1, hi: nonNeg }).source;
+    const declared = new Set([...mod.matchAll(/var (\w+):/g)].map(x => x[1]!));
+    declared.add('now');
+    for (const used of new Set([...mod.matchAll(/^\s*val \w+ = (\w+)\.keys\(\)/gm)].map(x => x[1]!)))
+      expect([...declared], `val body names undeclared var ${used}`).toContain(used);
+  });
+
+  // This file's own gate: a shape assertion cannot tell whether the emission is valid quint.
+  it('astToQuint emits typecheck-clean quint for a child-subject candidate', async () => {
+    const em = astToQuint(m, { kind: 'probe-permit', exclusions: [], maxSteps: 1, hi: nonNeg });
+    const r = await typechecks(em.source);
+    expect(r.ok, r.stderr).toBe(true);
+  });
+
+  // The SECOND probe of the elicitation loop, not a hypothetical: the first probe's witness is
+  // judged, extractSalient (salient.ts:95 — `e.type === c.aggregate` over witness entities, and the
+  // adapter does emit Posting children) returns a real `amount ge 0` fact, exclusionsFrom keeps it
+  // (planner.ts:48), and the next probe emits `shape0` over it. shapeToQuint had candidateToQuint's
+  // exact bug — `varName(c.aggregate)` on a child — so this emitted `postings`, a var the module
+  // never declares, and real quint rejected it with QNT404.
+  describe('a child-subject probe WITH exclusions (the shapeToQuint regression)', () => {
+    const exclusions = [[{ dim: 'amount ge 0', value: false }]];
+    const withExclusions = () => astToQuint(m, { kind: 'probe-permit', exclusions, maxSteps: 1, hi: nonNeg }).source;
+
+    it('names only vars the module declares, and walks the owner map', () => {
+      const mod = withExclusions();
+      const shape = mod.split('\n').find(l => l.includes('val shape0'))!;
+      expect(shape).not.toMatch(/\bpostings\b/);
+      expect(mod).not.toMatch(/\bpostings\b/);
+      expect(shape).toContain('txns.keys().exists');
+      expect(shape).toContain('legsCount');
+      expect(shape).toContain('o.legs.get(i).amount');
+      // exists is the DUAL of overChildren's forall: seed false, combine with `or`, gate the LIVE slot.
+      expect(shape).toContain('foldl(false, (acc, i) => acc or (i < o.legsCount and');
+    });
+
+    it('emits typecheck-clean quint', async () => {
+      const r = await typechecks(withExclusions());
+      expect(r.ok, r.stderr).toBe(true);
+    });
+  });
+
+  // The non-child shapeToQuint path is untouched by the child branch: pinned byte-for-byte
+  // (verified against the pre-change emitter by running both). Covers every dim branch —
+  // `<coll>.count`, `sum(<coll>.<f>)`, `<path> value`, `<path> = <enum>`, and a comparison — in the
+  // order they must stay in (mSum before mTot, or `sum(lines.amount)` mis-parses as a dotted path).
+  it('the non-child shape path emits byte-identical quint', () => {
+    const em = astToQuint(invoiceLinesModel, { kind: 'probe-permit', hi: someStatePredicateOnInvoice, maxSteps: 1,
+      exclusions: [[{ dim: 'lines.count', value: 2 }, { dim: 'sum(lines.amount)', value: 40 },
+        { dim: 'totalDue value', value: 40 }, { dim: 'totalDue = Draft', value: true },
+        { dim: 'totalDue ge 0', value: true }]] });
+    expect(em.source.split('\n').find(l => l.includes('val shape0'))!.trim()).toBe(
+      'val shape0 = invoices.keys().exists(k => { val x = invoices.get(k) x.exists and x.linesCount == 2 and '
+      + 'range(0, 3).foldl(0, (acc, i) => if (i < x.linesCount) acc + x.lines.get(i).amount else acc) == 40 and '
+      + 'x.totalDue == 40 and x.totalDue == "Draft" and (x.totalDue >= 0) == true })');
+  });
+
+  // An ORPHAN nested child — declared inside an aggregate, but no `List<ref Posting>` field owning
+  // it — has no quint var AND no owner record field, so it reaches no solver encoding at all.
+  // validateModel gives zero diagnostics for this (verified), so childContext is the only place
+  // that can catch it. Returning null would fall through to `varName(c.aggregate)` and silently
+  // re-open exactly the undeclared-var bug this slice removes.
+  it('childContext throws for an orphan nested child (no owning collection)', () => {
+    const orphan: DomainModel = { ...m, aggregates: [{ ...m.aggregates[0]!, fields: [m.aggregates[0]!.fields[0]!] }] };
+    expect(() => childContext(orphan, 'Posting')).toThrow(/Posting/);
+    expect(() => childContext(orphan, 'Posting')).toThrow(/Txn/);
+    // still null — not a nested child at all — for a legitimate top-level subject
+    expect(childContext(orphan, 'Txn')).toBeNull();
+  });
+});
+
+// The brief for this slice asserted "Quint needs nothing — fieldQType already recurses". Half true:
+// fieldQType (the TYPE side) does recurse, emitting `line: { net: { amount: int } }`. But
+// pathToQuint (the PATH side) capped at one value hop just as alloy and resolveFieldPath did — it
+// never rebound its `owner` after a value hop, so the segment AFTER a nested value was looked up on
+// the OWNER's fields, came back undefined, and `f.type.kind` threw a raw TypeError. The one-level
+// case survived only by accident: `i < path.length - 1 && f.type.kind === 'ref'` short-circuits on
+// the last segment before `f.type` is ever touched. Legalising value-in-value made the deep path
+// reachable and turned that latent cap into a crash on the exact shape this slice exists to enable.
+describe('nested value paths emit valid quint (slice B2)', () => {
+  const nested: DomainModel = {
+    context: 'L', enums: [], events: [], services: [], entities: [],
+    values: [
+      { kind: 'value', name: 'Amount', fields: [{ name: 'amount', type: { kind: 'prim', prim: 'Money' } }] },
+      { kind: 'value', name: 'TaxedAmount', fields: [
+        { name: 'net', type: { kind: 'value', value: 'Amount' } },
+        { name: 'tax', type: { kind: 'value', value: 'Amount' } }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Bill', fields: [
+      { name: 'billId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'line', type: { kind: 'value', value: 'TaxedAmount' } }] }],
+  };
+  const deepProbe: Candidate = { kind: 'statePredicate', aggregate: 'Bill',
+    body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['line', 'net', 'amount'] },
+            right: { kind: 'int', value: 0 } } };
+
+  it('renders a deep value path as a nested record accessor', () => {
+    const em = astToQuint(nested, { kind: 'probe-permit', hi: deepProbe, exclusions: [], maxSteps: 1 });
+    expect(em.source).toContain('x.line.net.amount >= 0');
+  });
+
+  it('emits typecheck-clean quint for a deep value path', async () => {
+    const em = astToQuint(nested, { kind: 'probe-permit', hi: deepProbe, exclusions: [], maxSteps: 1 });
+    const r = await typechecks(em.source);
+    expect(r.stderr).toBe('');
+    expect(r.ok).toBe(true);
+  }, 30_000);
 });

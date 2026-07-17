@@ -131,3 +131,30 @@ describe('qualified ref shape validation', () => {
     }
   });
 });
+
+describe('ambiguous numeric tag (slice B2)', () => {
+  it('rejects @total on a value with two numeric sub-fields', () => {
+    const m: DomainModel = {
+      context: 'L', enums: [], entities: [], events: [], services: [],
+      values: [{ kind: 'value', name: 'Pair', fields: [
+        { name: 'a', type: { kind: 'prim', prim: 'Money' } },
+        { name: 'b', type: { kind: 'prim', prim: 'Money' } }] }],
+      aggregates: [{ kind: 'aggregate', name: 'X', fields: [
+        { name: 'xId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 't', type: { kind: 'value', value: 'Pair' }, tags: ['total'] }] }],
+    };
+    expect(validateModel(m).map(d => d.code)).toContain('ambiguous-numeric-tag');
+  });
+
+  it('rejects @balance on a value with no numeric sub-field', () => {
+    const m: DomainModel = {
+      context: 'L', enums: [], entities: [], events: [], services: [],
+      values: [{ kind: 'value', name: 'Tag', fields: [
+        { name: 'label', type: { kind: 'prim', prim: 'Text' } }] }],
+      aggregates: [{ kind: 'aggregate', name: 'X', fields: [
+        { name: 'xId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'b', type: { kind: 'value', value: 'Tag' }, tags: ['balance'] }] }],
+    };
+    expect(validateModel(m).map(d => d.code)).toContain('ambiguous-numeric-tag');
+  });
+});
