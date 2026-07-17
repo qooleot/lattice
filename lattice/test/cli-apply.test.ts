@@ -166,6 +166,43 @@ describe('engine apply', () => {
     expect(JSON.stringify(r.refusals)).toContain('unmatched-rename-confirmation');
     expect(readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8')).toBe(ledgerBefore);
   });
+
+  // Task 12, Step 3b: the force-remove declined entry's `reason` is the human's actual ruling
+  // (the WHY behind dropping the invariant), not just fixed boilerplate — `--reason` threads
+  // through reconcile() into the appended `declined` ledger entry.
+  it('--force-remove with --reason records the given reason on the declined entry', async () => {
+    // retryCapWhilePastDue is ledger-backed (hand-retryCapWhilePastDue, currently adopted, no
+    // later decline) — a real removal target that exercises the needs-force-remove ceremony.
+    const text = readFileSync(latFile, 'utf8').replace(
+      /\n\s*\/\/\/ While past due, dunning retries on the current invoice never exceed the subscription's cap\.\n\s*invariant retryCapWhilePastDue where state status in \{pastDue\} \{ latestInvoice\.retryCount <= maxRetries \}\n/,
+      '\n');
+    expect(text).not.toContain('retryCapWhilePastDue');
+    writeFileSync(latFile, text);
+
+    const reason = 'settle guard: human ruled the eq bound wrong on 2026-07-16';
+    const r: any = await apply(['--force-remove', 'retryCapWhilePastDue', '--reason', reason, '--no-classify']);
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+
+    const ledger = readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    const declined = ledger.filter((e: any) => e.kind === 'declined' && e.invariant.name === 'retryCapWhilePastDue');
+    expect(declined).toHaveLength(1);
+    expect(declined[0].reason).toBe(reason);
+  });
+
+  it('--force-remove without --reason falls back to the fixed boilerplate reason', async () => {
+    const text = readFileSync(latFile, 'utf8').replace(
+      /\n\s*\/\/\/ While past due, dunning retries on the current invoice never exceed the subscription's cap\.\n\s*invariant retryCapWhilePastDue where state status in \{pastDue\} \{ latestInvoice\.retryCount <= maxRetries \}\n/,
+      '\n');
+    writeFileSync(latFile, text);
+
+    const r: any = await apply(['--force-remove', 'retryCapWhilePastDue', '--no-classify']);
+    expect(r.ok, JSON.stringify(r)).toBe(true);
+
+    const ledger = readFileSync(join(sessionDir, 'ledger.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    const declined = ledger.filter((e: any) => e.kind === 'declined' && e.invariant.name === 'retryCapWhilePastDue');
+    expect(declined).toHaveLength(1);
+    expect(declined[0].reason).toBe('hand-removed via --force-remove');
+  });
 });
 
 describe('engine apply: workspace context-map hook', () => {

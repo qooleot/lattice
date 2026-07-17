@@ -79,4 +79,35 @@ describe('decline', () => {
     expect(s.candidates.filter(c => c.inv.id === 'implied-nonNegativeAcctBal')).toHaveLength(1);
     expect(s.candidates.find(c => c.inv.id === 'implied-nonNegativeAcctBal')!.status).toBe('declined');
   });
+
+  // Task 12: the convergence-adoption path has the same declined-ledger blindness as adoptGuard —
+  // a re-proposed candidate under a FRESH id (so no tracker-level idempotence check can catch it)
+  // whose canonical SHAPE matches a rule the ledger last declined must not be silently re-adopted
+  // just because it converges as the sole survivor.
+  it('a re-proposed shape matching a declined rule parks instead of adopting on convergence', async () => {
+    await runCommand(['decline', '--session', dir, '--id', 'implied-nonNegativeAcctBal', '--reason', 'x'], fakeDeps);
+    // Re-propose the same shape under a fresh agent id.
+    const same = { id: 'agent-1', name: 'balNonNeg2', prior: 0.6, source: 'agent',
+      candidate: { kind: 'statePredicate', aggregate: 'Acct',
+        body: { kind: 'cmp', op: 'ge', left: { kind: 'field', owner: 'self', path: ['bal'] }, right: { kind: 'int', value: 0 } } } };
+    await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([same])], fakeDeps);
+
+    // Force straight to the brink of convergence (crib from cli.test.ts's next-question-converged
+    // tests): single active survivor, both probes already asked, alternatives exhausted, and a
+    // verdict present so we land in the hasVerdicts-true branch under test (not the zero-verdict
+    // unanchored-survivor park, which is a separate, already-covered guard).
+    const st = loadState(dir);
+    st.phase = 'alternatives';
+    st.alternativeAttempts = 2;
+    st.probesAsked = { forbid: true, permit: true };
+    saveState(dir, st);
+    appendLedger(dir, { kind: 'verdict', at: new Date().toISOString(), witnessId: 'w1',
+      witness: { entities: [] } as any, salient: [], judge: 'forbid', question: '' });
+
+    const r: any = await runCommand(['next-question', '--session', dir], fakeDeps);
+    expect(r.type).toBe('converged');
+    const s = loadState(dir);
+    expect(s.candidates.find(c => c.inv.id === 'agent-1')!.status).toBe('parked');
+    expect(readLedger(dir).some(e => e.kind === 'open-decision' && (e as any).topic === 'previously-declined')).toBe(true);
+  });
 });

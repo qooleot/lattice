@@ -7,6 +7,7 @@ import { subscriptionsModel, paidImpliesExactConjunct, amountPaidAtMostTotalConj
 import type { AggregateDef, DomainModel } from '../src/ast/domain.js';
 import type { Candidate, CandidateInvariant } from '../src/ast/invariant.js';
 import type { SessionState, TrackedCandidate } from '../src/engine/session.js';
+import { appendLedger, readLedger, loadState } from '../src/engine/session.js';
 
 const inertDeps: any = { alloy: async () => ({ sat: false, instances: [], ms: 0 }), quint: async () => ({ violated: false, ms: 0 }) };
 
@@ -275,6 +276,37 @@ describe('engine strengthen CLI', () => {
     const ledger = readFileSync(join(dir, 'ledger.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     const adoptedGuardEntries = ledger.filter((e: any) => e.kind === 'adopted' && e.invariant.candidate.kind === 'guard');
     expect(adoptedGuardEntries).toHaveLength(1);   // only the first run appended a ledger entry
+  });
+
+  // Task 12: a guard the human ruled OFF (via `decline` or `apply --force-remove`, both of which
+  // append a `kind:'declined'` ledger entry — reconcile.ts:122) must stay off even though
+  // apply's rebuild drops its tracker entirely, leaving nothing for the same-id-adopted check in
+  // `adoptGuard` to see. Re-derive the SAME guard `strengthen` mints for paidExact (id
+  // `guard-Invoice-settle-eq`, the eq variant scriptedDeps closes) so the ledger's last word for
+  // that id is 'declined', then prove strengthen does not silently re-adopt it.
+  it('a guard whose last ledger word is declined is NOT re-adopted by strengthen', async () => {
+    const dir = await setup();
+    const t1 = '2026-01-01T00:00:00.000Z', t2 = '2026-01-02T00:00:00.000Z';
+    // Simulate the human ruling: the guard was adopted once, then hand-removed via
+    // apply --force-remove, which appends kind:'declined' (reconcile.ts:122).
+    const gInv: CandidateInvariant = {
+      id: 'guard-Invoice-settle-eq', name: 'guard_settle_eq', prior: 1, source: 'regen',
+      candidate: { kind: 'guard', aggregate: 'Invoice', region: 'settlement', transition: 'settle',
+        predicate: { kind: 'cmp', op: 'eq',
+          left: { kind: 'field', owner: 'self', path: ['amountPaid'] },
+          right: { kind: 'field', owner: 'self', path: ['totalDue'] } } },
+    };
+    appendLedger(dir, { kind: 'adopted', at: t1, invariant: gInv, provenance: 'strengthen' });
+    appendLedger(dir, { kind: 'declined', at: t2, invariant: gInv, reason: 'hand-removed via --force-remove' });
+
+    const { deps } = scriptedDeps();
+    await runCommand(['strengthen', '--session', dir, '--name', 'paidExact'], deps);
+
+    const s = loadState(dir);
+    expect(s.candidates.some(c => c.inv.id === gInv.id && c.status === 'adopted'),
+      'a human-declined guard must not be re-adopted without a re-ruling').toBe(false);
+    expect(readLedger(dir).filter(e => e.kind === 'adopted' && e.invariant.id === gInv.id))
+      .toHaveLength(1);   // only the original adoption — no new entry
   });
 });
 

@@ -14,6 +14,7 @@ export interface ReconcileInput {
   ledger: LedgerEntry[];
   confirmedRenames: RenameSpec[];
   forceRemove: string[];
+  removeReason?: string;
   at: string;
 }
 export interface Refusal {
@@ -67,7 +68,7 @@ export function canonicalSet(model: DomainModel, explicit: CandidateInvariant[],
 }
 
 export function reconcile(input: ReconcileInput): ReconcileOutcome {
-  const { parsed, storedModel, storedExplicit, ledger, confirmedRenames, forceRemove, at } = input;
+  const { parsed, storedModel, storedExplicit, ledger, confirmedRenames, forceRemove, removeReason, at } = input;
   const refusals: Refusal[] = [];
   const warnings: string[] = [];
   const appends: LedgerEntry[] = [];
@@ -119,7 +120,7 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
     if (!ledgerBacked(rem.name)) {
       applied.push(`removed invariant ${rem.name} (no ledger record)`);
     } else if (forceRemove.includes(rem.name)) {
-      appends.push({ kind: 'declined', at, invariant: rem, reason: 'hand-removed via --force-remove' });
+      appends.push({ kind: 'declined', at, invariant: rem, reason: removeReason ?? 'hand-removed via --force-remove' });
       applied.push(`removed invariant ${rem.name}`);
     } else {
       refusals.push({ code: 'needs-force-remove', invariant: rem.name,

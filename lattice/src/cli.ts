@@ -215,6 +215,13 @@ function guardCandidateInvariant(g: GuardCandidate): CandidateInvariant {
 function adoptGuard(s: SessionState, dir: string, g: GuardCandidate, provTag: string): CandidateInvariant | null {
   const gInv = guardCandidateInvariant(g);
   if (s.candidates.some(c => c.inv.id === gInv.id && c.status === 'adopted')) return null;
+  // A guard the human ruled OFF stays off: `decline` and `apply --force-remove` both append a
+  // kind:'declined' ledger entry, and re-deriving the same guard from a CTI does not overrule a
+  // recorded human ruling. Last word per id wins, so a later hand-re-adoption re-enables it.
+  const lastWord = new Map<string, 'adopted' | 'declined'>();
+  for (const e of readLedger(dir))
+    if (e.kind === 'adopted' || e.kind === 'declined') lastWord.set(e.invariant.id, e.kind);
+  if (lastWord.get(gInv.id) === 'declined') return null;
   s.candidates.push({ inv: gInv, status: 'adopted' });
   appendLedger(dir, { kind: 'adopted', at: now(), invariant: gInv, provenance: `${provTag} ${isoDay(now())}` });
   return gInv;
@@ -545,6 +552,16 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
                 note: 'converged with no judged cases; needs human confirmation' });
               return done({ ...out, warning: 'unanchored-survivor-parked' });
             }
+            // A converged candidate whose canonical shape is one the ledger last declined (via
+            // `decline` or `apply --force-remove`) does not overrule that ruling just by re-
+            // converging under a fresh id — the same declined-rulings-stay-off principle as
+            // adoptGuard, applied to shape-matching re-proposals.
+            if (declinedShapes(priorLedger).has(canonicalCandidate(survivor.inv.candidate))) {
+              survivor.status = 'parked';
+              appendLedger(dir, { kind: 'open-decision', at: now(), topic: 'previously-declined',
+                note: `converged candidate ${survivor.inv.name} matches a shape the ledger last declined; needs an explicit human re-ruling` });
+              return done({ ...out, warning: 'previously-declined-parked' });
+            }
             survivor.status = 'adopted';
             const wids = priorLedger.filter(e => e.kind === 'verdict').map(e => (e as any).witnessId).join(', ');
             appendLedger(dir, { kind: 'adopted', at: now(), invariant: survivor.inv, provenance: `elicited (${wids})` });
@@ -599,7 +616,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         // path stays `apply --force-remove`, which reconciles properly.
         if (readLedger(dir).some(e => e.kind === 'verdict'))
           return { error: 'verdicts-exist',
-            hint: 'decline is only legal before the first verdict; hand-edit spec.lat and use `apply --force-remove`' };
+            hint: 'decline is only legal before the first verdict; hand-edit spec.lat and use `apply --force-remove <name> --reason <why>`' };
         const tracked = s.candidates.find(c => c.inv.id === values.id);
         if (!tracked) return { error: 'unknown-candidate', id: values.id };
         if (tracked.status !== 'adopted') return { error: 'not-adopted', id: values.id, status: tracked.status };
@@ -730,7 +747,8 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
 
         const r = reconcile({ parsed: { model: loaded.model, invariants: loaded.invariants },
           storedModel, storedExplicit, ledger: readLedger(dir),
-          confirmedRenames: renames, forceRemove: values['force-remove'] ?? [], at });
+          confirmedRenames: renames, forceRemove: values['force-remove'] ?? [],
+          removeReason: values.reason, at });
         const warnings = [...outcomeBase.warnings, ...r.warnings];
         if (!r.ok) return { error: 'refused', refusals: r.refusals, warnings };
         // Guard-change staleness (item 3a): computed against the SAME `r.ledgerAppends` used below
