@@ -50,23 +50,22 @@ describe('undecidedMoneySigns', () => {
     expect(validateModel(model([money('balance')]))).toEqual([]);
   });
 
-  it('flags a Money field tagged both @signed and @unsigned as contradictory', () => {
+  // Contradiction moved to validateModel (Task 7): undecidedMoneySigns no longer reports it at
+  // all — a both-tagged field is neither undecided nor its concern anymore.
+  it('does not report a Money field tagged both @signed and @unsigned at all — contradiction is validateModel\'s job now', () => {
     const d = undecidedMoneySigns(model([money('balance', ['signed', 'unsigned'])]));
-    expect(d.map(x => x.code)).toEqual(['money-sign-contradictory']);
-    expect(d[0]!.message).toContain('balance');
-    expect(d[0]!.at).toBe('Account');
+    expect(d).toEqual([]);
   });
 
-  it('does not also report a contradictory field as undecided', () => {
-    const d = undecidedMoneySigns(model([money('balance', ['signed', 'unsigned'])]));
-    expect(d.map(x => x.code)).not.toContain('money-sign-undecided');
-  });
-
-  // Same pinning as the load-path test above: the contradictory check must stay off the load path too.
-  it('validateModel does NOT emit money-sign-contradictory either', () => {
+  // Contradiction is ill-formed on every path (load AND init), unlike undecidedness which keeps
+  // the language's Money -> non-negative default on load.
+  it('validateModel reports money-sign-contradictory for a field tagged both @signed and @unsigned', () => {
     const m = model([money('balance', ['signed', 'unsigned'])]);
-    expect(validateModel(m).map(d => d.code)).not.toContain('money-sign-contradictory');
-    expect(validateModel(m)).toEqual([]);
+    const d = validateModel(m);
+    expect(d.map(x => x.code)).toContain('money-sign-contradictory');
+    const c = d.find(x => x.code === 'money-sign-contradictory')!;
+    expect(c.message).toContain('balance');
+    expect(c.at).toBe('Account');
   });
 });
 
@@ -106,9 +105,25 @@ describe('sign is a use-site decision (slice B2)', () => {
     expect(d.find(x => x.code === 'value-money-sign-inert')!.at).toBe('Amount.amount');
   });
 
-  it('still keeps money-sign checks OFF the load path', () => {
+  it('still keeps money-sign-undecided OFF the load path', () => {
     expect(validateModel(withValue()).map(d => d.code)).not.toContain('money-sign-undecided');
     expect(validateModel(withValue())).toEqual([]);
+  });
+
+  // The use-site contradiction check must catch a value-typed Money-carrying field (moneyFieldPaths
+  // recurses into Amount.amount) identically to a bare Money prim field — same owners list, same
+  // carriesMoney predicate, shared with contradictoryMoneySigns.
+  it('validateModel reports money-sign-contradictory for a use-site value field tagged both @signed and @unsigned', () => {
+    const m = withValue(['signed', 'unsigned']);
+    const d = validateModel(m);
+    expect(d.map(x => x.code)).toContain('money-sign-contradictory');
+    const c = d.find(x => x.code === 'money-sign-contradictory')!;
+    expect(c.at).toBe('Bill');           // the use site, NOT 'Amount'
+    expect(c.message).toContain('total');
+  });
+
+  it('undecidedMoneySigns does not report a both-tagged use-site value field at all', () => {
+    expect(undecidedMoneySigns(withValue(['signed', 'unsigned']))).toEqual([]);
   });
 });
 

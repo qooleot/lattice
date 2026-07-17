@@ -432,44 +432,65 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       }
     }
   });
+  // Contradictory @signed+@unsigned tags are ill-formed on every path (unlike undecidedness,
+  // which stays init-only to preserve the language's Money ⇒ non-negative default on load).
+  out.push(...contradictoryMoneySigns(m));
   return out;
 }
 
+// Shared by contradictoryMoneySigns and undecidedMoneySigns: values are NOT owners here (slice
+// B2), sign is decided at each USE SITE. m.values was in this list while implied.ts's owner list
+// excluded it, so init demanded a decision the engine then ignored — the two lists disagreed and
+// this one was wrong.
+const moneySignOwners = (m: DomainModel): { name: string; fields: Field[] }[] => [
+  ...m.entities,
+  ...m.aggregates.flatMap(a => [a as { name: string; fields: Field[] }, ...(a.entities ?? [])]),
+];
+// A sign site is any field that IS money or CARRIES money: a `Money` prim, or a value type with at
+// least one `Money` sub-field. Shares domain.ts's moneyFieldPaths with implied.ts's moneyPaths (the
+// DERIVATION side) so the two cannot independently drift on the same shape fact.
+const carriesMoney = (m: DomainModel, f: Field): boolean => moneyFieldPaths(m, f).length > 0;
+
 /**
- * Money fields whose sign was never decided, or decided both ways (spec: Slice A design §2).
- * Deliberately NOT part of validateModel: loadLatText calls that (fromLangium.ts), and the
- * language keeps its Money ⇒ non-negative default for hand-written .lat and every doc example.
- * This gate is for the elicitation path only, where the model is machine-authored and an
- * unconsidered — or self-contradictory — default silently becomes an adopted rule that
- * constrains every witness the solver draws.
+ * @signed+@unsigned on one field contradicts itself regardless of authoring path — unlike
+ * undecidedness (init-only; the language has a Money⇒non-negative default), a contradiction is
+ * never a legal default, so it belongs with the other tag rules in validateModel.
  *
- * @signed and @unsigned are mutually exclusive by construction: a field carrying both is reported
- * as contradictory, never as undecided — the two lists are disjoint. One diagnostic per owner per
- * list, naming every offending field — the caller elicits per cluster, so a per-field list is what
- * it needs to ask one question instead of N.
+ * Uses the same owners enumeration and carriesMoney predicate as undecidedMoneySigns, so a
+ * use-site contradiction on a value-typed Money-carrying field is caught identically to one on a
+ * bare Money prim field.
  */
-export function undecidedMoneySigns(m: DomainModel): Diagnostic[] {
+export function contradictoryMoneySigns(m: DomainModel): Diagnostic[] {
   const out: Diagnostic[] = [];
-  // Values are NOT owners here (slice B2): sign is decided at each USE SITE. m.values was in this
-  // list while implied.ts's owner list excluded it, so init demanded a decision the engine then
-  // ignored — the two lists disagreed and this one was wrong.
-  const owners: { name: string; fields: Field[] }[] = [
-    ...m.entities,
-    ...m.aggregates.flatMap(a => [a as { name: string; fields: Field[] }, ...(a.entities ?? [])]),
-  ];
-  // A sign site is any field that IS money or CARRIES money: a `Money` prim, or a value type with at
-  // least one `Money` sub-field. Shares domain.ts's moneyFieldPaths with implied.ts's moneyPaths (the
-  // DERIVATION side) so the two cannot independently drift on the same shape fact.
-  const carriesMoney = (f: Field): boolean => moneyFieldPaths(m, f).length > 0;
-  for (const o of owners) {
-    const moneyFields = o.fields.filter(carriesMoney);
-    const contradictory = moneyFields
+  for (const o of moneySignOwners(m)) {
+    const contradictory = o.fields
+      .filter(f => carriesMoney(m, f))
       .filter(f => f.tags?.includes('signed') && f.tags?.includes('unsigned'))
       .map(f => f.name);
     if (contradictory.length)
       out.push({ code: 'money-sign-contradictory', at: o.name,
         message: `${o.name}: Money field(s) ${contradictory.join(', ')} are tagged both @signed and @unsigned — the tags contradict. @signed and @unsigned are mutually exclusive: pick the one that is true of the field.` });
-    const undecided = moneyFields
+  }
+  return out;
+}
+
+/**
+ * Money fields whose sign was never decided (spec: Slice A design §2). Deliberately NOT part of
+ * validateModel: loadLatText calls that (fromLangium.ts), and the language keeps its Money ⇒
+ * non-negative default for hand-written .lat and every doc example. This gate is for the
+ * elicitation path only, where the model is machine-authored and an unconsidered default silently
+ * becomes an adopted rule that constrains every witness the solver draws.
+ *
+ * A both-tagged field is contradictory (see contradictoryMoneySigns, in validateModel), never
+ * undecided — the two are disjoint by construction. One diagnostic per owner, naming every
+ * undecided field — the caller elicits per cluster, so a per-field list is what it needs to ask
+ * one question instead of N.
+ */
+export function undecidedMoneySigns(m: DomainModel): Diagnostic[] {
+  const out: Diagnostic[] = [];
+  for (const o of moneySignOwners(m)) {
+    const undecided = o.fields
+      .filter(f => carriesMoney(m, f))
       .filter(f => !f.tags?.includes('signed') && !f.tags?.includes('unsigned'))
       .map(f => f.name);
     if (undecided.length)

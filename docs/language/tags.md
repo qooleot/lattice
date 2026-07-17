@@ -78,7 +78,9 @@ value-typed field is a claim about the money *inside* it, and both money tags re
   machine-authored model must not inherit a default nobody considered. That demand covers a
   **nested child's** money fields and a value's money sub-fields, at the use site, exactly as it
   covers an aggregate's own. A field tagged both `@signed` and `@unsigned` is
-  `money-sign-contradictory` at `init`; the two are mutually exclusive.
+  `money-sign-contradictory` — unlike undecidedness, a contradiction is never a legal default, so
+  it is rejected on **every** path, `loadLatText` and `engine init` alike; the two tags are
+  mutually exclusive.
 - `@total` and `@balance` are read by `matchTemplates`, which **adopts** the conservation rule from
   a `≥2 @balance` + `@total` shape at `init` — a ledger entry, no review gate, no elicitation
   involved — but the tags carry no independent semantic check of their own and never block a load.

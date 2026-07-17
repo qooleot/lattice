@@ -157,6 +157,21 @@ describe('loadLatText', () => {
       { name: 'close', region: 'settlement', from: ['draft', 'open'], to: 'paid' },
     ]);
   });
+
+  it('a field tagged both @signed and @unsigned fails to LOAD — contradiction is ill-formed on any path', () => {
+    const r = loadLatText(`context D {\n  aggregate Acct {\n    id : Id key\n    bal : Money @signed @unsigned\n  }\n}`);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.diagnostics.some(d => d.code === 'money-sign-contradictory')).toBe(true);
+  });
+
+  // Same contradiction, but on a value-typed field that CARRIES Money (moneyFieldPaths recurses
+  // into the value's own fields) rather than a bare Money prim — the use-site check must catch
+  // both shapes identically.
+  it('a value-typed field carrying Money tagged both @signed and @unsigned also fails to LOAD', () => {
+    const r = loadLatText(`context D {\n  value Amount {\n    amount : Money\n    currency : Text\n  }\n  aggregate Bill {\n    billId : Id key\n    total : Amount @signed @unsigned\n  }\n}`);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.diagnostics.some(d => d.code === 'money-sign-contradictory')).toBe(true);
+  });
 });
 
 describe('const field modifier', () => {
