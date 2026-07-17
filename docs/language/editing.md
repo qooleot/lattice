@@ -58,6 +58,8 @@ Deleting an explicit invariant block, removing `@terminal` from a state, adding 
 being removed has ledger history, `apply` refuses unless the removal is confirmed with
 `--force-remove <invariantName>` — which appends a `declined` ledger entry recording the explicit
 overrule. Without a matching `--force-remove`, the whole apply is refused; nothing is written.
+The declined entry's reason is settable with `--reason '<why>'` alongside `--force-remove`; without
+it, the entry falls back to the fixed text `hand-removed via --force-remove`.
 
 ## Refusals name the witness and the verdict
 

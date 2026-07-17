@@ -279,7 +279,7 @@ describe('engine strengthen CLI', () => {
   });
 
   // Task 12: a guard the human ruled OFF (via `decline` or `apply --force-remove`, both of which
-  // append a `kind:'declined'` ledger entry — reconcile.ts:122) must stay off even though
+  // append a `kind:'declined'` ledger entry — reconcile's force-remove declined append) must stay off even though
   // apply's rebuild drops its tracker entirely, leaving nothing for the same-id-adopted check in
   // `adoptGuard` to see. Re-derive the SAME guard `strengthen` mints for paidExact (id
   // `guard-Invoice-settle-eq`, the eq variant scriptedDeps closes) so the ledger's last word for
@@ -288,7 +288,7 @@ describe('engine strengthen CLI', () => {
     const dir = await setup();
     const t1 = '2026-01-01T00:00:00.000Z', t2 = '2026-01-02T00:00:00.000Z';
     // Simulate the human ruling: the guard was adopted once, then hand-removed via
-    // apply --force-remove, which appends kind:'declined' (reconcile.ts:122).
+    // apply --force-remove, which appends kind:'declined' (reconcile's force-remove declined append).
     const gInv: CandidateInvariant = {
       id: 'guard-Invoice-settle-eq', name: 'guard_settle_eq', prior: 1, source: 'regen',
       candidate: { kind: 'guard', aggregate: 'Invoice', region: 'settlement', transition: 'settle',

@@ -94,8 +94,11 @@ describe('decline', () => {
 
     // Force straight to the brink of convergence (crib from cli.test.ts's next-question-converged
     // tests): single active survivor, both probes already asked, alternatives exhausted, and a
-    // verdict present so we land in the hasVerdicts-true branch under test (not the zero-verdict
-    // unanchored-survivor park, which is a separate, already-covered guard).
+    // verdict present so we land in the anchoring-nonempty branch under test (not the zero-verdict
+    // unanchored-survivor park, which is a separate, already-covered guard). The convergence block
+    // computes per-candidate `anchoring` (Task 13) from the ledger's verdicts; the forced verdict
+    // below carries an Acct witness so it anchors this candidate and the check proceeds to the
+    // previously-declined test.
     const st = loadState(dir);
     st.phase = 'alternatives';
     st.alternativeAttempts = 2;

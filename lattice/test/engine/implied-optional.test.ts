@@ -15,8 +15,9 @@ const m: DomainModel = {
   events: [], services: []
 };
 
-// Shared by the refsResolve test below and quint-optional.test.ts's rewritten describe block: an
-// aggregate whose only same-context ref is optional, plus a machine so a witness can carry a state.
+// Used by the refsResolve test below. Mirrors quint-optional.test.ts's inline payment model (kept
+// in sync by hand, not imported — that file has its own copy of this fixture): an aggregate whose
+// only same-context ref is optional, plus a machine so a witness can carry a state.
 function paymentWithOptionalMethodModel(): DomainModel {
   return {
     context: 'BillPayments', ticksPerDay: 24, enums: [], values: [],

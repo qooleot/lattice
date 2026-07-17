@@ -44,9 +44,14 @@ export function rehydrateIds(parsed: CandidateInvariant[], stored: CandidateInva
 }
 
 /** Shapes whose LAST adopted/declined ledger word is 'declined' — a decline (pre-verdict command
- *  or --force-remove hand-removal) must silence the rule everywhere derived rules are re-derived:
- *  prose projection and the replay canonical sets. Keyed by canonical candidate shape because
- *  derived rules are re-minted per call and carry no stable identity across sessions. */
+ *  or --force-remove hand-removal) must silence the rule everywhere derived rules are re-derived.
+ *  Four consumer families, all in this file's orbit: reconcile's own replay canonical sets (below),
+ *  cli.ts's writeProjections (prose derivation), generate/plan.ts's canonicalSet call (compiled
+ *  service checks), and cli.ts's next-question convergence handler (parks a converged candidate
+ *  whose shape was previously declined instead of silently re-adopting it). Keyed by canonical
+ *  candidate shape because derived rules are re-minted per call and carry no stable identity across
+ *  sessions — contrast cli.ts's adoptGuard, which keys its own last-word lookup by invariant id
+ *  (guards DO have a stable minted id), not this shape-keyed set. */
 export function declinedShapes(ledger: LedgerEntry[]): Set<string> {
   const last = new Map<string, 'adopted' | 'declined'>();
   for (const e of ledger)
