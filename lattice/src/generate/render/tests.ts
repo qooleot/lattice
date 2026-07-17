@@ -172,6 +172,7 @@ function refReachPaths(p: Predicate): string[][] {
     case 'not': return refReachPaths(p.arg);
     case 'implies': return [...refReachPaths(p.left), ...refReachPaths(p.right)];
     case 'inState': return [];
+    case 'present': return p.path.length > 1 ? [p.path as string[]] : [];
   }
 }
 
