@@ -26,6 +26,7 @@ import { specDiagramFiles } from './emit/mermaid/docs.js';
 import { impliedInvariants, canonicalCandidate, derivedNameCollisions } from './engine/implied.js';
 import { loadLatText } from './parse/fromLangium.js';
 import { reconcile, declinedShapes } from './engine/reconcile.js';
+import { anchorsCandidate } from './engine/anchoring.js';
 import type { RenameSpec, RenameScope } from './engine/renames.js';
 import { renameEntries, currentInvariantName } from './engine/renames.js';
 import { compileWorkspace } from './engine/workspace.js';
@@ -542,14 +543,14 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           const survivor = s.candidates.find(c => c.status === 'active');
           if (survivor) {
             const priorLedger = readLedger(dir);
-            const hasVerdicts = priorLedger.some(e => e.kind === 'verdict');
-            if (!hasVerdicts) {
-              // Converged with zero judged cases: nothing in the ledger anchors this candidate.
-              // Adopting it silently would present an un-vetted hypothesis as settled — instead
-              // park it and surface an open decision for a human to confirm.
+            const anchoring = priorLedger.filter(e => e.kind === 'verdict'
+              && anchorsCandidate(e, survivor.inv.candidate, survivor.registeredAt));
+            if (anchoring.length === 0) {
+              // Converged with zero judged cases ANCHORING THIS CANDIDATE (per-candidate on
+              // purpose — a session full of verdicts about other aggregates vets nothing here).
               survivor.status = 'parked';
               appendLedger(dir, { kind: 'open-decision', at: now(), topic: 'unanchored-survivor',
-                note: 'converged with no judged cases; needs human confirmation' });
+                note: 'converged with no judged cases anchoring this candidate; needs human confirmation' });
               return done({ ...out, warning: 'unanchored-survivor-parked' });
             }
             // A converged candidate whose canonical shape is one the ledger last declined (via
@@ -563,7 +564,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
               return done({ ...out, warning: 'previously-declined-parked' });
             }
             survivor.status = 'adopted';
-            const wids = priorLedger.filter(e => e.kind === 'verdict').map(e => (e as any).witnessId).join(', ');
+            const wids = anchoring.map(e => (e as any).witnessId).join(', ');
             appendLedger(dir, { kind: 'adopted', at: now(), invariant: survivor.inv, provenance: `elicited (${wids})` });
           }
         }

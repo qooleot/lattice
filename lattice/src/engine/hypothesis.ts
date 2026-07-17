@@ -5,7 +5,7 @@ import { evaluateCandidate, type CaseState } from './evaluate.js';
 import type { LedgerEntry, SessionState, TrackedCandidate } from './session.js';
 
 export function registerCandidates(s: SessionState, invs: CandidateInvariant[]): void {
-  for (const inv of invs) s.candidates.push({ inv, status: 'active' });
+  for (const inv of invs) s.candidates.push({ inv, status: 'active', registeredAt: new Date().toISOString() });
 }
 export const activeCandidates = (s: SessionState): TrackedCandidate[] =>
   s.candidates.filter(c => c.status === 'active');
@@ -35,7 +35,7 @@ export function admit(s: SessionState, inv: CandidateInvariant, m: DomainModel, 
   const conflicts = ledgerConflicts(inv.candidate, ledger);
   if (conflicts.length) { bump(); return { ok: false, reason: `contradicts verdicts: ${conflicts.join(', ')}` }; }
   bump();
-  s.candidates.push({ inv, status: 'active' });
+  s.candidates.push({ inv, status: 'active', registeredAt: new Date().toISOString() });
   return { ok: true };
 }
 

@@ -5,6 +5,7 @@ import type { AlloyQuery } from '../emit/alloy.js';
 import type { QuintEmission, QuintQuery } from '../emit/quint.js';
 import { evaluateCandidate, type CaseState } from './evaluate.js';
 import { activeCandidates } from './hypothesis.js';
+import { anchorsCandidate } from './anchoring.js';
 import { extractSalient, renderWitnessTable } from './salient.js';
 import type { LedgerEntry, SalientFact, SessionState } from './session.js';
 
@@ -194,7 +195,9 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
       return { type: 'probe-options', purpose: 'probe-forbid', options, ms };
     }
   }
-  const hasPermitEvidence = verdicts(ledger).some(v => v.judge === 'permit' && evaluateCandidate(H.inv.candidate, v.witness) === 'permit');
+  const hasPermitEvidence = verdicts(ledger).some(v => v.judge === 'permit'
+    && anchorsCandidate(v, H.inv.candidate, H.registeredAt)
+    && evaluateCandidate(H.inv.candidate, v.witness) === 'permit');
   if (apriori && !s.probesAsked.permit && !hasPermitEvidence) {
     const exclusions = probeExclusionsSafe ? exclusionsFrom(ledger, [H.inv.candidate]) : [];
     const { witnesses, ms } = await solve(m, H.inv.candidate, undefined, 'probe-permit', exclusions, adopted, deps, 3);

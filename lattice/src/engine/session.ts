@@ -13,7 +13,7 @@ export interface SalientFact { dim: string; value: string | number | boolean }
  *  here is written somewhere. */
 export type CandidateStatus = 'active' | 'pruned' | 'merged' | 'adopted' | 'parked' | 'declined';
 export type Phase = 'structure' | 'distinguish' | 'probe-forbid' | 'probe-permit' | 'alternatives' | 'regenerate' | 'converged';
-export interface TrackedCandidate { inv: CandidateInvariant; status: CandidateStatus; mergedInto?: string }
+export interface TrackedCandidate { inv: CandidateInvariant; status: CandidateStatus; mergedInto?: string; registeredAt?: string }
 export interface PendingWitness { witness: CaseState; purpose: 'distinguish' | 'probe-forbid' | 'probe-permit'; pair?: [string, string]; salient: SalientFact[] }
 export interface SessionState {
   model: DomainModel | null;

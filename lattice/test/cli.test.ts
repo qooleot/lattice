@@ -119,9 +119,12 @@ describe('engine CLI', () => {
     st.probesAsked = { forbid: true, permit: true };
     writeFileSync(stateFile, JSON.stringify(st));
 
-    // Seed a verdict ledger entry so we can check provenance references it.
+    // Seed a verdict ledger entry so we can check provenance references it. The witness must
+    // contain a Subscription entity (H1's aggregate) — per-candidate anchoring (Task 13) only
+    // credits verdicts whose witness actually bears on this candidate's aggregate.
     const ledgerFile = join(dir, 'ledger.jsonl');
-    writeFileSync(ledgerFile, JSON.stringify({ kind: 'verdict', at: 't', witnessId: 'w1', witness: { entities: [] }, salient: [], judge: 'forbid', question: '' }) + '\n');
+    writeFileSync(ledgerFile, JSON.stringify({ kind: 'verdict', at: 't', witnessId: 'w1',
+      witness: { entities: [{ type: 'Subscription', id: 's1', fields: {} }] }, salient: [], judge: 'forbid', question: '' }) + '\n');
 
     const q: any = await runCommand(['next-question', '--session', dir], fakeDeps);
     expect(q.type).toBe('converged');
@@ -173,6 +176,82 @@ describe('engine CLI', () => {
     // Template auto-adopts at init (e.g. refsResolveSubscription) are unrelated and expected; the
     // elicited survivor H1 specifically must never get an 'adopted' ledger entry.
     expect(ledger.find((e: any) => e.kind === 'adopted' && e.invariant.id === 'H1')).toBeUndefined();
+  });
+
+  // Task 13: per-candidate anchoring — a verdict only vets a candidate if its witness contains an
+  // instance of THAT candidate's aggregate. A session-wide "has any verdict at all" check (the old
+  // hasVerdicts) would wrongly let an unrelated verdict vouch for this one.
+  it('a candidate that converged with no anchoring verdict is PARKED even when the session has verdicts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+
+    // Seed an unrelated verdict — foreign aggregate (Customer, not Subscription) — before the
+    // journal-shaped candidate is even proposed.
+    appendLedger(dir, { kind: 'verdict', at: new Date().toISOString(), witnessId: 'w1', judge: 'permit', salient: [],
+      question: 'q', witness: { entities: [{ type: 'Customer', id: 'c1', fields: {} }] } });
+
+    await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+      { id: 'agent-j', name: 'perCustomer', prior: 0.5, source: 'seed',
+        candidate: { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] } }
+    ])], fakeDeps);
+
+    // Drive to the brink of convergence: sole active survivor, both probes already asked,
+    // alternativeAttempts already exhausted (2).
+    const stateFile = join(dir, 'state.json');
+    const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+    st.phase = 'alternatives';
+    st.alternativeAttempts = 2;
+    st.probesAsked = { forbid: true, permit: true };
+    writeFileSync(stateFile, JSON.stringify(st));
+
+    const unsatDeps: any = { alloy: async () => ({ sat: false, instances: [], ms: 1 }), quint: async () => ({ violated: false, ms: 1 }) };
+    const q: any = await runCommand(['next-question', '--session', dir], unsatDeps);
+    expect(q.type).toBe('converged');
+    expect(q.warning).toBe('unanchored-survivor-parked');
+
+    const s: any = await runCommand(['status', '--session', dir], fakeDeps);
+    expect(s.candidates.find((c: any) => c.id === 'agent-j').status).toBe('parked');
+
+    const ledgerFile = join(dir, 'ledger.jsonl');
+    const ledger = readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l: string) => JSON.parse(l));
+    expect(ledger.some((e: any) => e.kind === 'open-decision' && e.topic === 'unanchored-survivor')).toBe(true);
+  });
+
+  it('adoption provenance cites only anchoring witnesses, never the whole session', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+
+    // w1: foreign aggregate (Customer) — must never be cited in provenance.
+    appendLedger(dir, { kind: 'verdict', at: new Date().toISOString(), witnessId: 'w1', judge: 'permit', salient: [],
+      question: 'q', witness: { entities: [{ type: 'Customer', id: 'c1', fields: {} }] } });
+
+    await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+      { id: 'agent-j', name: 'perCustomer', prior: 0.5, source: 'seed',
+        candidate: { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] } }
+    ])], fakeDeps);
+
+    // w2: anchors — Subscription aggregate, judged after the candidate was registered.
+    appendLedger(dir, { kind: 'verdict', at: new Date().toISOString(), witnessId: 'w2', judge: 'forbid', salient: [],
+      question: 'q', witness: { entities: [{ type: 'Subscription', id: 's1', fields: {} }] } });
+
+    const stateFile = join(dir, 'state.json');
+    const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+    st.phase = 'alternatives';
+    st.alternativeAttempts = 2;
+    st.probesAsked = { forbid: true, permit: true };
+    writeFileSync(stateFile, JSON.stringify(st));
+
+    const unsatDeps: any = { alloy: async () => ({ sat: false, instances: [], ms: 1 }), quint: async () => ({ violated: false, ms: 1 }) };
+    const q: any = await runCommand(['next-question', '--session', dir], unsatDeps);
+    expect(q.type).toBe('converged');
+
+    const ledgerFile = join(dir, 'ledger.jsonl');
+    const ledger = readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l: string) => JSON.parse(l));
+    const adoptedEntry = ledger.find((e: any) => e.kind === 'adopted' && e.invariant.id === 'agent-j');
+    expect(adoptedEntry).toBeDefined();
+    expect(adoptedEntry.provenance).toBe('elicited (w2)');   // w1 (foreign aggregate) not cited
   });
 
   it('emit writes prose + code', async () => {

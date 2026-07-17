@@ -101,8 +101,11 @@ describe('decline', () => {
     st.alternativeAttempts = 2;
     st.probesAsked = { forbid: true, permit: true };
     saveState(dir, st);
+    // Witness must contain an Acct entity (agent-1's aggregate) — per-candidate anchoring
+    // (Task 13) credits only verdicts whose witness bears on this candidate; this test exercises
+    // the previously-declined park, so the verdict must anchor to reach that check at all.
     appendLedger(dir, { kind: 'verdict', at: new Date().toISOString(), witnessId: 'w1',
-      witness: { entities: [] } as any, salient: [], judge: 'forbid', question: '' });
+      witness: { entities: [{ type: 'Acct', id: 'a1', fields: { bal: -5 } }] } as any, salient: [], judge: 'forbid', question: '' });
 
     const r: any = await runCommand(['next-question', '--session', dir], fakeDeps);
     expect(r.type).toBe('converged');
