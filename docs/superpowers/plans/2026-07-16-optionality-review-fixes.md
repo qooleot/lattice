@@ -20,7 +20,7 @@
 - **Non-goals** (reviewed and deliberately excluded): the `apply`-path money-sign gate (explicitly-argued design decision — raise with the user separately, do not change); a rename bridge for pre-slice `classified` ledger entries (low impact, converges after one re-classify); absence gates for `cardinality.where`/`leadsTo` (documented open decision in invariant.md); reuse/efficiency refactors beyond the `refHopGates` consolidation Task 1 performs.
 - **Deferred to a design slice, not this plan** (verified real, but each needs an "open question" grouping concept the session state does not have — a mechanical patch would guess the design): per-session `alternativeAttempts`/`regenAttempts`/`probesAsked` counters starving every question after the first (session.ts:22-24, hypothesis.ts:27-31, planner.ts:158); `pruneOnVerdict` annihilating unrelated candidates proposed in one flat batch; cross-kind conjunctions being inexpressible (an `and` Predicate cannot hold a `sumOverCollection`). Write a kickoff doc (repo pattern: docs/superpowers/specs/*-kickoff-prompt.md) instead of patching.
 - Slice B2's carried-findings triage (`.superpowers/sdd/carried-findings.md` in the B2 worktree; not committed to this tree) lists ten open items. #5 (Quint conservation/sum lack hop gates) is absorbed into Task 1 Step 4b — it is the same gate family Task 1 owns. The other nine stay with that triage; they are not this plan's mandate.
-- Agent 1's proposed new `'retired'` ledger kind is deliberately NOT added: `apply --force-remove` already appends `{kind: 'declined', invariant, reason}` (reconcile.ts:107) and `decline --id --reason` writes the same kind — the defect is that adoption paths never CONSULT it (Task 12), not that the record is missing. A third removal kind would split one meaning across two spellings.
+- The proposed new `'retired'` ledger kind (raised twice, by two agents) is deliberately NOT added: `apply --force-remove` already appends `{kind: 'declined', invariant, reason}` (reconcile.ts:107) and `decline --id --reason` writes the same kind — the defects are that adoption paths never CONSULT it and that the force-remove reason was boilerplate; Task 12 fixes both (consult + `--reason` plumbing). A third removal kind would split one meaning across two spellings.
 
 ---
 
@@ -962,7 +962,7 @@ git commit -m "docs: reconcile optionality claims with the engine (refsResolve, 
 
 ### Task 12: Adoption paths consult declined rulings (guard re-adoption bug)
 
-Verified against the code and the slice-2 session report: `adoptGuard` (src/cli.ts:213-219) refuses re-adoption only when a tracker with the same id is currently `adopted`. A guard the human ruled OFF via `apply --force-remove` leaves a `{kind: 'declined'}` ledger entry (reconcile.ts:107) but no tracker at all (apply's rebuild drops adopted trackers, cli.ts:693), so the next bulk-classify auto-strengthen hook (cli.ts:817) re-derives and re-adopts it — observed live with `guard_settle_eq`. The convergence-adoption path (cli.ts:507) has the same blindness for shape-matching re-proposals of a declined rule. **Depends on Task 8** (`declinedShapes`).
+Verified against the code and the slice-2 session report: `adoptGuard` (src/cli.ts:213-219) refuses re-adoption only when a tracker with the same id is currently `adopted`. A guard the human ruled OFF via `apply --force-remove` leaves a `{kind: 'declined'}` ledger entry (reconcile.ts:107) but no tracker at all (apply's rebuild drops adopted trackers), so the next bulk-classify auto-strengthen hook re-derives and re-adopts it — observed live with `guard_settle_eq`. The convergence-adoption path has the same blindness for shape-matching re-proposals of a declined rule. A second half to the same report: the declined entry force-remove writes carries only the fixed reason `'hand-removed via --force-remove'` — the human's actual ruling (the WHY behind dropping finalize/settle) has no durable home, so Step 3b threads `--reason` through apply. **Depends on Task 8** (`declinedShapes`).
 
 **Files:**
 - Modify: `src/cli.ts` (adoptGuard :213-219, the next-question convergence adoption ~:495-510)
@@ -1047,16 +1047,37 @@ Convergence adoption (cli.ts, inside the `next-question` converged branch, befor
 
 (`open-decision` entries carry `topic` + `note` — match the existing `unanchored-survivor` append two lines above.)
 
+- [ ] **Step 3b: Thread `--reason` through `apply --force-remove` so the ruling itself is durable**
+
+`--reason` is already a parsed string option (cli.ts:343-345 region; `decline` uses it). Pass it into reconcile and use it for the declined entries force-remove writes:
+
+```typescript
+// cli.ts apply call site (~:725): add removeReason
+        const r = reconcile({ parsed: { model: loaded.model, invariants: loaded.invariants },
+          storedModel, storedExplicit, ledger: readLedger(dir),
+          confirmedRenames: renames, forceRemove: values['force-remove'] ?? [],
+          removeReason: values.reason, at });
+```
+
+```typescript
+// reconcile.ts: ReconcileInput gains `removeReason?: string;` (destructure it at the top of
+// reconcile()); the force-remove append (:107) becomes:
+      appends.push({ kind: 'declined', at, invariant: rem,
+        reason: removeReason ?? 'hand-removed via --force-remove' });
+```
+
+Test (in `test/cli-apply.test.ts`, its force-remove case): run apply with `--force-remove <name> --reason 'settle guard: human ruled the eq bound wrong on 2026-07-16'` and assert the declined ledger entry carries that reason; without `--reason`, the fixed fallback text.
+
 - [ ] **Step 4: Run and verify**
 
-Run: `npx vitest run test/cli-strengthen.test.ts test/cli-decline.test.ts test/cli.test.ts`
+Run: `npx vitest run test/cli-strengthen.test.ts test/cli-decline.test.ts test/cli-apply.test.ts test/cli.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/cli.ts test/cli-strengthen.test.ts test/cli-decline.test.ts
-git commit -m "fix(engine): adoption paths consult declined rulings — a ruled-off guard or shape is not re-adopted"
+git add src/cli.ts src/engine/reconcile.ts test/cli-strengthen.test.ts test/cli-decline.test.ts test/cli-apply.test.ts
+git commit -m "fix(engine): adoption paths consult declined rulings; --force-remove records the ruling's reason"
 ```
 
 ### Task 13: Per-candidate anchoring — provenance, unanchored-survivor, and permit evidence share one predicate
