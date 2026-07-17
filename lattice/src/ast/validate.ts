@@ -220,6 +220,10 @@ export function validateModel(m: DomainModel): Diagnostic[] {
         out.push({ code: 'optional-list', message: `${owner}.${f.name} is a List and cannot be optional — an absent list and an empty list are the same fact; List<T> already means zero or more`, at: `${owner}.${f.name}` });
       if (f.optional && f.type.kind === 'value')
         out.push({ code: 'optional-value', message: `${owner}.${f.name} has a value type and cannot be optional — a value type flattens into its sub-fields for the solvers, so there is no single field for the optionality marker to attach to`, at: `${owner}.${f.name}` });
+      if (f.optional && fs.some(g => g.name === `${f.name}Present`))
+        out.push({ code: 'present-name-collision',
+          message: `${owner}.${f.name}Present collides with the solver companion flag of optional field ${owner}.${f.name} — the Quint encoding emits '${f.name}Present' beside every optional field; rename one of them`,
+          at: `${owner}.${f.name}Present` });
       // A @balance/@total tag must name exactly one summable number (slice B2). On a value-typed
       // field that means exactly one solver-numeric path reachable through it (domain.ts's
       // numericFieldPaths, recursing through however many value hops it takes — the same walk

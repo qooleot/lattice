@@ -87,6 +87,23 @@ describe('optional fields — structural rules', () => {
         { name: 'end', type: { kind: 'prim', prim: 'Int' } }] }]);
     expect(validateModel(m)).toEqual([]);
   });
+
+  it('rejects a field named <f>Present beside an optional f (the Quint companion label)', () => {
+    const m = model([
+      { name: 'foo', type: { kind: 'prim', prim: 'Int' }, optional: true },
+      { name: 'fooPresent', type: { kind: 'prim', prim: 'Int' } },
+    ]);
+    const diags = validateModel(m);
+    expect(diags.some(d => d.code === 'present-name-collision')).toBe(true);
+  });
+
+  it('fooPresent beside a REQUIRED foo stays legal — no companion is emitted', () => {
+    const m = model([
+      { name: 'foo', type: { kind: 'prim', prim: 'Int' } },
+      { name: 'fooPresent', type: { kind: 'prim', prim: 'Int' } },
+    ]);
+    expect(validateModel(m).some(d => d.code === 'present-name-collision')).toBe(false);
+  });
 });
 
 describe('optional fields — surface round-trips', () => {
