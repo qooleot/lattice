@@ -544,7 +544,7 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
           if (survivor) {
             const priorLedger = readLedger(dir);
             const anchoring = priorLedger.filter(e => e.kind === 'verdict'
-              && anchorsCandidate(e, survivor.inv.candidate, survivor.registeredAt));
+              && anchorsCandidate(e, survivor.inv.candidate, survivor.registeredAt, survivor.inv.source));
             if (anchoring.length === 0) {
               // Converged with zero judged cases ANCHORING THIS CANDIDATE (per-candidate on
               // purpose — a session full of verdicts about other aggregates vets nothing here).

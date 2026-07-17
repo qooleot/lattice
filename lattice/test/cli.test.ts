@@ -254,6 +254,85 @@ describe('engine CLI', () => {
     expect(adoptedEntry.provenance).toBe('elicited (w2)');   // w1 (foreign aggregate) not cited
   });
 
+  // Source-gated pre-registration agreement (the review that motivated per-candidate anchoring
+  // found the AGREEMENT arm of anchorsCandidate trusted every source alike). admit() (hypothesis.ts)
+  // runs ledgerConflicts against the whole ledger before accepting a regen/alternative candidate —
+  // that check is what makes the candidate's agreement with an old verdict a proven guarantee
+  // (golden trace A). registerCandidates() (the `propose`/`init` path) never runs that check, so a
+  // cold-proposed candidate's agreement with an old verdict is coincidental.
+  it('a seed-sourced survivor that coincidentally agrees with a pre-registration verdict is parked, not adopted', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+
+    // Recorded well before H1 is proposed. dpsf holds two active subscriptions sharing a customer
+    // — the human forbade it, and H1 (unique by customer) rules the same witness 'forbid' too:
+    // agreement, but this verdict was never checked against H1 at admission time.
+    appendLedger(dir, { kind: 'verdict', at: '2020-01-01T00:00:00.000Z', witnessId: 'w0', judge: 'forbid',
+      salient: [], question: 'q', witness: dpsf });
+
+    await runCommand(['propose', '--session', dir, '--candidates', JSON.stringify([
+      { id: 'H1', name: 'h1', prior: 0.5, source: 'seed',
+        candidate: { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] } }
+    ])], fakeDeps);
+
+    const stateFile = join(dir, 'state.json');
+    const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+    st.phase = 'alternatives';
+    st.alternativeAttempts = 2;
+    st.probesAsked = { forbid: true, permit: true };
+    writeFileSync(stateFile, JSON.stringify(st));
+
+    const unsatDeps: any = { alloy: async () => ({ sat: false, instances: [], ms: 1 }), quint: async () => ({ violated: false, ms: 1 }) };
+    const q: any = await runCommand(['next-question', '--session', dir], unsatDeps);
+    expect(q.type).toBe('converged');
+    expect(q.warning).toBe('unanchored-survivor-parked');
+
+    const st2: any = await runCommand(['status', '--session', dir], fakeDeps);
+    expect(st2.candidates.find((c: any) => c.id === 'H1').status).toBe('parked');
+
+    const ledgerFile = join(dir, 'ledger.jsonl');
+    const ledger = readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l: string) => JSON.parse(l));
+    expect(ledger.find((e: any) => e.kind === 'adopted' && e.invariant.id === 'H1')).toBeUndefined();
+  });
+
+  it('a regen-sourced survivor that agrees with a pre-registration verdict IS adopted citing it — admit() already vetted it against the whole ledger', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));
+    await runCommand(['init', '--session', dir, '--model', join(dir, 'm.json')], fakeDeps);
+
+    // Same pre-registration verdict and same shape as the seed case above, but this candidate is
+    // admitted through `regenerate`: admit() already checked it against every ledger verdict
+    // (ledgerConflicts) before accepting it, so its agreement here is a proven guarantee.
+    appendLedger(dir, { kind: 'verdict', at: '2020-01-01T00:00:00.000Z', witnessId: 'w0', judge: 'forbid',
+      salient: [], question: 'q', witness: dpsf });
+
+    const rg: any = await runCommand(['regenerate', '--session', dir, '--candidate', JSON.stringify(
+      { id: 'H3', name: 'h3', candidate: { kind: 'unique', aggregate: 'Subscription', whileStates: { region: 'Access', states: ['Active'] }, by: [['customer']] } })], fakeDeps);
+    expect(rg.ok).toBe(true);
+
+    const stateFile = join(dir, 'state.json');
+    const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+    st.phase = 'alternatives';
+    st.alternativeAttempts = 2;
+    st.probesAsked = { forbid: true, permit: true };
+    writeFileSync(stateFile, JSON.stringify(st));
+
+    const unsatDeps: any = { alloy: async () => ({ sat: false, instances: [], ms: 1 }), quint: async () => ({ violated: false, ms: 1 }) };
+    const q: any = await runCommand(['next-question', '--session', dir], unsatDeps);
+    expect(q.type).toBe('converged');
+    expect(q.warning).toBeUndefined();
+
+    const st2: any = await runCommand(['status', '--session', dir], fakeDeps);
+    expect(st2.candidates.find((c: any) => c.id === 'H3').status).toBe('adopted');
+
+    const ledgerFile = join(dir, 'ledger.jsonl');
+    const ledger = readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l: string) => JSON.parse(l));
+    const adoptedEntry = ledger.find((e: any) => e.kind === 'adopted' && e.invariant.id === 'H3');
+    expect(adoptedEntry).toBeDefined();
+    expect(adoptedEntry.provenance).toBe('elicited (w0)');
+  });
+
   it('emit writes prose + code', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cli-'));
     writeFileSync(join(dir, 'm.json'), JSON.stringify(traceAModel));

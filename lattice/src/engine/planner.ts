@@ -196,7 +196,7 @@ export async function nextQuestion(s: SessionState, ledger: LedgerEntry[], m: Do
     }
   }
   const hasPermitEvidence = verdicts(ledger).some(v => v.judge === 'permit'
-    && anchorsCandidate(v, H.inv.candidate, H.registeredAt)
+    && anchorsCandidate(v, H.inv.candidate, H.registeredAt, H.inv.source)
     && evaluateCandidate(H.inv.candidate, v.witness) === 'permit');
   if (apriori && !s.probesAsked.permit && !hasPermitEvidence) {
     const exclusions = probeExclusionsSafe ? exclusionsFrom(ledger, [H.inv.candidate]) : [];
