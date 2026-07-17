@@ -25,7 +25,7 @@ import { astToCode } from './emit/code.js';
 import { specDiagramFiles } from './emit/mermaid/docs.js';
 import { impliedInvariants, canonicalCandidate, derivedNameCollisions } from './engine/implied.js';
 import { loadLatText } from './parse/fromLangium.js';
-import { reconcile } from './engine/reconcile.js';
+import { reconcile, declinedShapes } from './engine/reconcile.js';
 import type { RenameSpec, RenameScope } from './engine/renames.js';
 import { renameEntries, currentInvariantName } from './engine/renames.js';
 import { compileWorkspace } from './engine/workspace.js';
@@ -80,7 +80,9 @@ function writeProjections(latPath: string, model: DomainModel, adopted: Candidat
     ledger: LedgerEntry[]): string[] {
   const outDir = dirname(latPath);
   const shapes = new Set(adopted.map(a => canonicalCandidate(a.candidate)));
-  const derived = impliedInvariants(model).filter(d => !shapes.has(canonicalCandidate(d.candidate)));
+  const declined = declinedShapes(ledger);
+  const derived = impliedInvariants(model).filter(d =>
+    !shapes.has(canonicalCandidate(d.candidate)) && !declined.has(canonicalCandidate(d.candidate)));
   // apply --lat foo.lat rewrites foo.lat itself (spec §4); prose stays a sibling spec.prose.md
   const lat = latPath, prose = join(outDir, 'spec.prose.md');
   writeFileSync(lat, astToCode(model, adopted));

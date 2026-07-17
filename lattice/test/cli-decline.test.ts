@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCommand } from '../src/cli.js';
-import { readLedger, loadState, appendLedger } from '../src/engine/session.js';
+import { readLedger, loadState, saveState, appendLedger } from '../src/engine/session.js';
+import { astToCode } from '../src/emit/code.js';
 
 const fakeDeps: any = { alloy: async () => ({ sat: true, instances: [], ms: 1 }), quint: async () => ({ violated: false, ms: 1 }) };
 
@@ -56,5 +57,26 @@ describe('decline', () => {
       witness: {} as any, salient: [], judge: 'permit', question: 'q' });
     const r: any = await runCommand(['decline', '--session', dir, '--id', 'implied-nonNegativeAcctBal', '--reason', 'x'], fakeDeps);
     expect(r.error).toBe('verdicts-exist');
+  });
+
+  it('a declined rule stays out of prose and out of reconcile canonical sets across apply', async () => {
+    await runCommand(['decline', '--session', dir, '--id', 'implied-nonNegativeAcctBal', '--reason', 'x'], fakeDeps);
+    // apply refuses mid-elicitation sessions (isSessionBusy); this MODEL seeds no distinguishable
+    // candidates so init leaves phase 'distinguish' with nothing pending — force 'converged'
+    // directly since this test exercises decline+apply, not the elicitation state machine.
+    const s0 = loadState(dir);
+    s0.phase = 'converged';
+    saveState(dir, s0);
+    // hand-write the spec the session would print, then apply it back
+    const latPath = join(dir, 'spec.lat');
+    writeFileSync(latPath, astToCode(MODEL as any, []));
+    const r: any = await runCommand(['apply', '--session', dir, '--lat', latPath], fakeDeps);
+    expect(r.error).toBeUndefined();
+    const prose = readFileSync(join(dir, 'spec.prose.md'), 'utf8');
+    expect(prose).not.toContain('nonNegativeAcctBal');
+    // and the tracker was not resurrected
+    const s = loadState(dir);
+    expect(s.candidates.filter(c => c.inv.id === 'implied-nonNegativeAcctBal')).toHaveLength(1);
+    expect(s.candidates.find(c => c.inv.id === 'implied-nonNegativeAcctBal')!.status).toBe('declined');
   });
 });

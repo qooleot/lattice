@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { reconcile, type ReconcileInput } from '../../src/engine/reconcile.js';
+import { reconcile, declinedShapes, type ReconcileInput } from '../../src/engine/reconcile.js';
+import { impliedInvariants } from '../../src/engine/implied.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 import type { CandidateInvariant } from '../../src/ast/invariant.js';
 import type { LedgerEntry } from '../../src/engine/session.js';
@@ -183,5 +184,13 @@ describe('reconcile', () => {
     const r = reconcile(base({ parsed: { model, invariants: [nonNeg, lt] } }));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.refusals[0]!.code).toBe('template-only-kind');
+  });
+
+  it('declinedShapes keys on the LAST word per shape', () => {
+    const inv = impliedInvariants(model)[0]!;
+    expect(declinedShapes([{ kind: 'adopted', at: 't1', invariant: inv, provenance: 'x' },
+                           { kind: 'declined', at: 't2', invariant: inv, reason: 'r' }]).size).toBe(1);
+    expect(declinedShapes([{ kind: 'declined', at: 't1', invariant: inv, reason: 'r' },
+                           { kind: 'adopted', at: 't2', invariant: inv, provenance: 'x' }]).size).toBe(0);
   });
 });

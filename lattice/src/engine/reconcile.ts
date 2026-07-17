@@ -42,12 +42,26 @@ export function rehydrateIds(parsed: CandidateInvariant[], stored: CandidateInva
   });
 }
 
+/** Shapes whose LAST adopted/declined ledger word is 'declined' — a decline (pre-verdict command
+ *  or --force-remove hand-removal) must silence the rule everywhere derived rules are re-derived:
+ *  prose projection and the replay canonical sets. Keyed by canonical candidate shape because
+ *  derived rules are re-minted per call and carry no stable identity across sessions. */
+export function declinedShapes(ledger: LedgerEntry[]): Set<string> {
+  const last = new Map<string, 'adopted' | 'declined'>();
+  for (const e of ledger)
+    if (e.kind === 'adopted' || e.kind === 'declined') last.set(cjson(e.invariant.candidate), e.kind);
+  return new Set([...last].filter(([, k]) => k === 'declined').map(([shape]) => shape));
+}
+
 /** explicit ∪ implied under DERIVED names: explicit entries whose candidate matches an implied
  *  rule are replaced by the derived-name version. Without this, the pre-migration session (whose
  *  state.json still lists the 13 template invariants under old names) would diff as 13 renames
- *  on every apply. Ledger adopted entries keep the old names — explain still finds them. */
-export function canonicalSet(model: DomainModel, explicit: CandidateInvariant[]): CandidateInvariant[] {
-  const derived = impliedInvariants(model);
+ *  on every apply. Ledger adopted entries keep the old names — explain still finds them.
+ *  `declined` (from declinedShapes) drops any implied rule whose latest ledger word is 'declined'
+ *  — otherwise a declined structural rule would keep reappearing in the replay sets it was
+ *  declined from, undoing the decline on the very next reconcile. */
+export function canonicalSet(model: DomainModel, explicit: CandidateInvariant[], declined?: Set<string>): CandidateInvariant[] {
+  const derived = impliedInvariants(model).filter(d => !declined?.has(cjson(d.candidate)));
   const derivedShapes = new Set(derived.map(d => cjson(d.candidate)));
   return [...explicit.filter(i => !derivedShapes.has(cjson(i.candidate))), ...derived];
 }
@@ -58,11 +72,12 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
   const warnings: string[] = [];
   const appends: LedgerEntry[] = [];
   const applied: string[] = [];
+  const declined = declinedShapes(ledger);
 
-  const after = { model: parsed.model, canonical: canonicalSet(parsed.model, parsed.invariants) };
+  const after = { model: parsed.model, canonical: canonicalSet(parsed.model, parsed.invariants, declined) };
 
   // detection diff on the RAW stored side — this is where rename proposals come from
-  const rawBefore = { model: storedModel, canonical: canonicalSet(storedModel, storedExplicit) };
+  const rawBefore = { model: storedModel, canonical: canonicalSet(storedModel, storedExplicit, declined) };
   const detection = diffModels(rawBefore, after, ledger, storedModel);
   const confirmedKey = new Set(confirmedRenames.map(r => `${r.scope}|${r.from}|${r.to}`));
   for (const p of detection.renameProposals) {
@@ -89,7 +104,7 @@ export function reconcile(input: ReconcileInput): ReconcileOutcome {
   // apply confirmed (MATCHED only) renames to the stored side, then diff again for the real change set
   const normModel = applyRenamesToModel(storedModel, matchedRenames);
   const normExplicit = storedExplicit.map(i => applyRenamesToInvariant(i, matchedRenames));
-  const before = { model: normModel, canonical: canonicalSet(normModel, normExplicit) };
+  const before = { model: normModel, canonical: canonicalSet(normModel, normExplicit, declined) };
   const diff = diffModels(before, after, ledger, storedModel);
 
   const allRenames = [...renameEntries(ledger), ...matchedRenames];
