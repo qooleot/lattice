@@ -160,7 +160,8 @@ function alloyFieldPath(m: DomainModel, ownerName: string, v: string, p: Path): 
 
 /**
  * Every intermediate `lone` ref hop a path crosses, as the Alloy expression naming that hop —
- * the counterpart of quint.ts's refHopsIn (which gates on a record's `exists` flag; here the
+ * the counterpart of quint.ts's refHopGates (which gates on a record's `exists` flag plus an
+ * optional hop's own Present flag; here the
  * relation's own emptiness IS the absence). A required hop stays `one` in emitOwnerSig, so it can
  * never be empty and needs no gate; a `lone` hop can be, and Alloy's empty-set semantics DECIDE
  * rather than permit — `x.method.fee > 0` is FALSE, not vacuous, when `x.method` is empty. Without

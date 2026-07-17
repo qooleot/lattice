@@ -386,8 +386,17 @@ export function candidateToQuint(m: DomainModel, c: Candidate, name: string): st
       });
     }
     if (c.kind === 'conservation') {
-      return overChildren(kid, name, self =>
-        `(${c.parts.map(p => pathToQuint(m, p, self, c.aggregate)).join(' + ')} == ${pathToQuint(m, c.total, self, c.aggregate)})`);
+      // Same `gates implies eq` wrap as the top-level conservation arm below — a child may hold a
+      // required ref to a top-level owner (slice B2), so a parts/total path hopping it reads a
+      // possibly-never-created record's placeholder ungated. refHopGates resolves the child-rooted
+      // first segment via ownersAndChildren, exactly as pathToQuint does; and since a child cannot
+      // carry an optional field (validate.ts's optional-owned-child), only `.exists` atoms are
+      // ever emitted here — the flag half of the gate is unreachable by construction.
+      return overChildren(kid, name, self => {
+        const gates = [...new Set([...c.parts, c.total].flatMap(p => refHopGates(m, p, self, c.aggregate)))];
+        const eq = `${c.parts.map(p => pathToQuint(m, p, self, c.aggregate)).join(' + ')} == ${pathToQuint(m, c.total, self, c.aggregate)}`;
+        return gates.length ? `((${gates.join(' and ')}) implies (${eq}))` : `(${eq})`;
+      });
     }
     throw new Error(`candidateToQuint: ${c.kind} on the aggregate-owned child ${c.aggregate} has no child-map encoding — only statePredicate and conservation are derived with a child subject (slice B2)`);
   }
