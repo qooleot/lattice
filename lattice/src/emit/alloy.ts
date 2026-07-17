@@ -276,7 +276,17 @@ function candidateToPred(m: DomainModel, c: Candidate, name: string): string {
       const ops = { eq: '=', le: '<=', ge: '>=' } as const;
       // Underscore relation: alloy flattens a value into `<field>_<sub>` sig relations
       // (valueSubRelations), so a value sub-field reads `l.amount_amount`.
-      return `pred ${name} { all x: ${c.aggregate} | ${alloyFieldPath(m, c.aggregate, 'x', c.total)} ${ops[c.op]} (sum l: { l: ${c.child} | l.owner = x } | ${alloyFieldPath(m, c.child, 'l', sumFieldPath(c))}) }`;
+      const cmp = `${alloyFieldPath(m, c.aggregate, 'x', c.total)} ${ops[c.op]} (sum l: { l: ${c.child} | l.owner = x } | ${alloyFieldPath(m, c.child, 'l', sumFieldPath(c))})`;
+      // Same permit polarity as the cmp and unique arms above, mirrored from quint.ts's own
+      // sumOverCollection arm: the summed CHILD field never crosses a ref hop (it's read off each
+      // live child's own field, `l.<field>`), but the aggregate-level `total` it's compared against
+      // can — gate on that read alone. An ungrounded total read is unknown, and unknown facts don't
+      // convict, so the whole comparison must go vacuously TRUE (`implies`), not FALSE, when the hop
+      // is empty. This arm was the one sibling left ungated by the final review (expressibleAdopted
+      // routes sumOverCollection through here as an ADOPTED constraint, so the gap was live).
+      const hops = alloyRefHops(m, c.aggregate, 'x', c.total);
+      const body = hops.length ? `(${hops.map(h => `some ${h}`).join(' and ')}) implies (${cmp})` : cmp;
+      return `pred ${name} { all x: ${c.aggregate} | ${body} }`;
     }
     default: throw new Error(`${c.kind} routes to quint, not alloy`);
   }

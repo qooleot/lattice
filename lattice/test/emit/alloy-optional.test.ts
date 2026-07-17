@@ -146,3 +146,44 @@ describe('alloy — ref-hop existence gate on unique by-keys', () => {
   it('leaves a literal-valued exclusion dim ungated', () =>
     expect(excl([{ dim: 'amount value', value: 3 }])).toContain('a.amount = 3'));
 });
+
+// candidateToPred's sumOverCollection arm rendered `total`'s path bare — no alloyRefHops gate —
+// while every sibling arm (cmp, unique, and quint's own sum arm) is gated. expressibleAdopted
+// includes sumOverCollection as an ADOPTED constraint alloy can express directly (candidateToPred's
+// intent comment at :270), so an adopted sum rule whose `total` crosses a `lone` hop made Alloy's
+// empty join FALSE where the TS judge and quint both permit it — the same "none = none"-shaped
+// divergence class the unique and cmp arms above already close. Fixture mirrors
+// quint-optional-hop.test.ts's mSum exactly, so the same shape is pinned on both engines.
+describe('alloy — ref-hop existence gate on sumOverCollection total', () => {
+  const mSum: DomainModel = {
+    context: 'SumHop', ticksPerDay: 24, enums: [], values: [],
+    entities: [{ kind: 'entity', name: 'Method', fields: [
+      { name: 'methodId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'cap', type: { kind: 'prim', prim: 'Money' } }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Invoice', fields: [
+      { name: 'invoiceId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'total', type: { kind: 'prim', prim: 'Money' } },
+      { name: 'method', type: { kind: 'ref', target: 'Method' }, optional: true },
+      { name: 'lines', type: { kind: 'list', of: { kind: 'ref', target: 'Line' } } }],
+      entities: [{ kind: 'entity', name: 'Line', fields: [
+        { name: 'lineId', type: { kind: 'prim', prim: 'Id' }, key: true },
+        { name: 'amount', type: { kind: 'prim', prim: 'Money' } }] }] }],
+    events: [], services: []
+  };
+  const emit = (c: Candidate) => astToAlloy(mSum, { kind: 'probe-permit', hi: c, exclusions: [], scope: 4 });
+
+  it('gates the comparison at permit polarity when total crosses an optional hop', () => {
+    const c: Candidate = { kind: 'sumOverCollection', aggregate: 'Invoice', collection: 'lines',
+      child: 'Line', field: 'amount', op: 'eq', total: ['method', 'cap'] };
+    expect(emit(c)).toContain(
+      '(some x.method) implies (x.method.cap = (sum l: { l: Line | l.owner = x } | l.amount))');
+  });
+
+  it('leaves an own-field total emitted unchanged — no gate, no implies', () => {
+    const c: Candidate = { kind: 'sumOverCollection', aggregate: 'Invoice', collection: 'lines',
+      child: 'Line', field: 'amount', op: 'eq', total: ['total'] };
+    const src = emit(c);
+    expect(src).toContain('pred Hi { all x: Invoice | x.total = (sum l: { l: Line | l.owner = x } | l.amount) }');
+    expect(src).not.toContain('implies');
+  });
+});
