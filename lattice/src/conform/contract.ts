@@ -16,8 +16,16 @@ function tsType(model: DomainModel, t: TypeRef): string {
       return 'string | null'; // foreign id
     case 'list':
       return `${tsType(model, t.of)}[]`;
+    case 'optional':
+      return `${tsType(model, t.of)} | null`;   // transparent wrapper
+    case 'union':
+      return t.arms.map(a => tsType(model, a)).join(' | ');
     case 'value':
       throw new Error(`unsupported field type kind: value (${t.value}) — the conform contract renderer does not yet support value-type fields`);
+    case 'map': case 'generic': case 'carrier':
+      // CARRIED rich types are not part of the solved-state contract (Slice 1). Faithful production
+      // codegen renders them; the conform state-override contract only exposes the solved surface.
+      throw new Error(`unsupported field type kind: ${t.kind} — the conform contract renderer does not expose carried rich types`);
   }
 }
 

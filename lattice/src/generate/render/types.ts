@@ -7,6 +7,11 @@ function tsType(t: TypeRef): string {
     case 'enum': return 'string';
     case 'ref': return 'string';           // foreign id
     case 'list': return `${tsType(t.of)}[]`;
+    case 'optional': return `${tsType(t.of)} | null`;                       // transparent wrapper
+    case 'map': return `Record<${tsType(t.key)}, ${tsType(t.of)}>`;          // Map<K,V>
+    case 'generic': return `${t.ctor}<${t.args.map(tsType).join(', ')}>`;    // Result<T,E>, user generics
+    case 'union': return t.arms.map(tsType).join(' | ');                     // A | B
+    case 'carrier': return 'unknown';                                        // opaque builtin (demo has no decl)
     case 'value': throw new Error(`unsupported field type kind: value (${t.value}) — the TS types renderer does not yet support value-type fields`);
   }
 }

@@ -110,7 +110,10 @@ export function impliedInvariants(m: DomainModel): CandidateInvariant[] {
           // Only a top-level field can be optional (optional-value forbids an optional value
           // sub-field; optional-owned-child forbids an optional child field), so the guard reads
           // the head segment.
-          body: f.optional
+          // A head `Optional<T>` counts as optional whether the parser recorded it as the
+          // Field.optional flag or left it as an `optional` TYPE at the head — either way an absent
+          // amount is not a negative one, so the present-guard is forced.
+          body: (f.optional || f.type.kind === 'optional')
             ? { kind: 'implies', left: { kind: 'present', path: [f.name] }, right: nonNegativeBody(p) }
             : nonNegativeBody(p) }));
     }

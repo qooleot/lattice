@@ -356,12 +356,13 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
       contract: { type: 'boolean' }, id: { type: 'string' }, reason: { type: 'string' },
       drive: { type: 'boolean' }, sequences: { type: 'string' }, length: { type: 'string' },
       seed: { type: 'string' }, 'check-every': { type: 'string' }, 'probe-rate': { type: 'string' },
+      lang: { type: 'string' },
     }});
 
     // generate has its own source-of-input pair (--spec [--ledger], the .lat-canonical path) as
     // an alternative to --session — validated in the generate block below, not here. conform is
     // session-less too: it reads its session pointer from the target's conform.config.json.
-    if (cmd !== 'docs' && cmd !== 'generate' && cmd !== 'conform' && !values.session) return { error: 'missing-arg', arg: 'session' };
+    if (cmd !== 'docs' && cmd !== 'generate' && cmd !== 'codegen' && cmd !== 'conform' && !values.session) return { error: 'missing-arg', arg: 'session' };
     const dir = values.session!;
 
     switch (cmd) {
@@ -379,6 +380,14 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         if (values.session && (values.spec || values.ledger))
           return { error: 'invalid-args', message: "generate takes either --session or --spec [--ledger], not both" };
         if (!values.session && !values.spec) return { error: 'missing-arg', arg: 'session or spec' };
+        break;
+      case 'codegen':
+        if (!values.out) return { error: 'missing-arg', arg: 'out' };
+        if (values.session && (values.spec || values.ledger))
+          return { error: 'invalid-args', message: "codegen takes either --session or --spec [--ledger], not both" };
+        if (!values.session && !values.spec) return { error: 'missing-arg', arg: 'session or spec' };
+        if (values.lang !== undefined && values.lang !== 'ts')
+          return { error: 'invalid-args', message: 'codegen --lang supports: ts' };
         break;
       case 'explain': if (!values.name) return { error: 'missing-arg', arg: 'name' }; break;
       case 'strengthen': if (!values.name) return { error: 'missing-arg', arg: 'name' }; break;
@@ -420,6 +429,30 @@ export async function runCommand(argv: string[], deps: SolverDeps): Promise<obje
         if (err instanceof LatParseFailure) return { error: 'parse-failed', diagnostics: err.diagnostics };
         // Same code init and apply return for a derived-name collision: one condition, one code,
         // whichever door it comes through.
+        if (err instanceof LatModelInvalid) return { error: 'ill-formed-model', diagnostics: err.diagnostics };
+        throw err;
+      }
+    }
+
+    // `codegen` (Slice 3): the faithful full-model type emitter — the "replace CML" artifact. Unlike
+    // `generate` it does NOT go through generateService/buildPlan (those hit the solver-scoped SQLite
+    // renderers, which throw on value/list/carried kinds, and a values-less GenPlan). It renders the
+    // full DomainModel directly. Reuses generate's --spec/--session loaders, so it inherits the same
+    // parse/collision gates. `--lang ts` only for now (validated above); `ruby` is a later slice.
+    if (cmd === 'codegen') {
+      try {
+        const input = values.spec
+          ? loadGenInputFromLat(values.spec, values.ledger)
+          : loadGenInput(values.session!);
+        const { renderTsTypes } = await import('./generate/render/ts-types.js');
+        const src = renderTsTypes(input.model);
+        const outArg = values.out!;
+        const path = outArg.endsWith('.ts') ? outArg : join(outArg, 'types.ts');
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, src);
+        return { written: [path] };
+      } catch (err) {
+        if (err instanceof LatParseFailure) return { error: 'parse-failed', diagnostics: err.diagnostics };
         if (err instanceof LatModelInvalid) return { error: 'ill-formed-model', diagnostics: err.diagnostics };
         throw err;
       }

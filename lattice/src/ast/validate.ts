@@ -113,6 +113,9 @@ export function validateModel(m: DomainModel): Diagnostic[] {
     checkTypeName('enum', en.name, en.name);
     for (const v of en.values) checkName('enum value', v, `${en.name}.${v}`);
   }
+  // `builtin` carriers are type names too — same namespace as enum/value/entity/aggregate, so they
+  // get checkTypeName (reject reserved words + prim spellings) and join the duplicate-name pool.
+  for (const b of m.builtins ?? []) checkTypeName('builtin', b, b);
   for (const v of m.values) {
     checkTypeName('value', v.name, v.name);
     for (const f of v.fields) checkName('field', f.name, `${v.name}.${f.name}`);
@@ -145,7 +148,7 @@ export function validateModel(m: DomainModel): Diagnostic[] {
 
   const names = new Map<string, number>();
   const all = [...m.enums.map(e => e.name), ...m.values.map(v => v.name), ...m.entities.map(e => e.name), ...m.aggregates.map(a => a.name),
-    ...m.aggregates.flatMap(a => (a.entities ?? []).map(e => e.name))];
+    ...m.aggregates.flatMap(a => (a.entities ?? []).map(e => e.name)), ...(m.builtins ?? [])];
   for (const n of all) names.set(n, (names.get(n) ?? 0) + 1);
   for (const [n, c] of names) if (c > 1) out.push({ code: 'duplicate-name', message: `name ${n} declared ${c} times` });
 
@@ -154,6 +157,7 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   const enums = new Set(m.enums.map(e => e.name));
   const values = new Set(m.values.map(v => v.name));
   const events = new Set(m.events.map(e => e.name));
+  const carriers = new Set(m.builtins ?? []);
 
   /**
    * child entity name -> the aggregate that owns it. A nested child is inlined into its owner in
@@ -183,6 +187,13 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       checkRefTarget(t.of, at, null);
       return;
     }
+    // Rich containers (Slice 2): descend with ownerAgg reset to null — the owned-collection
+    // exception is ONLY a direct `List<ref Child>` on the aggregate, so a ref to a child buried in a
+    // Map/generic/union/optional is not one and stays subject to ref-target-nested-child.
+    if (t.kind === 'optional') { checkRefTarget(t.of, at, null); return; }
+    if (t.kind === 'map') { checkRefTarget(t.key, at, null); checkRefTarget(t.of, at, null); return; }
+    if (t.kind === 'generic') { for (const a of t.args) checkRefTarget(a, at, null); return; }
+    if (t.kind === 'union') { for (const a of t.arms) checkRefTarget(a, at, null); return; }
     if (t.kind !== 'ref') return;
     const target = t.target;   // capture before isQualifiedRef narrows t (its predicate type equals
                                 // this branch's narrowed type exactly, so the false branch is `never`)
@@ -205,7 +216,16 @@ export function validateModel(m: DomainModel): Diagnostic[] {
     }
     if (t.kind === 'enum' && !enums.has(t.enum)) out.push({ code: 'unresolved-enum', message: `enum ${t.enum} not declared`, at });
     if (t.kind === 'value' && !values.has(t.value)) out.push({ code: 'unresolved-value', message: `value type ${t.value} not declared`, at });
-    if (t.kind === 'list') checkType(t.of, at);
+    // A bare carrier only arises when the name matched a declared `builtin` (mapType), so this is
+    // reachable only for a hand-built model — but check it so the closed grammar stays honest.
+    if (t.kind === 'carrier' && !carriers.has(t.name)) out.push({ code: 'unresolved-carrier', message: `builtin type ${t.name} not declared`, at });
+    // Rich container kinds (Slice 2): recurse into sub-types so a nested unresolved ref/enum/value/
+    // carrier is still reported. Carried containers never reach the solver, but their element types
+    // must still name real declarations for faithful codegen.
+    if (t.kind === 'list' || t.kind === 'optional') checkType(t.of, at);
+    if (t.kind === 'map') { checkType(t.key, at); checkType(t.of, at); }
+    if (t.kind === 'generic') for (const a of t.args) checkType(a, at);
+    if (t.kind === 'union') for (const a of t.arms) checkType(a, at);
   };
   const checkReservedField = (f: Field, at: string) => {
     if (f.name === 'state')

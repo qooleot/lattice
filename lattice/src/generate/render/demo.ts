@@ -266,5 +266,10 @@ function defaultLiteralFor(f: Field): string {
     case 'ref': return "''";
     case 'list': return '[]';
     case 'value': return '{}';
+    case 'optional': return 'null';
+    case 'map': return '{}';
+    case 'generic': return 'null';
+    case 'union': return defaultLiteralFor({ ...f, type: f.type.arms[0]! });
+    case 'carrier': return 'null';
   }
 }

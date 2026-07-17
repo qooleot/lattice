@@ -5,10 +5,21 @@ import { isImplied } from '../engine/implied.js';
 import type { ContextMapModel } from '../ast/contextmap.js';
 import { defaultPath } from '../ast/contextmap.js';
 
-const typeStr = (f: Field): string =>
-  f.type.kind === 'prim' ? f.type.prim : f.type.kind === 'enum' ? f.type.enum
-  : f.type.kind === 'value' ? f.type.value
-  : f.type.kind === 'ref' ? `ref ${f.type.target}` : `List<${typeStr({ ...f, type: f.type.of })}>`;
+const typeStr = (f: Field): string => {
+  const t = f.type;
+  switch (t.kind) {
+    case 'prim': return t.prim;
+    case 'enum': return t.enum;
+    case 'value': return t.value;
+    case 'ref': return `ref ${t.target}`;
+    case 'list': return `List<${typeStr({ ...f, type: t.of })}>`;
+    case 'optional': return `Optional<${typeStr({ ...f, type: t.of })}>`;
+    case 'map': return `Map<${typeStr({ ...f, type: t.key })}, ${typeStr({ ...f, type: t.of })}>`;
+    case 'generic': return `${t.ctor}<${t.args.map(a => typeStr({ ...f, type: a })).join(', ')}>`;
+    case 'union': return t.arms.map(a => typeStr({ ...f, type: a })).join(' | ');
+    case 'carrier': return t.name;
+  }
+};
 
 const OPS = { eq: '==', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' } as const;
 // precedence: implies(1) < or(2) < and(3) < not(4) < atoms(5)
@@ -140,6 +151,9 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
   doc(m.doc, '', out);
   out.push(`context ${m.context} {`, '');
   if (m.ticksPerDay !== undefined) out.push(`  ticksPerDay = ${m.ticksPerDay}`, '');
+  // `builtin` carriers (Slice 2): declared before the types that reference them, so a bare carrier
+  // name re-parses to TypeRef 'carrier' instead of the unresolved-enum fallback.
+  if (m.builtins?.length) { for (const b of m.builtins) out.push(`  builtin ${b}`); out.push(''); }
   for (const e of m.enums) {
     // grammar requires >= 1 value — 'enum X {  }' would not parse back
     if (!e.values.length) throw new Error(`cannot print enum ${e.name}: it has no values`);

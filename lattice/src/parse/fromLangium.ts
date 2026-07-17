@@ -29,27 +29,58 @@ const at = (node: any): { line: number; col: number } => {
 const diag = (code: string, message: string, node?: any): ParseDiagnostic =>
   ({ code, message, ...at(node) });
 
-// Resolution order for a bare NamedType (design §3.5): prim → value → owner-ref → enum. A value
-// name and an owner (entity/aggregate) name are mutually exclusive by validateModel's shared
-// duplicate-name pool, so checking values before owners is safe — this order only matters for the
-// final unresolved-enum fallback, which must not shadow an in-scope value or owner name.
+// Resolution order for a bare NamedType (design §3.5): prim → value → owner-ref → carrier → enum.
+// The declared sets (value/owner/carrier) are mutually exclusive by validateModel's shared
+// duplicate-name pool, so their relative order does not matter — it only affects the final
+// unresolved-enum fallback, which must not shadow any in-scope declared name.
 //
 // The prim-first arm can no longer shadow a declaration: validateModel's `reserved-prim-name` puts
 // prims into that same duplicate-name pool, so no declaration reaching here is spelled like one.
-function mapType(t: G.LatType, enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>, values: Set<string>): TypeRef {
-  if (t.$type === 'ListType') return { kind: 'list', of: mapType((t as G.ListType).of, enums, diags, owners, values) };
-  if (t.$type === 'RefType') return { kind: 'ref', target: (t as G.RefType).target };
-  const name = (t as G.NamedType).name;
-  if (PRIM_NAMES.has(name)) return { kind: 'prim', prim: name as any };
-  if (values.has(name)) return { kind: 'value', value: name };
-  if (owners.has(name)) return { kind: 'ref', target: name };
-  return { kind: 'enum', enum: name };   // unresolved enum → validateModel reports unresolved-enum
+//
+// The container/rich forms (List/Optional/Map/generic/union) are handled structurally above the
+// bare-name resolution; a head `Optional<T>` is later normalized to the `?` flag in mapFields.
+function mapType(t: G.LatType, enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>, values: Set<string>, carriers: Set<string>): TypeRef {
+  const rec = (x: G.LatType) => mapType(x, enums, diags, owners, values, carriers);
+  switch (t.$type) {
+    case 'ListType': return { kind: 'list', of: rec((t as G.ListType).of) };
+    case 'OptionalType': return { kind: 'optional', of: rec((t as G.OptionalType).of) };
+    case 'MapType': { const mt = t as G.MapType; return { kind: 'map', key: rec(mt.key), of: rec(mt.of) }; }
+    case 'RefType': return { kind: 'ref', target: (t as G.RefType).target };
+    case 'UnionType': {
+      // left-assoc `A | B | C` flattens to n-ary arms (as `&&`/`||` do in mapPred): a nested
+      // union arm is spliced in, so `arms` is always a flat list of non-union types.
+      const arms: TypeRef[] = [];
+      const push = (x: G.LatType) => { const r = rec(x); if (r.kind === 'union') arms.push(...r.arms); else arms.push(r); };
+      const u = t as G.UnionType; push(u.left); push(u.right);
+      return { kind: 'union', arms };
+    }
+    case 'NamedType': {
+      const nt = t as G.NamedType;
+      // `Name<args>` — a generic constructor (carried; ctor opaque, args resolved). `Optional`/`Map`
+      // never reach here (dedicated rules), so any ctor with args is a plain generic.
+      if (nt.args.length) return { kind: 'generic', ctor: nt.name, args: nt.args.map(rec) };
+      const name = nt.name;
+      if (PRIM_NAMES.has(name)) return { kind: 'prim', prim: name as any };
+      if (values.has(name)) return { kind: 'value', value: name };
+      if (owners.has(name)) return { kind: 'ref', target: name };
+      if (carriers.has(name)) return { kind: 'carrier', name };   // declared `builtin`
+      return { kind: 'enum', enum: name };   // unresolved enum → validateModel reports unresolved-enum
+    }
+  }
 }
 
-function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>, values: Set<string>): Field[] {
+function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>, values: Set<string>, carriers: Set<string>): Field[] {
   return fs.map(f => {
-    const field: Field = { name: f.name, type: mapType(f.type, enums, diags, owners, values) };
-    if (f.optional) field.optional = true;
+    let type = mapType(f.type, enums, diags, owners, values, carriers);
+    let optional = f.optional;
+    // A head `Optional<T>` is the canonical head-optional form written long — normalize it to the
+    // `?` flag (design: ast/domain.ts TypeRef doc) so `fee : Optional<Money>` and `fee : Money?`
+    // yield ONE AST, and the flag-based validation (optional-value/-list/-key) and derivation
+    // (impliedInvariants' present-gate) apply uniformly. A NESTED optional (`Map<K, Optional<V>>`,
+    // `List<Optional<T>>`) is not at the field head, so it stays a TypeRef 'optional' — carried.
+    if (type.kind === 'optional') { optional = true; type = type.of; }
+    const field: Field = { name: f.name, type };
+    if (optional) field.optional = true;
     if (f.key) field.key = true;
     if (f.const) field.const = true;
     if (f.tags.length) field.tags = f.tags.map(t => t.name);
@@ -85,15 +116,15 @@ function mapLifecycles(lifs: G.LifecycleDecl[], ownerName: string, diags: ParseD
 // own params (shadowing fields — a `param` PathRef never reaches this far since mapType's
 // resolution happens per-method via the params set threaded into mapPred/mapTerm).
 function mapMethods(methods: G.MethodDecl[], enums: Set<string>, diags: ParseDiagnostic[],
-    owners: Set<string>, values: Set<string>, enumMap: Map<string, string[]>): MethodDef[] {
+    owners: Set<string>, values: Set<string>, carriers: Set<string>, enumMap: Map<string, string[]>): MethodDef[] {
   return methods.map(mm => {
-    const params: ParamDef[] = mm.params.map(p => ({ name: p.name, type: mapType(p.type, enums, diags, owners, values) }));
+    const params: ParamDef[] = mm.params.map(p => ({ name: p.name, type: mapType(p.type, enums, diags, owners, values, carriers) }));
     const paramNames = new Set(params.map(p => p.name));
     const kind: MethodDef['kind'] = mm.readOnly ? { readOnly: true }
       : mm.creates !== undefined ? { creates: mm.creates }
       : { performs: { aggregate: mm.performsAgg!, transition: mm.performsTransition! } };
     const def: MethodDef = { name: mm.name, params, kind };
-    if (mm.returns) def.returns = mapType(mm.returns, enums, diags, owners, values);
+    if (mm.returns) def.returns = mapType(mm.returns, enums, diags, owners, values, carriers);
     if (mm.requires) def.requires = mapPred(mm.requires, enumMap, paramNames);
     const d = joinDocs([...mm.docs]); if (d) def.doc = d;
     return def;
@@ -215,6 +246,7 @@ function namingWarnings(m: DomainModel, invNames: string[],
       message: `${kind} '${n}' should be ${style} (spec P8)` });
   };
   warn('context', m.context, PASCAL, 'PascalCase', 'context');
+  for (const b of m.builtins ?? []) warn('builtin', b, PASCAL, 'PascalCase', `builtin:${b}`);
   for (const e of m.enums) { warn('enum', e.name, PASCAL, 'PascalCase', `enum:${e.name}`); e.values.forEach(v => warn('enum value', v, CAMEL, 'camelCase', `enum:${e.name}`)); }
   for (const v of m.values) {
     warn('value', v.name, PASCAL, 'PascalCase', `owner:${v.name}`);
@@ -273,24 +305,30 @@ export function loadLatText(text: string): LoadResult {
     }
   }
   // value type names in scope for bare-name resolution (mapType: prim → value → owner-ref →
-  // enum), same forward-reference rationale as ownerNames above.
+  // carrier → enum), same forward-reference rationale as ownerNames above.
   const valueDecls = cst.items.filter((i): i is G.ValueDecl => i.$type === 'ValueDecl');
   const valueNames = new Set(valueDecls.map(v => v.name));
+  // declared `builtin` carrier names — the fourth resolution step, ahead of the unresolved-enum
+  // fallback: a bare name matching one maps to TypeRef kind 'carrier' (opaque, codegen-only).
+  const builtinDecls = cst.items.filter((i): i is G.BuiltinDecl => i.$type === 'BuiltinDecl');
+  const carrierNames = new Set(builtinDecls.map(b => b.name));
 
   const model: DomainModel = {
     context: cst.name,
     enums: enumDecls.map(e => ({ name: e.name, values: [...e.values] }) as EnumDef),
     values: [], entities: [], aggregates: [], events: [], services: [],
   };
+  if (builtinDecls.length) model.builtins = builtinDecls.map(b => b.name);
   const topDoc = joinDocs([...file.docs]);
   if (topDoc) model.doc = topDoc;
+  for (const b of builtinDecls) locs.set(`builtin:${b.name}`, at(b));
 
   for (const item of cst.items) {
     switch (item.$type) {
       case 'TicksDecl': model.ticksPerDay = parseInt((item as G.TicksDecl).value, 10); break;
       case 'ValueDecl': {
         const v = item as G.ValueDecl;
-        const def: ValueDef = { kind: 'value', name: v.name, fields: mapFields([...v.fields], enumSet, diags, ownerNames, valueNames) };
+        const def: ValueDef = { kind: 'value', name: v.name, fields: mapFields([...v.fields], enumSet, diags, ownerNames, valueNames, carrierNames) };
         if (v.invariants.length) def.invariants = v.invariants.map(inv => {
           // value invariants are unconditional own-field laws (design §3.5): `on`/`where` on the
           // header, or any body shape besides a plain predicate, is out of scope in v1.
@@ -309,23 +347,23 @@ export function loadLatText(text: string): LoadResult {
       }
       case 'EntityDecl': {
         const e = item as G.EntityDecl;
-        const def: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames) };
+        const def: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames, carrierNames) };
         const d = joinDocs([...e.docs]); if (d) def.doc = d;
         locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
         model.entities.push(def); break;
       }
       case 'EventDecl': {
         const e = item as G.EventDecl;
-        const def: EventDef = { name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames) };
+        const def: EventDef = { name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames, carrierNames) };
         const d = joinDocs([...e.docs]); if (d) def.doc = d;
         locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
         model.events.push(def); break;
       }
       case 'AggregateDecl': {
         const a = item as G.AggregateDecl;
-        const def: AggregateDef = { kind: 'aggregate', name: a.name, fields: mapFields([...a.fields], enumSet, diags, ownerNames, valueNames) };
+        const def: AggregateDef = { kind: 'aggregate', name: a.name, fields: mapFields([...a.fields], enumSet, diags, ownerNames, valueNames, carrierNames) };
         if (a.entities.length) def.entities = [...a.entities].map(e => {
-          const child: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames) };
+          const child: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames, carrierNames) };
           const d = joinDocs([...e.docs]); if (d) child.doc = d;
           locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
           return child;
@@ -342,7 +380,7 @@ export function loadLatText(text: string): LoadResult {
       }
       case 'ServiceDecl': {
         const s = item as G.ServiceDecl;
-        const def: ServiceDef = { name: s.name, methods: mapMethods([...s.methods], enumSet, diags, ownerNames, valueNames, enumMap) };
+        const def: ServiceDef = { name: s.name, methods: mapMethods([...s.methods], enumSet, diags, ownerNames, valueNames, carrierNames, enumMap) };
         const d = joinDocs([...s.docs]); if (d) def.doc = d;
         locs.set(`owner:${s.name}`, at(s));
         for (const mm of s.methods) locs.set(`method:${s.name}.${mm.name}`, at(mm));

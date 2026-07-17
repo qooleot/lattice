@@ -13,10 +13,10 @@ import type { PrimType } from './domain.js';
  * parse/ (parse/ already imports from ast/ — see fromLangium.ts, diff.ts).
  */
 export const RESERVED_WORDS: ReadonlySet<string> = new Set([
-  'aggregate', 'anticorruption', 'by', 'conformist', 'conserve', 'const', 'contains', 'context',
+  'aggregate', 'anticorruption', 'builtin', 'by', 'conformist', 'conserve', 'const', 'contains', 'context',
   'contextMap', 'count', 'creates', 'downstream', 'emits', 'entity', 'enum', 'event', 'exposes', 'fairness',
-  'from', 'in', 'invariant', 'key', 'leads', 'lifecycle', 'List', 'monotonic', 'now', 'of', 'on', 'openHost',
-  'partnership', 'performs', 'present', 'publishedLanguage', 'read-only', 'ref', 'refs', 'requires', 'resolve', 'roles',
+  'from', 'in', 'invariant', 'key', 'leads', 'lifecycle', 'List', 'Map', 'monotonic', 'now', 'of', 'on', 'openHost',
+  'Optional', 'partnership', 'performs', 'present', 'publishedLanguage', 'read-only', 'ref', 'refs', 'requires', 'resolve', 'roles',
   'service', 'sharedKernel', 'state', 'states', 'sum', 'terminal', 'ticksPerDay', 'to', 'transition',
   'under', 'unique', 'upstream', 'value', 'when', 'where', 'while', 'with',
 ]);

@@ -2,12 +2,54 @@ import type { Path, Predicate } from './invariant.js';
 
 export type PrimType = 'Int' | 'Text' | 'Date' | 'Duration' | 'Money' | 'Id';
 
+/**
+ * A field/param type. Kinds fall into two tiers (see derived-invariants.md, "carried vs solved") — the
+ * split is what lets the full CML rich type system coexist with bounded, decidable verification:
+ *
+ *   SOLVED core — solver-encoded; derivation reaches semantic leaves (Money, refs, value laws) through
+ *   these. `prim`, `enum`, `ref`, `value`, `list` (in its owned-collection form), and `optional` (a
+ *   transparent 1:1 wrapper the fold sees straight through).
+ *
+ *   CARRIED surface — represented for FAITHFUL codegen (Ruby `T::Struct` / TS interfaces) but NOT
+ *   solver-encoded. Derivation folds to no leaf and the encoders drop them — exactly as a non-owned
+ *   `List<Int>` is dropped today. `map`, `generic`, `union`, and `carrier`.
+ *
+ * Slice 1 (this change) introduces the CARRIED kinds as first-class representation so the whole CML
+ * surface — `Map<K,V>`, `Result<T,E>` and other generics, `A | B` unions, and opaque builtins like
+ * `Metadata`/`Currency`/`Decimal`/`TimeRange` — round-trips through the AST. Deriving an invariant
+ * OVER a collection/arm (∀ entries of a map, per union arm) is a LATER slice: it adds a
+ * collection-scoped Candidate that reuses the owned-collection encoding quint.ts/alloy.ts already have
+ * (`sumOverCollection` is the existing precedent). It does NOT widen `Path` — element quantification
+ * lives in the Candidate, not the path.
+ */
 export type TypeRef =
   | { kind: 'prim'; prim: PrimType }
   | { kind: 'enum'; enum: string }
   | { kind: 'ref'; target: string }
   | { kind: 'list'; of: TypeRef }
-  | { kind: 'value'; value: string };
+  | { kind: 'value'; value: string }
+  // — rich CML types (Slice 1) —
+  | { kind: 'optional'; of: TypeRef }                  // Optional<T>: the fact may be absent. Transparent
+                                                       // to the fold; at a FIELD HEAD it is equivalent to
+                                                       // Field.optional (the parser normalizes head
+                                                       // `Optional<T>` to the flag; this kind carries a
+                                                       // NESTED optional, e.g. `Map<K, Optional<V>>`).
+  | { kind: 'map'; key: TypeRef; of: TypeRef }         // Map<K,V> — carried; ∀-entry derivation is later.
+  | { kind: 'generic'; ctor: string; args: TypeRef[] } // Result<T,E>, user generics — carried; per-arm later.
+  | { kind: 'union'; arms: TypeRef[] }                 // A | B | C — carried; per-arm derivation later.
+  | { kind: 'carrier'; name: string };                 // opaque builtin/external named type — codegen-only.
+
+/** Unwrap a head `optional` wrapper (idempotent for non-optional types). */
+export const unwrapOptional = (t: TypeRef): TypeRef => (t.kind === 'optional' ? unwrapOptional(t.of) : t);
+
+/** True for the CARRIED-surface kinds: represented for codegen, dropped from solving/derivation. */
+export const isCarriedType = (t: TypeRef): boolean => {
+  switch (t.kind) {
+    case 'map': case 'generic': case 'union': case 'carrier': return true;
+    case 'optional': return isCarriedType(t.of);
+    default: return false;   // prim, enum, ref, list, value — solved core
+  }
+};
 
 export interface Field {
   name: string;
@@ -84,6 +126,13 @@ export function ownedCollectionChild(a: AggregateDef, f: Field): EntityDef | nul
 function fieldPathsWhere(m: DomainModel, f: Field, match: (p: PrimType) => boolean,
     visiting: ReadonlySet<string> = new Set()): Path[] {
   if (f.type.kind === 'prim') return match(f.type.prim) ? [[f.name]] : [];
+  // `optional` is a transparent 1:1 wrapper (Slice 1): fold straight through to the inner type,
+  // reusing `f.name` so the path is unchanged — `Optional<Amount>` yields exactly what `Amount`
+  // would. Presence is handled at the derivation site (impliedInvariants reads headOptional).
+  if (f.type.kind === 'optional') return fieldPathsWhere(m, { ...f, type: f.type.of }, match, visiting);
+  // Everything else with no FLAT leaf — list/map/generic/union/carrier/enum/ref — folds to nothing:
+  // carried to codegen, dropped from solving. Deriving THROUGH a collection (∀ entries) is a later
+  // slice via a collection-scoped Candidate, not this flat-path walk.
   if (f.type.kind !== 'value') return [];
   const valueName = (f.type as { kind: 'value'; value: string }).value;
   if (visiting.has(valueName)) return [];
@@ -127,6 +176,10 @@ export interface DomainModel {
   context: string;
   doc?: string;              // free-form human description; exempt from identifier validation
   ticksPerDay?: number;      // time granularity; default 24 (tick = 1 hour)
+  builtins?: string[];       // declared opaque `builtin` carrier type names (Slice 2): a field may be
+                             // typed with one (TypeRef 'carrier'), codegen represents it, the solver
+                             // never encodes it. Omitted (not []) when none are declared, so a model
+                             // without builtins is byte-identical to before.
   enums: EnumDef[];
   values: ValueDef[];
   entities: EntityDef[];

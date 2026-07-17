@@ -28,6 +28,11 @@ function defaultLiteral(t: TypeRef): string {
     case 'ref': return "''";
     case 'list': return '[]';
     case 'value': return '{}';
+    case 'optional': return 'null';
+    case 'map': return '{}';
+    case 'generic': return 'null';   // no general default for an arbitrary type constructor
+    case 'union': return defaultLiteral(t.arms[0]!);
+    case 'carrier': return 'null';
   }
 }
 

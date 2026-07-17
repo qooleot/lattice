@@ -33,10 +33,18 @@ DownstreamRoleName returns string:
     'anticorruption' | 'conformist';
 
 ContextItem:
-    EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl | ValueDecl | ServiceDecl;
+    EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl | ValueDecl | ServiceDecl | BuiltinDecl;
 
 EnumDecl:
     'enum' name=ID '{' values+=ID (',' values+=ID)* '}';
+
+// Opaque builtin/external carrier type (design: derived-invariants.md "carried vs solved"). A
+// declared name that a field may be typed with but the solver never encodes — codegen represents it
+// (Ruby T::Struct / TS interface), derivation folds it to nothing. Lets a bare carrier name
+// (`meta : Metadata`) resolve to a carried TypeRef instead of the unresolved-enum
+// fallback, and round-trips (astToCode re-emits the decl).
+BuiltinDecl:
+    'builtin' name=ID;
 
 ValueDecl:
     docs+=DOC* 'value' name=ID '{' fields+=FieldDecl* invariants+=InvariantDecl* '}';
@@ -69,10 +77,23 @@ AggregateDecl:
 FieldDecl:
     name=ID ':' type=LatType (optional?='?')? (key?='key')? (const?='const')? tags+=Tag*;
 
+// Rich CML type surface (see ast/domain.ts TypeRef, "carried vs solved"). Layered by precedence:
+// union `|` binds loosest, then the application forms (List/Optional/Map/generic/ref/named). Union
+// is parsed left-assoc and flattened to n-ary arms in fromLangium (as `&&`/`||` predicates are).
 LatType:
+    TypeUnion;
+
+TypeUnion infers LatType:
+    TypeApp ({infer UnionType.left=current} '|' right=TypeApp)*;
+
+TypeApp infers LatType:
     {infer ListType} 'List' '<' of=LatType '>'
+  | {infer OptionalType} 'Optional' '<' of=LatType '>'
+  | {infer MapType} 'Map' '<' key=LatType ',' of=LatType '>'
   | {infer RefType} 'ref' target=QualifiedName
-  | {infer NamedType} name=ID;
+    // A bare `name` is a prim/value/owner/carrier/enum (resolved in mapType). With type arguments
+    // it is a generic constructor (`Result<T, E>`, user generics) — carried, ctor left opaque.
+  | {infer NamedType} name=ID ('<' args+=LatType (',' args+=LatType)* '>')?;
 
 QualifiedName returns string:
     ID ('.' ID)?;
