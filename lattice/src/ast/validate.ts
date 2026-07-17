@@ -1,7 +1,7 @@
 import type { Diagnostic, Predicate, Term } from './invariant.js';
 import type { DomainModel, Field, TypeRef } from './domain.js';
 import { ownedCollectionChild } from './domain.js';
-import { RESERVED_WORDS } from './reserved.js';
+import { PRIM_NAMES, RESERVED_WORDS } from './reserved.js';
 
 export const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -90,22 +90,40 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       out.push({ code: 'reserved-word', message: `${kind} name '${value}' is a .lat keyword and cannot be used as an identifier`, at });
   };
 
+  /**
+   * Declaration names in the type namespace — the enum/value/entity/aggregate pool that mapType
+   * resolves a bare `NamedType` against. A prim name here is ambiguous, not merely confusing: the
+   * grammar has one production for every named type, so a bare `Id` always resolves to the prim
+   * and never to the declaration. For value/enum that breaks print∘parse outright; for
+   * entity/aggregate it silently hijacks the bare form while `ref X` still works. See
+   * ast/reserved.ts for why both are covered.
+   *
+   * Events and services deliberately use plain checkName — neither is reachable from a type
+   * position, so `event Id {}` names nothing that `Id` could be confused with.
+   */
+  const checkTypeName = (kind: string, value: string, at?: string) => {
+    checkName(kind, value, at);
+    if (PRIM_NAMES.has(value))
+      out.push({ code: 'reserved-prim-name', at,
+        message: `${kind} name '${value}' is a built-in primitive type name — a field typed '${value}' always resolves to the primitive, so the declaration could never be reached by that name` });
+  };
+
   checkName('context', m.context);
   for (const en of m.enums) {
-    checkName('enum', en.name, en.name);
+    checkTypeName('enum', en.name, en.name);
     for (const v of en.values) checkName('enum value', v, `${en.name}.${v}`);
   }
   for (const v of m.values) {
-    checkName('value', v.name, v.name);
+    checkTypeName('value', v.name, v.name);
     for (const f of v.fields) checkName('field', f.name, `${v.name}.${f.name}`);
     for (const inv of v.invariants ?? []) checkName('invariant', inv.name, inv.name);
   }
   for (const e of m.entities) {
-    checkName('entity', e.name, e.name);
+    checkTypeName('entity', e.name, e.name);
     for (const f of e.fields) checkName('field', f.name, `${e.name}.${f.name}`);
   }
   for (const a of m.aggregates) {
-    checkName('aggregate', a.name, a.name);
+    checkTypeName('aggregate', a.name, a.name);
     for (const f of a.fields) checkName('field', f.name, `${a.name}.${f.name}`);
     for (const r of a.machine?.regions ?? []) {
       checkName('machine region', r.name, `${a.name}.${r.name}`);
@@ -156,7 +174,14 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       out.push({ code: 'reserved-field-name', message: `'state' is reserved for machine-state keys (<Region>.state)`, at });
   };
   const checkFields = (fs: Field[], owner: string, needKey: boolean) => {
-    fs.forEach(f => { checkType(f.type, `${owner}.${f.name}`); checkReservedField(f, `${owner}.${f.name}`); });
+    fs.forEach(f => { checkType(f.type, `${owner}.${f.name}`); checkReservedField(f, `${owner}.${f.name}`);
+      if (f.optional && f.key)
+        out.push({ code: 'optional-key', message: `${owner}.${f.name} is a key field and cannot be optional — identity is never absent`, at: `${owner}.${f.name}` });
+      if (f.optional && f.type.kind === 'list')
+        out.push({ code: 'optional-list', message: `${owner}.${f.name} is a List and cannot be optional — an absent list and an empty list are the same fact; List<T> already means zero or more`, at: `${owner}.${f.name}` });
+      if (f.optional && f.type.kind === 'value')
+        out.push({ code: 'optional-value', message: `${owner}.${f.name} has a value type and cannot be optional — a value type flattens into its sub-fields for the solvers, so there is no single field for the optionality marker to attach to`, at: `${owner}.${f.name}` });
+    });
     if (needKey && !fs.some(f => f.key)) out.push({ code: 'missing-key', message: `${owner} has no key field`, at: owner });
   };
 
@@ -165,6 +190,13 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       checkType(f.type, `${v.name}.${f.name}`);
       checkReservedField(f, `${v.name}.${f.name}`);
       if (f.key) out.push({ code: 'value-no-key', message: `value ${v.name}.${f.name}: value types are keyless — structural equality replaces identity (design §3.5)`, at: `${v.name}.${f.name}` });
+      // Same rule as the field-level optional-value above, one level down and for the same reason:
+      // the whole value flattens into `<field>_<sub>` sig relations, so a sub-field has no more of
+      // its own multiplicity to carry than the value itself does. Alloy's sub-field loop emits
+      // `one` regardless of the marker (making present(w.end) a tautology) while quint emits a real
+      // nested `endPresent` flag — the two solvers then disagree on whether absence is reachable,
+      // which is the divergence this code exists to forbid.
+      if (f.optional) out.push({ code: 'optional-value', message: `value ${v.name}.${f.name} cannot be optional — a value type flattens into its sub-fields for the solvers, so there is no field for the optionality marker to attach to`, at: `${v.name}.${f.name}` });
       if (f.const) out.push({ code: 'value-no-const', message: `value ${v.name}.${f.name} cannot be const — value types are immutable by structure`, at: `${v.name}.${f.name}` });
       // Note: `const` on a KEY field (entity/aggregate) is deliberately tolerated silently — a key
       // is immutable by nature, so redundant `const` there is harmless and not worth a diagnostic.
@@ -180,11 +212,26 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   m.aggregates.forEach(a => {
     checkFields(a.fields, a.name, true);
     for (const child of a.entities ?? []) {
-      checkName('entity', child.name, `${a.name}.${child.name}`);
+      // nested children share the type namespace (duplicate-name pool above, `owners` below), so a
+      // prim-named child has its bare form hijacked exactly as a top-level entity's would be
+      checkTypeName('entity', child.name, `${a.name}.${child.name}`);
       checkFields(child.fields, `${a.name}.${child.name}`, true);   // missing-key covers child-key-required
-      for (const f of child.fields)
+      for (const f of child.fields) {
         if (f.type.kind === 'ref' || f.type.kind === 'list' || f.type.kind === 'value')
           out.push({ code: 'nested-entity-flat', message: `nested entity ${a.name}.${child.name}.${f.name}: children carry prim/enum fields only in v1 (design §5.2)`, at: `${a.name}.${child.name}.${f.name}` });
+        // Checked here, not in the shared checkFields — this is the only site that knows a field
+        // belongs to an aggregate-owned child rather than a top-level entity, where `Type?` is legal.
+        // alloy.ts's emitChildSigs has no multiplicity to vary: it emits `one` whatever the marker
+        // says (real Alloy on `entity Line { discount : Money? }` in an owned collection: sat=false
+        // for a Line lacking its discount — a state the TS judge permits), while quint.ts's
+        // owned-child record emits no `${f}Present` companion at all. Relaxing Alloy to `lone`
+        // trades this for a worse divergence: its `sum` over an empty join contributes 0 and
+        // convicts where the judge skips the aggregate. No evidence in this slice needs an optional
+        // child field, so it is rejected rather than half-encoded — same call as optional-list and
+        // optional-value.
+        if (f.optional)
+          out.push({ code: 'optional-owned-child', message: `${a.name}.${child.name}.${f.name} is a field of an aggregate-owned child and cannot be optional — the solver encodings give a child's field no multiplicity of its own, so absence is unrepresentable there`, at: `${a.name}.${child.name}.${f.name}` });
+      }
     }
     const collectionOwners = new Map<string, string>();   // child entity name -> first owning field
     for (const f of a.fields) {

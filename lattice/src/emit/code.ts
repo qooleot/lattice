@@ -31,6 +31,7 @@ export function predToText(p: Predicate): string {
   switch (p.kind) {
     case 'cmp': return `${termToText(p.left)} ${OPS[p.op]} ${termToText(p.right)}`;
     case 'inState': return `state ${p.region} in {${p.states.join(', ')}}`;
+    case 'present': return `present(${p.path.join('.')})`;
     case 'and': return p.args.map(a => wrap(a, 3)).join(' && ');
     case 'or': return p.args.map(a => wrap(a, 2)).join(' || ');
     case 'not': return `! ${wrap(p.arg, 4)}`;
@@ -65,7 +66,7 @@ const pad = (n: string, w: number) => n + ' '.repeat(Math.max(1, w - n.length));
 function fieldLines(fields: Field[], indent: string, out: string[]): void {
   const w = Math.max(...fields.map(f => f.name.length)) + 1;
   for (const f of fields)
-    out.push(`${indent}${pad(f.name, w)}: ${typeStr(f)}${f.key ? ' key' : ''}${f.const ? ' const' : ''}${f.tags?.length ? ' @' + f.tags.join(' @') : ''}`);
+    out.push(`${indent}${pad(f.name, w)}: ${typeStr(f)}${f.optional ? '?' : ''}${f.key ? ' key' : ''}${f.const ? ' const' : ''}${f.tags?.length ? ' @' + f.tags.join(' @') : ''}`);
 }
 
 // Adopted `guard` candidates (§8.5-8.7 CTI-strengthening write-back) conjoin into their transition's

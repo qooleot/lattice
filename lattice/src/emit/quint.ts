@@ -49,10 +49,40 @@ function fieldQType(m: DomainModel, f: Field): string | null {
     const valueName = f.type.value;
     const vdef = m.values.find(v => v.name === valueName);
     if (!vdef) return null;
-    const subs = vdef.fields.map(sf => { const t = fieldQType(m, sf); return t ? `${sf.name}: ${t}` : null; }).filter(Boolean);
+    // An optional SUB-field carries its companion flag inside the nested record, exactly as an
+    // optional own-field carries one in the owner record: predToQuint renders present(['window',
+    // 'end']) as `x.window.endPresent` (pathToQuint walks a value hop as a plain dotted accessor),
+    // so the flag must be declared right there or the emission names a field that does not exist.
+    const subs = vdef.fields.flatMap(sf => {
+      const t = fieldQType(m, sf);
+      if (!t) return [];
+      return sf.optional ? [`${sf.name}: ${t}`, `${sf.name}Present: bool`] : [`${sf.name}: ${t}`];
+    });
     return `{ ${subs.join(', ')} }`;
   }
   return null;   // lists unsupported in slice-1 quint emission
+}
+// The `${f.name}Present: bool` companion draw (design: Quint has no Option type, so existence
+// rides beside the data — the same pattern `exists: bool` uses for instance existence and
+// `${collection}Count: int` uses for owned collections). Only for a field BOTH declared optional
+// AND encodable by fieldQType — a flag for a field the solver cannot see (Text/Id, dropped above)
+// would be a promise the engine cannot keep.
+//
+// The flag is drawn ONCE, here, and no action ever writes it: isEvolvingField is prim-only, the enum
+// mutator only names enum fields, and a transition writes only its region state. That looks fatal for
+// the motivating shape (a Payment that ACQUIRES a payment method mid-life) and is not, for a reason
+// only statable here: the draw is unconstrained and independent of the region state, so "absent at
+// init, attached at step k" and "present from init" differ only in the flag's value at the states
+// before k — and presence is expressible ONLY as a single-state predicate (grammar.ts's `present`
+// takes a Path and appears inside a state predicate), so no property this grammar can state separates
+// the two encodings. A real mutator becomes REQUIRED the moment a TEMPORAL presence property is
+// expressible ("once attached, never detached"): with nothing writing the flag, this encoding would
+// prove such a property vacuously.
+function presentInitValue(m: DomainModel, f: Field, nondets: string[], tag: string): string | null {
+  if (!f.optional || !fieldQType(m, f)) return null;
+  const nd = `nd_${tag}_${f.name}Present`;
+  nondets.push(`nondet ${nd} = oneOf(Set(true, false))`);
+  return nd;
 }
 function initValue(m: DomainModel, f: Field, nondets: string[], tag: string): string | null {
   const t = fieldQType(m, f);
@@ -82,6 +112,10 @@ function initValue(m: DomainModel, f: Field, nondets: string[], tag: string): st
       if (!sndKind) continue;
       const sndName = initValue(m, sf, nondets, `${tag}_${f.name}`);
       if (sndName) subs.push(`${sf.name}: ${sndName}`);
+      // Companion draw for an optional sub-field — the nested record type declares the flag
+      // (see fieldQType's value branch), so the literal must bind it or row-typing rejects.
+      const spnd = presentInitValue(m, sf, nondets, `${tag}_${f.name}`);
+      if (spnd) subs.push(`${sf.name}Present: ${spnd}`);
     }
     return `{ ${subs.join(', ')} }`;
   } else nondets.push(`nondet ${nd} = oneOf(${INT_POOL})`);
@@ -172,6 +206,23 @@ export function predToQuint(m: DomainModel, p: Predicate, self: string, ownerNam
       return `((${allExist}) implies ${cmp})`;
     }
     case 'inState': return '(' + p.states.map(s => `${self}.${p.region}_state == "${s}"`).join(' or ') + ')';
+    // pathToQuint's last hop is always `${prefix}.${lastSeg}` (ref-hop or not), so appending
+    // `Present` here yields exactly `${prefix}.${lastSeg}Present` — the companion flag emitted
+    // beside the field itself (see presentInitValue / the record-type `fields` construction above).
+    case 'present': {
+      const flag = `${pathToQuint(m, p.path, self, ownerName)}Present`;
+      // Same ref-hop existence gate as `cmp` above, with the OPPOSITE polarity — and the polarity is
+      // forced, not a taste. `cmp` reads absence as unknown and must not convict, so its gate is
+      // `allExist implies cmp` (ungrounded ⇒ vacuously true). `present` reads absence as a FACT
+      // (evaluate.ts's evalPred 'present' resolves the path and returns `!== undefined`), so a read
+      // through a never-created record is FALSE for the TS judge — a conjunction, not an implication.
+      // Without this, Apalache reads the placeholder flag of a record no create_ action ever made and
+      // may answer true where the judge answers false: a solver/judge divergence, not a real fact.
+      const hops = refHopsIn(m, p.path, self, ownerName);
+      if (hops.length === 0) return flag;
+      const allExist = [...new Set(hops)].map(h => `${h}.exists`).join(' and ');
+      return `((${allExist}) and ${flag})`;
+    }
     case 'and': return '(' + p.args.map(a => predToQuint(m, a, self, ownerName)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToQuint(m, a, self, ownerName)).join(' or ') + ')';
     case 'not': return `(not(${predToQuint(m, p.arg, self, ownerName)}))`;
@@ -196,6 +247,8 @@ export function buildOwnerInit(
   for (const f of o.fields) {
     const nd = initValue(m, f, nondets, tag);
     if (nd) inits.push(`${f.name}: ${nd}`);
+    const pnd = presentInitValue(m, f, nondets, tag);
+    if (pnd) inits.push(`${f.name}Present: ${pnd}`);
   }
   for (const r of machine?.regions ?? []) {
     if (stateDraw === 'fixed') {
@@ -333,7 +386,12 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
   for (const o of owners(m)) {
     const v = varName(o.name);
     varTypes[v] = o.name;
-    const fields = o.fields.map(f => { const t = fieldQType(m, f); return t ? `${f.name}: ${t}` : null; }).filter(Boolean) as string[];
+    const fields = o.fields.flatMap(f => {
+      const t = fieldQType(m, f);
+      if (!t) return [];
+      // Optional field: its own type plus a sibling `${f.name}Present: bool` (see presentInitValue).
+      return f.optional ? [`${f.name}: ${t}`, `${f.name}Present: bool`] : [`${f.name}: ${t}`];
+    });
     const machine = (o as AggregateDef).machine;
     for (const r of machine?.regions ?? []) fields.push(`${r.name}_state: str`);
     // Owned collections (design §6.1): a bounded map `f: int -> {childFields}` plus a companion
@@ -371,7 +429,12 @@ export function astToQuint(m: DomainModel, q: QuintQuery): QuintEmission {
     }
     if (!machine) {
       const nds: string[] = []; const sets: string[] = ['exists: true'];
-      for (const f of o.fields) { const nd = initValue(m, f, nds, `c_${o.name.toLowerCase()}`); if (nd) sets.push(`${f.name}: ${nd}`); }
+      for (const f of o.fields) {
+        const nd = initValue(m, f, nds, `c_${o.name.toLowerCase()}`);
+        if (nd) sets.push(`${f.name}: ${nd}`);
+        const pnd = presentInitValue(m, f, nds, `c_${o.name.toLowerCase()}`);
+        if (pnd) sets.push(`${f.name}Present: ${pnd}`);
+      }
       // A fresh record literal must match the declared row type exactly (Quint's row-typing
       // rejects a `.set(id, {...})` missing fields the var's type carries) — so a create action
       // for an aggregate with owned collections needs the same bounded-map + count fields as init.

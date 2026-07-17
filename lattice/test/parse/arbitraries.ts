@@ -3,7 +3,7 @@ import type { DomainModel, AggregateDef, EntityDef, Field, EventDef, Machine, St
   TransitionDef, TypeRef, ValueDef, ServiceDef, MethodDef, ParamDef } from '../../src/ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Cmp } from '../../src/ast/invariant.js';
 import { ownedCollectionChild } from '../../src/ast/domain.js';
-import { RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
+import { PRIM_NAMES, RESERVED_WORDS as RESERVED } from '../../src/ast/reserved.js';
 import type { ContextMapModel, Relationship, RelationshipKind, Role } from '../../src/ast/contextmap.js';
 import { defaultPath } from '../../src/ast/contextmap.js';
 
@@ -14,6 +14,15 @@ const ident = (first: string) => fc.tuple(
   .map(([a, b]) => a + b).filter(s => !RESERVED.has(s));
 const camel = ident(lower);
 const pascal = ident('ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+/**
+ * Names of things a bare type expression can resolve to (enum/value/entity/aggregate). Prim names
+ * are excluded for the same reason `ident` excludes RESERVED_WORDS — validateModel rejects them
+ * (`reserved-prim-name`), so drawing one produces an invalid model, and the round-trip property
+ * would fail on a spec the language does not admit. Scoped to declaration names rather than folded
+ * into `pascal` on purpose: enum *values* also draw from `pascal` and are not in the type
+ * namespace, so `enum E { Id }` stays legal and stays covered.
+ */
+const typeName = pascal.filter(n => !PRIM_NAMES.has(n));
 const uniqNames = (arb: fc.Arbitrary<string>, min: number, max: number) =>
   fc.uniqueArray(arb, { minLength: min, maxLength: max });
 
@@ -42,10 +51,15 @@ export function fieldArb(name: string, enumNames: string[], valueNames: string[]
   return fc.record({
     type,
     isConst: constDrawArb,
+    isOptional: fc.boolean(),
     tags: fc.option(fc.constantFrom(['total'], ['balance'], ['signed']), { nil: undefined }),
-  }).map(({ type, isConst, tags }) => {
+  }).map(({ type, isConst, isOptional, tags }) => {
     const f: Field = { name, type };
     if (isConst) f.const = true;
+    // `?` is illegal on a key field (optional-key), on a list (optional-list) and on a value-typed
+    // field (optional-value); this generator never emits key fields here, so only the list and
+    // value cases need excluding.
+    if (isOptional && type.kind !== 'list' && type.kind !== 'value') f.optional = true;
     if (tags) f.tags = tags;
     return f;
   });
@@ -84,12 +98,20 @@ const entityArb = (name: string, enumNames: string[], ownerNames: string[]): fc.
 const cmpOps: Cmp[] = ['eq', 'ne', 'lt', 'le', 'gt', 'ge'];
 function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[], depth: number): fc.Arbitrary<Predicate> {
   const numFields = agg.fields.filter(f => f.type.kind === 'prim' && ['Int', 'Money', 'Date', 'Duration'].includes((f.type as any).prim));
-  const enumFields = agg.fields.filter(f => f.type.kind === 'enum');
+  // Required-only for the same reason as cmpFields below: cmpEnum reads this path inside a cmp,
+  // and fieldArb marks enum-typed fields `?` as freely as prim ones.
+  const enumFields = agg.fields.filter(f => f.type.kind === 'enum' && !f.optional);
+  // Operand pool for cmp/plus terms: required numerics only. An optional path read inside a cmp is
+  // `absence-undecided` unless a present() syntactically dominates it (grammar.ts checkAbsence);
+  // this generator draws its atoms independently and so never builds that dominance, making any
+  // cmp over an optional path a spec the validator rejects. `present` below is the deliberate
+  // exception — deciding absence is precisely what it is for, so it keeps the full pool.
+  const cmpFields = numFields.filter(f => !f.optional);
   // No fallback to agg.fields when there are no numeric fields: the remaining fields are key /
   // Text/Id (out-of-grammar as paths — see `representable`) or enums (covered by cmpEnum below),
   // so field terms are simply omitted and cmpNum draws from int/now terms only.
   const term: fc.Arbitrary<Term> = fc.oneof(
-    ...(numFields.length ? [fc.constantFrom(...numFields).map(f => ({ kind: 'field' as const, owner: 'self' as const, path: [f.name] }))] : []),
+    ...(cmpFields.length ? [fc.constantFrom(...cmpFields).map(f => ({ kind: 'field' as const, owner: 'self' as const, path: [f.name] }))] : []),
     fc.integer({ min: 0, max: 999 }).map(value => ({ kind: 'int' as const, value })),
     fc.constant({ kind: 'now' as const }));
   const sum: fc.Arbitrary<Term> = fc.oneof({ weight: 4, arbitrary: term },
@@ -105,7 +127,17 @@ function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[],
   const inState: fc.Arbitrary<Predicate> | null = agg.machine ? fc.constantFrom(...agg.machine.regions).chain(r =>
     fc.uniqueArray(fc.constantFrom(...r.states.map(s => s.name)), { minLength: 1, maxLength: r.states.length })
       .map(states => ({ kind: 'inState' as const, owner: 'self', region: r.name, states }))) : null;
-  const atoms = [cmpNum, ...(cmpEnum ? [cmpEnum] : []), ...(inState ? [inState] : [])];
+  // present(f): the mirror image of cmpFields — OPTIONAL-only, where that pool is required-only.
+  // present() carries no absence obligation of its own (checkAbsence ignores it), but it asks a
+  // question a required field cannot answer two ways, which grammar.ts rejects as
+  // `present-not-optional`. This is the only shape that exercises `?` fields in a generated
+  // predicate at all. The pool must stay numeric-prim: any wider and it risks a key/Text/Id path,
+  // which checkPath rejects as key-path/unrepresentable-path.
+  const presentFields = numFields.filter(f => f.optional);
+  const present: fc.Arbitrary<Predicate> | null = presentFields.length
+    ? fc.constantFrom(...presentFields).map(f => ({ kind: 'present' as const, path: [f.name] }))
+    : null;
+  const atoms = [cmpNum, ...(cmpEnum ? [cmpEnum] : []), ...(inState ? [inState] : []), ...(present ? [present] : [])];
   const atom = fc.oneof(...atoms);
   if (depth <= 0) return atom;
   const sub = predArb(agg, enums, depth - 1);
@@ -124,8 +156,14 @@ function predArb(agg: AggregateDef, enums: { name: string; values: string[] }[],
 // Value-typed fields are excluded outright: Task 10 adds surface/AST/printer support only, no
 // solver encoding yet (fieldQType/emitOwnerSig drop them, like lists), so a path into one would
 // generate an invariant the emitters can't faithfully represent.
+// Optional fields are excluded for the same reason at one remove: every form candidateArb draws
+// these paths into — monotonic's field, unique's by, conservation's parts/total,
+// sumOverCollection's total — has no predicate in which a present() could sit, so validateCandidate
+// rejects an optional path outright (`absence-undecided`, grammar.ts). A statePredicate CAN carry
+// an optional path legally, under a dominating present(); candidateArb never builds that guard, so
+// this pool stays required-only rather than teaching it to.
 const representable = (f: Field) =>
-  !f.key && f.type.kind !== 'value' && !(f.type.kind === 'prim' && ['Text', 'Id'].includes((f.type as any).prim));
+  !f.key && !f.optional && f.type.kind !== 'value' && !(f.type.kind === 'prim' && ['Text', 'Id'].includes((f.type as any).prim));
 
 function candidateArb(agg: AggregateDef, enums: { name: string; values: string[] }[]): fc.Arbitrary<Candidate> {
   const paths = agg.fields.filter(representable).map(f => [f.name]);
@@ -149,7 +187,13 @@ function candidateArb(agg: AggregateDef, enums: { name: string; values: string[]
   if (paths.length >= 3) arbs.push(fc.constant({ kind: 'conservation' as const, aggregate: agg.name,
     parts: [paths[0]!, paths[1]!], total: paths[2]! }));
   const owned = agg.fields.map(f => ({ f, child: ownedCollectionChild(agg, f) })).filter(x => x.child);
-  const numPaths = agg.fields.filter(isNumericPrim).map(f => [f.name]);
+  // sumOverCollection's `total` (an own field) rejects an optional path outright — the position has
+  // no predicate a present() could sit in (grammar.ts) — so that pool is required-only, for the same
+  // reason `representable` above is. The child-field pool needs no such filter: nestedArb strips `?`
+  // from child fields because validateModel forbids it there (optional-owned-child) whatever the
+  // candidate does with them.
+  const required = (f: Field) => !f.optional;
+  const numPaths = agg.fields.filter(isNumericPrim).filter(required).map(f => [f.name]);
   if (owned.length && numPaths.length) {
     const numChildFields = owned[0]!.child!.fields.filter(isNumericPrim).map(f => f.name);
     if (numChildFields.length) arbs.push(fc.constantFrom<'eq' | 'le' | 'ge'>('eq', 'le', 'ge').map(op =>
@@ -216,6 +260,11 @@ const machineArb = (fieldNames: string[], eventNames: string[], numFieldNames: s
 // collection per ownedCollectionChild). Child fields reuse fieldArb (prim/enum only — nested
 // children carry no ref/list per nested-entity-flat) with a forced keyed first field, mirroring
 // aggArb's own shape.
+//
+// The `?` marker is stripped from every child field: fieldArb draws it freely, but a field of an
+// aggregate-owned child may not be optional (validateModel's optional-owned-child — the solver
+// encodings give a child's field no multiplicity of its own). Left in, it would fail the
+// round-trip property on a spec the validator rejects, not on parse ∘ print.
 const nestedArb = (childName: string | undefined, enums: { name: string; values: string[] }[], fieldNames: string[]): fc.Arbitrary<{ child: EntityDef; collectionField: Field } | null> => {
   if (!childName) return fc.constant(null);
   return fc.tuple(
@@ -224,8 +273,9 @@ const nestedArb = (childName: string | undefined, enums: { name: string; values:
     .chain(([collectionFieldName, childFieldNames]) =>
       fc.tuple(...childFieldNames.slice(1).map(fn => fieldArb(fn, enums.map(e => e.name))))
         .map(rest => {
+          const required = rest.map(({ optional: _drop, ...f }) => f as Field);
           const child: EntityDef = { kind: 'entity', name: childName,
-            fields: [{ name: childFieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...rest] };
+            fields: [{ name: childFieldNames[0]!, type: { kind: 'prim', prim: 'Id' }, key: true }, ...required] };
           const collectionField: Field = { name: collectionFieldName,
             type: { kind: 'list', of: { kind: 'ref', target: childName } } };
           return { child, collectionField };
@@ -374,32 +424,35 @@ function finalSpecArb(context: string, doc: string | undefined, ticksPerDay: num
 }
 
 export const arbSpec: fc.Arbitrary<{ model: DomainModel; invariants: CandidateInvariant[] }> =
-  fc.tuple(pascal, uniqNames(pascal, 0, 2), fc.option(docText, { nil: undefined }))
+  // context name stays `pascal`: a context is not a type, so `context Id {}` is unambiguous
+  fc.tuple(pascal, uniqNames(typeName, 0, 2), fc.option(docText, { nil: undefined }))
     .chain(([ctx, enumNames, topDoc]) =>
       fc.tuple(
         fc.constant(ctx), fc.constant(topDoc),
         fc.array(fc.tuple(fc.constant(0), uniqNames(camel, 1, 3)), { minLength: enumNames.length, maxLength: enumNames.length })
           .map(vals => enumNames.map((name, i) => ({ name, values: vals[i]![1] }))),
-        uniqNames(pascal.filter(n => !enumNames.includes(n)), 1, 2))
+        uniqNames(typeName.filter(n => !enumNames.includes(n)), 1, 2))
       .chain(([context, doc, enums, aggNames]) =>
         // owner/event NAMES first (all mutually disjoint) so machines can reference events
         // via `when` and entity fields can `ref` any owner
         fc.tuple(
-          uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)), 0, 2),
+          uniqNames(typeName.filter(n => !enumNames.includes(n) && !aggNames.includes(n)), 0, 2),
           fc.option(fc.integer({ min: 1, max: 100 }), { nil: undefined }))
         .chain(([entityNames, ticksPerDay]) =>
+          // event names stay `pascal` (not `typeName`): no type expression resolves to an event, so
+          // a prim-named event is unambiguous and validateModel allows it — worth covering
           uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n) && !entityNames.includes(n)), 0, 2)
           .chain(eventNames =>
             // nested-entity child names: disjoint from every top-level name AND from each other
             // (validate's duplicate-name pool is flat across enum/entity/aggregate/nested-entity
             // names), one optional slot per aggregate, each drawn ~1/3 of the time.
-            uniqNames(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
+            uniqNames(typeName.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
               && !entityNames.includes(n) && !eventNames.includes(n)), 0, aggNames.length)
             .chain(childNamePool =>
             // optional single value type (Task 10, design §3.5), name disjoint from every other
             // top-level name; drawn ~1/2 the time and, when present, made eligible as a field type
             // on every aggregate (fieldArb decides per-field, at low weight, whether to use it).
-            fc.option(pascal.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
+            fc.option(typeName.filter(n => !enumNames.includes(n) && !aggNames.includes(n)
               && !entityNames.includes(n) && !eventNames.includes(n) && !childNamePool.includes(n)),
               { nil: undefined })
             .chain(valueName =>

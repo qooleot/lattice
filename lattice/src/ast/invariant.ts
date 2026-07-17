@@ -15,6 +15,8 @@ export type Term =
 export type Predicate =
   | { kind: 'cmp'; op: Cmp; left: Term; right: Term }
   | { kind: 'inState'; owner: string; region: string; states: string[] }
+  | { kind: 'present'; path: Path }             // reads absence as a FACT, not an unknown (cmp treats a
+                                                 // missing operand as unknown and permits — evaluate.ts)
   | { kind: 'and'; args: Predicate[] }
   | { kind: 'or'; args: Predicate[] }
   | { kind: 'not'; arg: Predicate }

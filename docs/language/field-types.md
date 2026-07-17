@@ -23,11 +23,12 @@ context Billing {
     balance      : Money
     pricingMode  : UsagePricing
     history      : List<Int>
+    cancelledOn  : Date?
   }
 }
 ```
 
-A field is `<camelId> : <type> [key] [const] [@<tag>]*`. `<type>` is one of:
+A field is `<camelId> : <type>[?] [key] [const] [@<tag>]*`. `<type>` is one of:
 
 - **Primitives:** `Int`, `Text`, `Date`, `Duration`, `Money`, `Id`.
 - **An enum name** — any [enum](enum.md) declared in the same context.
@@ -41,7 +42,14 @@ A field is `<camelId> : <type> [key] [const] [@<tag>]*`. `<type>` is one of:
 A bare identifier resolves in this order: primitive → declared value → declared entity/aggregate
 (`ref`) → enum (the fallback, `unresolved-enum` if it matches nothing declared).
 
-`key` (unquoted, after the type) marks the field as the owner's identity field — see
+A trailing `?` (immediately after the type, before `key`/`const`/tags) marks the field
+**optional**: the owner may exist with no value for it at all. Optionality is a property of the
+*field*, not a type of its own — `Money?` is not a distinct type, it is a `Money` field that may be
+absent — so it composes with everything above except keys, lists, and value types (see Semantic
+Rules). What absence *means* for a rule is never inferred: an invariant reading an optional field
+must say, with `present()`, which it means — see [invariant](invariant.md).
+
+`key` (unquoted, after the type and any `?`) marks the field as the owner's identity field — see
 [entity](entity.md)/[aggregate](aggregate.md) for the `missing-key` rule. `const` (unquoted, after
 `key` if both are present) follows next; `@`-tags follow that — see [tags](tags.md).
 
@@ -94,6 +102,40 @@ context. It is accepted by the grammar and by per-file validation, but it is str
   `uncovered-cross-context-ref`. A per-file load does not check this — only workspace compilation
   does, since it requires seeing the map and the exposing context's declarations.
 
+## `Text?`/`Id?` is structural only
+
+`?` on a `Text` or `Id` field is accepted by the grammar and by validation, and it is real to
+generation and to the prose — but it is structural only, for the same reason cross-context refs
+are: the underlying field is already invisible to both solvers.
+
+- `Text`/`Id` fields carry no solver encoding at all. Quint's `fieldQType` returns `null` for any
+  non-`Int`-family primitive, and Alloy's sig emitter only pushes a prim field when `isIntPrim` —
+  so a `Text`/`Id` field is dropped from the solver-facing model whether or not it is optional.
+  There is no field for a companion presence flag to sit beside.
+- It cannot appear in any invariant path. A path ending at a `Text`/`Id` field is already rejected
+  with `unrepresentable-path` (see [invariant](invariant.md)), and `?` does not change that — so
+  `present(label)` on `label : Text?` is rejected exactly like `label > 0` is. The two checks are
+  independent and both run over the same body, so they can stack: `label > 0` reports
+  `unrepresentable-path` **and** `absence-undecided`, because the absence gate consults only the
+  field's optionality, never its representability. `present(label)` reports `unrepresentable-path`
+  alone. The rejection stands either way — where the gate does fire here, it is redundant, not
+  load-bearing.
+- It is excluded from [derived invariants](derived-invariants.md) — but so is every `Text`/`Id`
+  field, optional or not. The only family optionality changes is the `Money` one.
+
+So `?` on `Text`/`Id` is documentation of intent, not a constraint: nothing the solvers check, and
+nothing an invariant can appeal to. `Money?`, `Int?`, `Date?`, `Duration?`, enum, and `ref` fields
+are the ones where optionality carries semantic weight — `present(owner)` on `owner : ref Other?`
+is accepted, Alloy gives the field a `lone` relation, and Quint gives it a real presence flag
+(`ownerPresent`), so both solvers agree on whether absence is reachable. Value types are not on
+that list, at either level: `?` on a `value`-typed field **and** `?` on a sub-field of a `value`
+declaration are both rejected outright (`optional-value`, see Semantic Rules). A value flattens
+into `<field>_<sub>` sig relations for Alloy, which has no multiplicity left to vary at either
+level — it would emit `one` whatever the marker said, making `present(window.end)` a tautology
+while Quint made it a real flag, and the two solvers would then disagree about the very thing
+this list promises they agree on. So the list is exhaustive — every type `?` is *legal* on either
+carries semantic weight or is `Text`/`Id`.
+
 ## Semantic Rules
 
 - An unqualified `ref Target` must name a real entity or aggregate declared in the same context
@@ -103,6 +145,21 @@ context. It is accepted by the grammar and by per-file validation, but it is str
 - A value-typed field must name a declared value (`unresolved-value`) — see [value](value.md).
 - An enum-typed field must name a declared enum (`unresolved-enum`).
 - `List<T>` recurses: the element type `T` is validated by the same rules.
+- A `key` field cannot be optional (`optional-key`) — identity is never absent.
+- A `List<T>` field cannot be optional (`optional-list`) — an absent list and an empty list are the
+  same fact; `List<T>` already means zero or more.
+- A `value`-typed field cannot be optional (`optional-value`) — a value type flattens into its
+  sub-fields for the solvers (`window : Window` becomes Alloy's `window_len`, not a `window`
+  relation), so there is no single field for the optionality marker to attach to.
+- Neither can a **sub-field of a `value` declaration** (`optional-value` again, reported on the
+  value): `value Window { end : Int? }` is rejected for the same reason one level down — the
+  sub-field is already a flattened `one` relation with no multiplicity of its own to carry.
+- A field of an **entity nested inside an aggregate** cannot be optional (`optional-owned-child`),
+  whatever its type: `aggregate Invoice { entity Line { discount : Money? } }` is rejected. The
+  solver encodings give a child's field no multiplicity of its own — a child is one row of a bounded
+  collection, and both encodings fix every one of its fields as present — so absence is
+  unrepresentable there. The same field on a **top-level** entity or on the aggregate itself is
+  fine; only owned children are affected.
 - A field named `state` is always rejected (`reserved-field-name`), regardless of type — `state`
   is reserved for lifecycle-state path accessors.
 

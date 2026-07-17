@@ -67,7 +67,7 @@ AggregateDecl:
     docs+=DOC* 'aggregate' name=ID '{' (fields+=FieldDecl | entities+=EntityDecl)* lifecycles+=LifecycleDecl* invariants+=InvariantDecl* '}';
 
 FieldDecl:
-    name=ID ':' type=LatType (key?='key')? (const?='const')? tags+=Tag*;
+    name=ID ':' type=LatType (optional?='?')? (key?='key')? (const?='const')? tags+=Tag*;
 
 LatType:
     {infer ListType} 'List' '<' of=LatType '>'
@@ -148,10 +148,13 @@ Negation infers Predicate:
     {infer NotPred} '!' arg=Negation | Primary;
 
 Primary infers Predicate:
-    '(' Predicate ')' | StatePred | Comparison;
+    '(' Predicate ')' | StatePred | PresentPred | Comparison;
 
 StatePred:
     'state' region=ID 'in' '{' states+=ID (',' states+=ID)* '}';
+
+PresentPred:
+    'present' '(' path=PathExpr ')';
 
 Comparison:
     left=Expr op=('=='|'!='|'<'|'<='|'>'|'>=') right=Expr;

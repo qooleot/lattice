@@ -132,6 +132,7 @@ function ltLeFieldPairs(p: Predicate): { left: string; right: string }[] {
     case 'not': return ltLeFieldPairs(p.arg);
     case 'implies': return [...ltLeFieldPairs(p.left), ...ltLeFieldPairs(p.right)];
     case 'inState': return [];
+    case 'present': return [];
   }
 }
 

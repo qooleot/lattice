@@ -6,6 +6,7 @@ import { arbSpec, arbContextMap, fieldArb } from './arbitraries.js';
 import { astToCode, contextMapToCode } from '../../src/emit/code.js';
 import { loadLatText, loadContextMapText } from '../../src/parse/fromLangium.js';
 import { isImplied } from '../../src/engine/implied.js';
+import { PRIM_NAMES } from '../../src/ast/reserved.js';
 import type { DomainModel, TypeRef } from '../../src/ast/domain.js';
 import type { CandidateInvariant } from '../../src/ast/invariant.js';
 
@@ -51,6 +52,19 @@ describe('generator assumptions', () => {
     // structure-implied and be silently dropped by the printer, breaking round-trip identity
     const hasRef = (t: TypeRef): boolean => t.kind === 'ref' || (t.kind === 'list' && hasRef(t.of));
     fc.assert(fc.property(fieldArb('f', ['SomeEnum']), f => !hasRef(f.type)), { numRuns: 500 });
+  });
+
+  it('never draws a prim name as a type-declaration name — validateModel rejects those (reserved-prim-name)', () => {
+    // validateModel rejects these (`reserved-prim-name`), so drawing one yields a model the
+    // language does not admit — and for a value/enum it also prints a type expression
+    // indistinguishable from the prim's, breaking print∘parse outright. The generator's contract is
+    // to draw only valid models (it already filters RESERVED_WORDS in `ident`); this keeps it true.
+    fc.assert(fc.property(arbSpec, ({ model }) => {
+      const declared = [...model.enums.map(e => e.name), ...model.values.map(v => v.name),
+        ...model.entities.map(e => e.name), ...model.aggregates.map(a => a.name),
+        ...model.aggregates.flatMap(a => (a.entities ?? []).map(e => e.name))];
+      expect(declared.filter(n => PRIM_NAMES.has(n))).toEqual([]);
+    }), { numRuns: 200 });
   });
 });
 

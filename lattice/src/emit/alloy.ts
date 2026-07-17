@@ -1,4 +1,4 @@
-import type { DomainModel, AggregateDef, EntityDef } from '../ast/domain.js';
+import type { DomainModel, AggregateDef, EntityDef, Field } from '../ast/domain.js';
 import { isQualifiedRef, ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, Path, Predicate, Term } from '../ast/invariant.js';
 import type { SalientFact } from '../engine/session.js';
@@ -34,13 +34,16 @@ function emitOwnerSig(m: DomainModel, o: AggregateDef | EntityDef): string {
   const fields: string[] = [];
   for (const f of o.fields) {
     if (f.key) continue;
+    // Alloy's native multiplicity is exactly this language's optionality: `lone` is zero-or-one.
+    // Required refs stay `one`, which is why refsResolve remains vacuous here (see its emitter).
+    const mult = f.optional ? 'lone' : 'one';
     if (f.type.kind === 'ref') {
       const target = f.type.target;
       if (isQualifiedRef(f.type)) continue;   // cross-context ref (spec §4.2) — the target sig is never declared here
-      fields.push(`  ${f.name}: one ${target}`);
+      fields.push(`  ${f.name}: ${mult} ${target}`);
     }
-    else if (f.type.kind === 'enum') fields.push(`  ${f.name}: one ${f.type.enum}`);
-    else if (f.type.kind === 'prim' && isIntPrim(f.type.prim)) fields.push(`  ${f.name}: one Int`);
+    else if (f.type.kind === 'enum') fields.push(`  ${f.name}: ${mult} ${f.type.enum}`);
+    else if (f.type.kind === 'prim' && isIntPrim(f.type.prim)) fields.push(`  ${f.name}: ${mult} Int`);
     // Value fields (design §3.5): a keyless, flat structural type flattens to underscore-joined
     // sig relations — `period: Period{start,end}` becomes `period_start: one Int, period_end: one
     // Int` — never a nested sig (values have no identity for Alloy to quantify over).
@@ -110,6 +113,44 @@ function alloyFieldPath(m: DomainModel, ownerName: string, v: string, p: Path): 
   return alloyPath(v, p);
 }
 
+/**
+ * Every intermediate `lone` ref hop a path crosses, as the Alloy expression naming that hop —
+ * the counterpart of quint.ts's refHopsIn (which gates on a record's `exists` flag; here the
+ * relation's own emptiness IS the absence). A required hop stays `one` in emitOwnerSig, so it can
+ * never be empty and needs no gate; a `lone` hop can be, and Alloy's empty-set semantics DECIDE
+ * rather than permit — `x.method.fee > 0` is FALSE, not vacuous, when `x.method` is empty. Without
+ * these gates Alloy forbids the very shape the evaluator (evaluate.ts:45, "unknown facts don't
+ * convict") and quint (`allExist implies cmp`) both permit.
+ *
+ * Paths through a value-typed field flatten to one `_`-joined relation (alloyFieldPath) and reach
+ * only prims, so they cross no ref hop; a trailing `<Region>.state` segment is not a field.
+ */
+function alloyRefHops(m: DomainModel, ownerName: string, v: string, p: Path): string[] {
+  const hops: string[] = [];
+  let owner: string | undefined = ownerName;
+  let expr = v;
+  for (let i = 0; i < p.length; i++) {
+    const seg = p[i]!;
+    if (/^\w+\.state$/.test(seg)) break;
+    const f: Field | undefined = owner ? ownerByName(m, owner)?.fields.find(x => x.name === seg) : undefined;
+    if (!f) break;
+    if (f.type.kind === 'value') break;
+    expr = `${expr}.${seg}`;
+    if (i === p.length - 1 || f.type.kind !== 'ref') break;
+    if (f.optional) hops.push(expr);
+    owner = f.type.target;
+  }
+  return hops;
+}
+
+function termRefHops(m: DomainModel, ownerName: string, t: Term, v: string): string[] {
+  switch (t.kind) {
+    case 'field': return alloyRefHops(m, ownerName, v, t.path);
+    case 'plus': return [...termRefHops(m, ownerName, t.left, v), ...termRefHops(m, ownerName, t.right, v)];
+    default: return [];
+  }
+}
+
 function inStateExpr(agg: string, v: string, region: string, states: string[]): string {
   return '(' + states.map(s => `${v}.${region}_state = ${agg}_${region}_${s}`).join(' or ') + ')';
 }
@@ -129,9 +170,21 @@ function predToAlloy(m: DomainModel, ownerName: string, p: Predicate, agg: strin
     case 'cmp': {
       const l = termToAlloy(m, ownerName, p.left, v), r = termToAlloy(m, ownerName, p.right, v);
       const ops: Record<string, string> = { eq: '=', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' };
-      return `(${l} ${ops[p.op]} ${r})`;
+      const cmp = `(${l} ${ops[p.op]} ${r})`;
+      // Permit polarity, forced by evaluate.ts:45 and mirrored on quint.ts's cmp arm: an operand
+      // read through an absent optional hop is unknown, not a fact, so the comparison must be
+      // vacuously TRUE — hence `implies`. Contrast `present` below, whose gate is a conjunction
+      // because present reads absence as a fact and must be FALSE on an ungrounded hop.
+      const hops = [...termRefHops(m, ownerName, p.left, v), ...termRefHops(m, ownerName, p.right, v)];
+      if (hops.length === 0) return cmp;
+      const allExist = [...new Set(hops)].map(h => `some ${h}`).join(' and ');
+      return `((${allExist}) implies ${cmp})`;
     }
     case 'inState': return inStateExpr(agg, v, p.region, p.states);
+    // Must go through alloyFieldPath, same as termToAlloy's field arm: a path through a
+    // value-typed field has no dotted relation in the emitted sig (emitOwnerSig flattens it to
+    // `<field>_<subfield>`), so a naive join here would reference a relation Alloy never declared.
+    case 'present': return `some ${alloyFieldPath(m, ownerName, v, p.path)}`;
     case 'and': return '(' + p.args.map(a => predToAlloy(m, ownerName, a, agg, v)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToAlloy(m, ownerName, a, agg, v)).join(' or ') + ')';
     case 'not': return `(not ${predToAlloy(m, ownerName, p.arg, agg, v)})`;
@@ -144,7 +197,20 @@ function candidateToPred(m: DomainModel, c: Candidate, name: string): string {
     case 'unique': {
       const inS = (v: string) => inStateExpr(c.aggregate, v, c.whileStates.region, c.whileStates.states);
       const eqs = c.by.map(p => `${alloyFieldPath(m, c.aggregate, 'a', p)} = ${alloyFieldPath(m, c.aggregate, 'b', p)}`).join(' and ');
-      return `pred ${name} { all disj a, b: ${c.aggregate} | (${inS('a')} and ${inS('b')}) implies not (${eqs}) }`;
+      // A by-path may hop THROUGH an optional ref and end at a required field — the language's
+      // absence-undecided check gates a path's end, not its middle, so this is legal input. In
+      // Alloy `none = none` is TRUE, so two rows that both lack the hop compare equal on every
+      // key read through it and read as a collision; evaluate.ts:79 skips such rows ("unknown
+      // facts don't convict") and quint conjoins each hop's `.exists` into its own collision.
+      //
+      // Fact polarity, and a THIRD polarity from the two arms above — do not unify them. The gate
+      // joins the COLLISION conjunctively, so an absent hop makes the collision FALSE and the pair
+      // does not convict. cmp needs `implies` (an ungrounded read is vacuously TRUE); present
+      // needs no gate at all (Alloy's `some x.a.b` is already false on an empty `x.a`).
+      const hops = [...new Set(c.by.flatMap(p => [
+        ...alloyRefHops(m, c.aggregate, 'a', p), ...alloyRefHops(m, c.aggregate, 'b', p)]))];
+      const gated = hops.length ? `(${hops.map(h => `some ${h}`).join(' and ')}) and ${eqs}` : eqs;
+      return `pred ${name} { all disj a, b: ${c.aggregate} | (${inS('a')} and ${inS('b')}) implies not (${gated}) }`;
     }
     case 'refsResolve': return `pred ${name} { }`;   // refs are total in Alloy sigs by construction — vacuously true
     case 'cardinality': {
@@ -205,7 +271,22 @@ function shapeToPred(m: DomainModel, facts: SalientFact[], subject: Candidate, n
     const mTot = f.dim.match(/^([\w.]+) value$/);
     if (mTot) { conj.push(`${alloyFieldPath(m, agg, 'a', mTot[1]!.split('.'))} = ${f.value}`); continue; }
     const mEq = f.dim.match(/^(.+) equal$/);
-    if (mEq) { const p = mEq[1]!.split('.'); conj.push(`${alloyFieldPath(m, agg, 'a', p)} ${f.value ? '=' : '!='} ${alloyFieldPath(m, agg, 'b', p)}`); continue; }
+    if (mEq) {
+      const p = mEq[1]!.split('.');
+      // Same `none = none` hazard as candidateToPred's unique arm, and gated the same way: an
+      // `equal` dim is only ever produced from a witness where BOTH sides resolved (salient.ts:86),
+      // so a pair that lacks the hop entirely is NOT this shape — but ungated, `a.pm.fee = b.pm.fee`
+      // is TRUE of two hop-less rows and the `not shape` exclusion swallows them, making a witness
+      // the judge permits unreachable. The `!=` rendering is already false on an ungrounded hop; it
+      // takes the gate too so both polarities state the same requirement.
+      //
+      // The `value`/`= <lit>` branches below need NO gate: `a.pm.fee = 3` is already FALSE on an
+      // absent hop, which is the right answer — a hop-less row genuinely does not have that fact.
+      const hops = [...new Set([...alloyRefHops(m, agg, 'a', p), ...alloyRefHops(m, agg, 'b', p)])];
+      const eq = `${alloyFieldPath(m, agg, 'a', p)} ${f.value ? '=' : '!='} ${alloyFieldPath(m, agg, 'b', p)}`;
+      conj.push(hops.length ? `(${hops.map(h => `some ${h}`).join(' and ')}) and ${eq}` : eq);
+      continue;
+    }
     const mVal = f.dim.match(/^(.+) = (.+)$/);
     if (mVal) {
       // A dim whose path is `<Region>.state` (extractSalient's machine-state capture, same format

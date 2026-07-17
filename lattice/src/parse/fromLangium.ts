@@ -4,6 +4,7 @@ import type { DomainModel, EnumDef, ValueDef, EntityDef, AggregateDef, EventDef,
 import { ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Path } from '../ast/invariant.js';
 import { validateModel } from '../ast/validate.js';
+import { PRIM_NAMES } from '../ast/reserved.js';
 import { validateCandidate } from '../ast/grammar.js';
 import { isImplied } from '../engine/implied.js';
 import type { ContextMapModel, Relationship, Role } from '../ast/contextmap.js';
@@ -17,7 +18,6 @@ export type ContextMapLoadResult =
   | { ok: true; map: ContextMapModel; warnings: ParseDiagnostic[] }
   | { ok: false; diagnostics: ParseDiagnostic[] };
 
-const PRIMS = new Set(['Int', 'Text', 'Date', 'Duration', 'Money', 'Id']);
 const stripDoc = (d: string) => d.replace(/^\/\/\/\s?/, '');
 const joinDocs = (docs: string[]): string | undefined =>
   docs.length ? docs.map(stripDoc).join(' ') : undefined;
@@ -33,11 +33,14 @@ const diag = (code: string, message: string, node?: any): ParseDiagnostic =>
 // name and an owner (entity/aggregate) name are mutually exclusive by validateModel's shared
 // duplicate-name pool, so checking values before owners is safe — this order only matters for the
 // final unresolved-enum fallback, which must not shadow an in-scope value or owner name.
+//
+// The prim-first arm can no longer shadow a declaration: validateModel's `reserved-prim-name` puts
+// prims into that same duplicate-name pool, so no declaration reaching here is spelled like one.
 function mapType(t: G.LatType, enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>, values: Set<string>): TypeRef {
   if (t.$type === 'ListType') return { kind: 'list', of: mapType((t as G.ListType).of, enums, diags, owners, values) };
   if (t.$type === 'RefType') return { kind: 'ref', target: (t as G.RefType).target };
   const name = (t as G.NamedType).name;
-  if (PRIMS.has(name)) return { kind: 'prim', prim: name as any };
+  if (PRIM_NAMES.has(name)) return { kind: 'prim', prim: name as any };
   if (values.has(name)) return { kind: 'value', value: name };
   if (owners.has(name)) return { kind: 'ref', target: name };
   return { kind: 'enum', enum: name };   // unresolved enum → validateModel reports unresolved-enum
@@ -46,6 +49,7 @@ function mapType(t: G.LatType, enums: Set<string>, diags: ParseDiagnostic[], own
 function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic[], owners: Set<string>, values: Set<string>): Field[] {
   return fs.map(f => {
     const field: Field = { name: f.name, type: mapType(f.type, enums, diags, owners, values) };
+    if (f.optional) field.optional = true;
     if (f.key) field.key = true;
     if (f.const) field.const = true;
     if (f.tags.length) field.tags = f.tags.map(t => t.name);
@@ -140,6 +144,7 @@ function mapPred(p: G.Predicate, enums: Map<string, string[]>, params: Set<strin
         { '==': 'eq', '!=': 'ne', '<': 'lt', '<=': 'le', '>': 'gt', '>=': 'ge' };
       return { kind: 'cmp', op: ops[c.op]!, left: mapTerm(c.left, enums, params), right: mapTerm(c.right, enums, params) };
     }
+    case 'PresentPred': return { kind: 'present', path: mapPath((p as G.PresentPred).path) };
     default: throw new Error(`unmapped predicate ${(p as any).$type}`);
   }
 }

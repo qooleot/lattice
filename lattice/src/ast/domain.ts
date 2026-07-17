@@ -14,6 +14,9 @@ export interface Field {
   type: TypeRef;
   key?: boolean;
   const?: boolean;
+  optional?: boolean;   // `Type?` — the fact may be absent. Absence is never inferred: an
+                        // invariant reading an optional path must say what absence means
+                        // (see grammar.ts's absence-undecided).
   tags?: string[];   // semantic tags (spec plan §10.1): 'balance', 'total', 'monotonic', …
 }
 export interface StateDef { name: string; tags?: ('active' | 'terminal')[] }
