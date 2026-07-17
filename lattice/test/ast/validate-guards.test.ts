@@ -34,4 +34,18 @@ describe('transition guards', () => {
     const diags = validateModel(model({ kind: 'inState', owner: 'self', region: 'nope', states: ['open'] }));
     expect(diags.map(d => d.code)).toContain('unknown-region');
   });
+
+  it('accepts a guard reading present() over an own field', () => {
+    expect(validateModel(model({ kind: 'present', path: ['amountPaid'] }))).toEqual([]);
+  });
+
+  it('rejects present() over an unknown own field in guards', () => {
+    const diags = validateModel(model({ kind: 'present', path: ['nope'] }));
+    expect(diags.map(d => d.code)).toContain('unknown-path');
+  });
+
+  it('rejects present() over a ref-hop path in guards (own-aggregate only, design §3.3)', () => {
+    const diags = validateModel(model({ kind: 'present', path: ['other', 'oId'] }));
+    expect(diags.map(d => d.code)).toContain('guard-cross-aggregate');
+  });
 });

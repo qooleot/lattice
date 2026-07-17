@@ -26,22 +26,21 @@ export const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 function checkScopedPred(fields: Field[], regions: { name: string; states: { name: string }[] }[],
     enums: Map<string, string[]>, label: string, at: string, p: Predicate, out: Diagnostic[], crossCode: string,
     params?: Set<string>, noOwnScope = false): void {
+  // Shared by the 'field' Term case and the 'present' Predicate case below — both carry a bare
+  // Path and are subject to the exact same own-scope rule (a single segment naming a field in
+  // `fields`); `present` has no Term wrapper of its own; see invariant.ts's 'present' arm.
+  const checkPath = (path: string[]): void => {
+    if (noOwnScope || path.length !== 1) {
+      // multi-segment = ref-hop or nested-value path; scoped predicates are own-scalar-only in v1
+      out.push({ code: crossCode, message: `${label}: path ${path.join('.')} leaves the own scope — v1 reads own fields only`, at });
+      return;
+    }
+    if (!fields.some(f => f.name === path[0]))
+      out.push({ code: 'unknown-path', message: `${label}: reads unknown field ${path[0]}`, at });
+  };
   const term = (tm: Term): void => {
     switch (tm.kind) {
-      case 'field': {
-        if (noOwnScope) {
-          out.push({ code: crossCode, message: `${label}: path ${tm.path.join('.')} leaves the own scope — v1 reads own fields only`, at });
-          return;
-        }
-        if (tm.path.length !== 1) {
-          // multi-segment = ref-hop or nested-value path; scoped predicates are own-scalar-only in v1
-          out.push({ code: crossCode, message: `${label}: path ${tm.path.join('.')} leaves the own scope — v1 reads own fields only`, at });
-          return;
-        }
-        if (!fields.some(f => f.name === tm.path[0]))
-          out.push({ code: 'unknown-path', message: `${label}: reads unknown field ${tm.path[0]}`, at });
-        break;
-      }
+      case 'field': checkPath(tm.path); break;
       case 'enumval': {
         const e = enums.get(tm.enum);
         if (!e) out.push({ code: 'unknown-enum', message: `${label}: no enum ${tm.enum}`, at });
@@ -67,6 +66,7 @@ function checkScopedPred(fields: Field[], regions: { name: string; states: { nam
           out.push({ code: 'unknown-state', message: `${label}: names missing state ${s}`, at });
         break;
       }
+      case 'present': checkPath(q.path); break;
       case 'and': case 'or': q.args.forEach(walk); break;
       case 'not': walk(q.arg); break;
       case 'implies': walk(q.left); walk(q.right); break;
