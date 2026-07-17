@@ -2,7 +2,7 @@ import type { GenInput } from './types.js';
 import type { AggregateDef, EventDef, Field, Region, TransitionDef } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate } from '../ast/invariant.js';
 import type { LedgerEntry } from '../engine/session.js';
-import { canonicalSet } from '../engine/reconcile.js';
+import { canonicalSet, declinedShapes } from '../engine/reconcile.js';
 
 export interface Anchors { specElement: string; provenance: string[]; witnessIds: string[]; }
 export interface PlanInvariant { name: string; doc?: string; candidate: Candidate; aggregate: string; anchors: Anchors; }
@@ -35,7 +35,11 @@ export function buildPlan(input: GenInput): GenPlan {
   // loud: they are auto-derived, not user-adopted, so silently-not-enforced is the recorded v1
   // scope, while an EXPLICITLY adopted unsupported kind still fails loud downstream by design.
   const GEN_COMPILABLE = new Set(['statePredicate', 'unique']);
-  const canonical = canonicalSet(model, adopted)
+  // declinedShapes: a derived rule whose latest ledger word is 'declined' must stay out of the
+  // generated service's checks too — this is the third re-derivation site alongside reconcile's
+  // replay sets and the prose projection. Ledger-less .lat loads synthesize adopted-only entries
+  // (load.ts), so the declined set is empty there and every derived rule is enforced, as before.
+  const canonical = canonicalSet(model, adopted, declinedShapes(ledger))
     .filter(i => !i.id.startsWith('implied-') || GEN_COMPILABLE.has(i.candidate.kind));
   const byAgg = (agg: string): CandidateInvariant[] => canonical.filter(i => i.candidate.aggregate === agg);
   const verdicts = ledger.filter((e): e is Extract<LedgerEntry, { kind: 'verdict' }> => e.kind === 'verdict');
