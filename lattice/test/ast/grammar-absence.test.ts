@@ -80,3 +80,33 @@ describe('present-not-optional', () => {
 // The `absence-undecided — sumOverCollection child field` cases that stood here are gone with the
 // gate they covered: validateModel's optional-owned-child now rejects an optional field on an
 // aggregate-owned child, so the models those tests built are no longer legal specs.
+
+// Task 10: the conservation/sumOverCollection absence-undecided sites (grammar.ts's parts/total
+// checks) had no direct coverage — pin all three gates (conservation part, conservation total,
+// sumOverCollection total) the way the field-level cases above already pin `statePredicate`.
+const modelWithOptionalMoneyFields: DomainModel = {
+  context: 'Opt2', ticksPerDay: 24, enums: [], values: [], entities: [],
+  aggregates: [{ kind: 'aggregate', name: 'A', fields: [
+    { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+    { name: 'optA', type: { kind: 'prim', prim: 'Money' }, optional: true, tags: ['unsigned'] },
+    { name: 'optTotal', type: { kind: 'prim', prim: 'Money' }, optional: true, tags: ['unsigned'] },
+    { name: 'reqB', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] },
+    { name: 'reqC', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] },
+    { name: 'reqTotal', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] },
+    { name: 'lines', type: { kind: 'list', of: { kind: 'ref', target: 'Line' } } }],
+    entities: [{ kind: 'entity', name: 'Line', fields: [
+      { name: 'lineId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' }, tags: ['unsigned'] }] }] }],
+  events: [], services: []
+};
+
+describe('conservation/sumOverCollection absence-undecided', () => {
+  it.each([
+    ['conservation part', { kind: 'conservation', aggregate: 'A', parts: [['optA'], ['reqB']], total: ['reqTotal'] }],
+    ['conservation total', { kind: 'conservation', aggregate: 'A', parts: [['reqB'], ['reqC']], total: ['optTotal'] }],
+    ['sumOverCollection total', { kind: 'sumOverCollection', aggregate: 'A', collection: 'lines', child: 'Line', field: 'amount', op: 'eq', total: ['optTotal'] }],
+  ])('%s over an optional path is absence-undecided', (_label, candidate) => {
+    const diags = validateCandidate(candidate as any, modelWithOptionalMoneyFields);
+    expect(diags.some(d => d.code === 'absence-undecided')).toBe(true);
+  });
+});

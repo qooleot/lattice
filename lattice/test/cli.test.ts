@@ -463,6 +463,35 @@ describe('engine CLI', () => {
     expect(ledger[0].answer).toBe('Subscription, Customer');
   });
 
+  // Task 10: the init money-sign gate (validateModel's contradictoryMoneySigns +
+  // undecidedMoneySigns, wired in at cli.ts's init branch) was never exercised — every prior
+  // fixture's Money field was retro-tagged @unsigned/@signed. Post-Task-7 the contradictory case is
+  // folded into validateModel itself, but init still reports it the same way: 'ill-formed-model'
+  // with a 'money-sign-contradictory' diagnostic, same shape as the undecided case below.
+  it('init refuses an undecided Money field', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    const modelPath = join(dir, 'm.json');
+    const model = { ...traceAModel, aggregates: [{ kind: 'aggregate', name: 'Acct', fields: [
+      { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'bal', type: { kind: 'prim', prim: 'Money' } }] }] };   // no sign tag
+    writeFileSync(modelPath, JSON.stringify(model));
+    const r: any = await runCommand(['init', '--session', dir, '--model', modelPath], fakeDeps);
+    expect(r.error).toBe('ill-formed-model');
+    expect(r.diagnostics.some((d: any) => d.code === 'money-sign-undecided')).toBe(true);
+  });
+
+  it('init refuses a contradictory Money field', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cli-'));
+    const modelPath = join(dir, 'm.json');
+    const model = { ...traceAModel, aggregates: [{ kind: 'aggregate', name: 'Acct', fields: [
+      { name: 'id', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'bal', type: { kind: 'prim', prim: 'Money' }, tags: ['signed', 'unsigned'] }] }] };
+    writeFileSync(modelPath, JSON.stringify(model));
+    const r: any = await runCommand(['init', '--session', dir, '--model', modelPath], fakeDeps);
+    expect(r.error).toBe('ill-formed-model');
+    expect(r.diagnostics.some((d: any) => d.code === 'money-sign-contradictory')).toBe(true);
+  });
+
   it('missing --model on init returns a structured missing-arg error', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cli-'));
     const r: any = await runCommand(['init', '--session', dir], fakeDeps);

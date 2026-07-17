@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { astToQuint, candidateToQuint, predToQuint, refHopGates } from '../../src/emit/quint.js';
+import { predToQuintParam } from '../../src/emit/method-guard.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 import type { Candidate, Predicate } from '../../src/ast/invariant.js';
 
@@ -46,6 +47,21 @@ describe('refHopGates — optional hop contributes its Present flag', () => {
     const em = astToQuint(m, { kind: 'probe-forbid', hi: c, exclusions: [], maxSteps: 0 });
     expect(em.source).toContain('payments.get(k1).methodPresent');
     expect(em.source).toContain('payments.get(k2).methodPresent');
+  });
+});
+
+// Task 10: predToQuintParam (method-guard.ts's param-aware renderer) mirrors predToQuint's
+// structure "verbatim" on the shared arms per its own comment — a drift-lock so the two renderers
+// can never silently diverge on 'present' or a ref-hop-gated 'cmp'. `{}` paramVars is legal here:
+// neither predicate references a `param` term.
+describe('predToQuintParam drift-lock', () => {
+  it('predToQuintParam renders present()/gated cmp byte-identically to predToQuint', () => {
+    const preds: Predicate[] = [
+      { kind: 'present', path: ['method', 'tag'] },
+      { kind: 'cmp', op: 'gt', left: { kind: 'field', owner: 'self', path: ['method', 'fee'] }, right: { kind: 'int', value: 0 } },
+    ];
+    for (const p of preds)
+      expect(predToQuintParam(m, p, 'x', 'Payment', {})).toBe(predToQuint(m, p, 'x', 'Payment'));
   });
 });
 
