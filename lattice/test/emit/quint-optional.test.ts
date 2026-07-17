@@ -3,6 +3,7 @@ import { astToQuint } from '../../src/emit/quint.js';
 import { validateModel } from '../../src/ast/validate.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 import { impliedInvariants } from '../../src/engine/implied.js';
+import { evaluateCandidate } from '../../src/engine/evaluate.js';
 
 const m: DomainModel = {
   context: 'Opt', ticksPerDay: 24, enums: [], values: [],
@@ -96,10 +97,13 @@ describe('quint — an unencodable optional field gets no flag', () => {
 });
 
 // An ENGINE-derivation test, not a solver-path one: it calls impliedInvariants and nothing else. It
-// says only that no refsResolve rule is derived for an owner whose every same-context ref is
-// optional. Whether the emitted model actually ADMITS a method-less Payment is a different claim on
-// a different layer — see quint-optional.integration.test.ts, which emits and runs Apalache.
-describe('impliedInvariants derives no refsResolve for an all-optional-ref owner', () => {
+// says only that refsResolve IS derived for an owner whose every same-context ref is optional, and
+// that the rule still leaves the method-less initial state legal — the judge's refsResolve arm skips
+// an absent value (evaluate.ts's `typeof v === 'string'` guard), so legality now lives in the guard,
+// not in the rule's absence. Whether the emitted model actually ADMITS a method-less Payment is a
+// different claim on a different layer — see quint-optional.integration.test.ts, which emits and
+// runs Apalache.
+describe('impliedInvariants derives refsResolve for an all-optional-ref owner, and the judge permits absence', () => {
   const payment: DomainModel = {
     context: 'BillPayments', ticksPerDay: 24, enums: [], values: [],
     entities: [{ kind: 'entity', name: 'PaymentMethod', fields: [{ name: 'pmId', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
@@ -113,14 +117,21 @@ describe('impliedInvariants derives no refsResolve for an all-optional-ref owner
     events: [], services: []
   };
 
-  it('refsResolve no longer names the optional ref, so the initial state is legal', () => {
+  it('refsResolve names the optional ref, but a method-less witness still permits', () => {
     const d = impliedInvariants(payment);
     // Anchor FIRST: prove the derivation actually ran over this model. Without this, the
-    // absence assertion below passes vacuously if impliedInvariants returns [] for any reason
+    // presence assertion below passes vacuously if impliedInvariants returns [] for any reason
     // (a renamed derivation, a model the walker skips) — an unfalsifiable guard, which is the
     // exact defect class this codebase keeps producing.
     expect(d.map(i => i.name)).toContain('nonNegativePaymentAmount');
-    // every ref on Payment is optional, so no refsResolve rule exists at all
-    expect(d.find(i => i.name === 'refsResolvePayment')).toBeUndefined();
+    const refs = d.find(i => i.name === 'refsResolvePayment');
+    expect(refs, 'even an all-optional-ref owner derives refsResolve').toBeDefined();
+    expect((refs!.candidate as any).fields).toContain('paymentMethod');
+
+    // Absence is not an orphan: the judge's `typeof v === 'string'` guard skips a missing key, so
+    // the initial (method-less) state stays legal — the rule's own arm carries this, not exclusion.
+    const methodlessState = { entities: [{ type: 'Payment', id: 'p1',
+      fields: { 'intent.state': 'requiresPaymentMethod' } }] };
+    expect(evaluateCandidate(refs!.candidate, methodlessState)).toBe('permit');
   });
 });

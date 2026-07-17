@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { impliedInvariants } from '../../src/engine/implied.js';
+import { evaluateCandidate } from '../../src/engine/evaluate.js';
 import type { DomainModel } from '../../src/ast/domain.js';
 
 const m: DomainModel = {
@@ -14,12 +15,42 @@ const m: DomainModel = {
   events: [], services: []
 };
 
+// Shared by the refsResolve test below and quint-optional.test.ts's rewritten describe block: an
+// aggregate whose only same-context ref is optional, plus a machine so a witness can carry a state.
+function paymentWithOptionalMethodModel(): DomainModel {
+  return {
+    context: 'BillPayments', ticksPerDay: 24, enums: [], values: [],
+    entities: [{ kind: 'entity', name: 'PaymentMethod', fields: [{ name: 'pmId', type: { kind: 'prim', prim: 'Id' }, key: true }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Payment', fields: [
+      { name: 'paymentId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'paymentMethod', type: { kind: 'ref', target: 'PaymentMethod' }, optional: true },
+      { name: 'amount', type: { kind: 'prim', prim: 'Money' } }],
+      machine: { regions: [{ name: 'intent', initial: 'requiresPaymentMethod', states: [
+        { name: 'requiresPaymentMethod' }, { name: 'succeeded', tags: ['terminal'] }] }],
+        transitions: [{ name: 'succeed', region: 'intent', from: ['requiresPaymentMethod'], to: 'succeeded' }] } }],
+    events: [], services: []
+  };
+}
+
 describe('derived invariants over optional fields', () => {
   const d = impliedInvariants(m);
 
-  it('refsResolve excludes an optional ref — absent is not an orphan', () => {
+  it('refsResolve names every same-context ref, optional or not', () => {
     const r = d.find(i => i.name === 'refsResolvePayment')!;
-    expect(r.candidate).toEqual({ kind: 'refsResolve', aggregate: 'Payment', fields: ['bill'] });
+    expect(r.candidate).toEqual({ kind: 'refsResolve', aggregate: 'Payment', fields: ['method', 'bill'] });
+  });
+
+  it('refsResolve names optional refs — absence is skipped by the judge, dangling convicts', () => {
+    const m2 = paymentWithOptionalMethodModel();
+    const refs = impliedInvariants(m2).find(i => i.candidate.kind === 'refsResolve');
+    expect(refs, 'an all-optional-ref owner still derives refsResolve').toBeDefined();
+    expect((refs!.candidate as any).fields).toContain('paymentMethod');
+
+    const absent = { entities: [{ type: 'Payment', id: 'p1', fields: { 'intent.state': 'requiresPaymentMethod' } }] };
+    expect(evaluateCandidate(refs!.candidate, absent)).toBe('permit');   // absent ≠ orphan
+
+    const dangling = { entities: [{ type: 'Payment', id: 'p1', fields: { paymentMethod: 'pm-404' } }] };
+    expect(evaluateCandidate(refs!.candidate, dangling)).toBe('forbid'); // present must resolve
   });
 
   it('nonNegative over an optional Money is guarded, not asserted', () => {

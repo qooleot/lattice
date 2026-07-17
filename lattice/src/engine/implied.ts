@@ -114,8 +114,12 @@ export function impliedInvariants(m: DomainModel): CandidateInvariant[] {
             ? { kind: 'implies', left: { kind: 'present', path: [f.name] }, right: nonNegativeBody(p) }
             : nonNegativeBody(p) }));
     }
+    // Optional refs stay IN refsResolve: the judge's arm skips an absent value (evaluate.ts's
+    // `typeof v === 'string'` guard), so absence is never an orphan — but a PRESENT optional ref
+    // that dangles is one, and this rule is its only enforcement (Alloy-vacuous, Quint-unemitted).
+    // Safe only because quint-adapter strips flag-false placeholders before the judge sees them.
     const sameContextRefFields = o.fields
-      .filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type) && !f.optional)
+      .filter(f => f.type.kind === 'ref' && !isQualifiedRef(f.type))
       .map(f => f.name);
     if (sameContextRefFields.length > 0)
       out.push(mk(`refsResolve${cap(o.name)}`, { kind: 'refsResolve', aggregate: o.name, fields: sameContextRefFields }));

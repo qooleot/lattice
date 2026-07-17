@@ -12,7 +12,7 @@ invariant-removing edit.
 | Structure | Implied rule | Derived name | Opt out |
 |---|---|---|---|
 | A state `s` tagged `@terminal` in lifecycle block `r` of owner `A` | once in `s`, stays in `s` (a `terminal` body) | `terminal<A><R><S>` | Remove the `@terminal` tag. |
-| Owner `A` has at least one **required** same-context `ref` field | every required same-context `ref` field on `A` resolves (a `refsResolve` body) | `refsResolve<A>` | None for a required `ref` — it must resolve. A **qualified** cross-context `ref` (see [field types](field-types.md)) and an **optional** `ref` do not trigger this, and are not among the fields it covers. |
+| Owner `A` has at least one same-context `ref` field, required or optional | every same-context `ref` field on `A` resolves when present (a `refsResolve` body) | `refsResolve<A>` | None. A **qualified** cross-context `ref` (see [field types](field-types.md)) is never among the fields it covers. An absent **optional** `ref` is skipped, not convicted; a present one must still resolve. |
 | A **money path** `p` on owner `A`, whose head field is not tagged `@signed` | `p >= 0`, or `present(f) => p >= 0` when the head field `f` is [optional](field-types.md) (a `statePredicate` body) | `nonNegative<A><P…>` | Tag the head field `@signed`. |
 | A field `f : V` on an **aggregate, top-level entity, or aggregate-owned child**, where [value](value.md) `V` declares its own `invariant` | each of `V`'s laws, instantiated at this use site with every path prefixed `f.` | `val<V><A><F><Inv>` | Remove the law from `V`, or stop using `V` here. |
 
@@ -86,15 +86,19 @@ what absence *is*, not chosen for convenience:
   `present(f) => f >= 0` — the guard form. The assertion form (`present(f) && f >= 0`) would make
   every optional `Money` field mandatory, which is to say it would delete optionality by deriving
   it away. Nothing you declared asked for that.
-- **An absent ref is not an orphan.** `refsResolve` covers only **required** same-context refs. An
-  optional ref that points at nothing is exactly what `?` declares it may be; a resolve rule over
-  it would forbid the state the declaration just permitted — including, commonly, an aggregate's
-  own initial state. An owner whose refs are all optional or cross-context derives no `refsResolve`
-  rule at all.
+- **An absent ref is not an orphan — but a present one must resolve.** `refsResolve` names every
+  same-context `ref` field on the owner, required or optional alike; unlike the `Money` case above,
+  there is no guard written into the invariant body itself. The guard instead lives in how the
+  field is read: the judge's `refsResolve` arm only convicts a field holding a string that names no
+  entity, and skips a field whose key is simply absent. An optional ref that points at nothing is
+  exactly what `?` declares it may be — including, commonly, an aggregate's own initial state — so
+  that state stays legal. A ref that *is* set but dangles is exactly the orphan this rule exists to
+  catch, whether the field is required or optional.
 
-Both follow from the same reading of `?` the rest of the language uses: absence is a fact the model
-accounts for, never a value it defaults to. Where the derived rule cannot state which it means, it
-is not derived.
+Both follow the same reading of `?` the rest of the language uses: absence is a fact the model
+accounts for, never a value it defaults to. Where `Money` expresses that fact as a guard in the
+invariant body, `refsResolve` expresses it as a distinction the judge draws between a missing key
+and a dangling one — but neither ever asks an absent optional field to behave as if it were set.
 
 ```lat
 context Billing {
