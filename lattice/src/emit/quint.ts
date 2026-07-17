@@ -39,7 +39,7 @@ export const owners = (m: DomainModel): (AggregateDef | EntityDef)[] => [...m.ag
  * Owners a candidate SUBJECT or path may name, including aggregate-owned children (slice B2).
  * Distinct from `owners(m)` above, which drives var and `<TARGET>_IDS` pool declaration and must
  * stay top-level-only — a child has neither. Safe because validateModel's `ref-target-nested-child`
- * makes a child unreachable as a ref TARGET, so the ref-hop rebinds in pathToQuint/refHopsIn can
+ * makes a child unreachable as a ref TARGET, so the ref-hop rebinds in pathToQuint/refHopGates can
  * never land on one: a child is a subject, never a hop.
  */
 const ownersAndChildren = (m: DomainModel): (AggregateDef | EntityDef)[] =>
@@ -175,17 +175,27 @@ export function pathToQuint(m: DomainModel, path: Path, self: string, ownerName:
   return expr;
 }
 
-// Every `<var>.get(<expr>)` sub-expression a multi-hop path passes through when crossing a ref
-// (mirrors pathToQuint's own ref-hop detection). Non-machine aggregates/entities start with
-// `exists: false` and are only ever populated by a `create_*` action (see initValue/emitOwnerSig
-// above) — but Quint's map model still returns a concrete (nondeterministically chosen) value for
-// every key regardless of that flag, since field access is never itself gated on `exists`. Without
-// requiring each hop's target to actually exist, Apalache is free to "read" a never-created
-// record's placeholder fields to manufacture a counterexample that refers to data that was never
-// instantiated — a spurious witness, not a real violation. refHopsInTerm/predToQuint's `cmp` case
-// below use these to gate each comparison on its ref targets actually existing.
-export function refHopsIn(m: DomainModel, path: Path, self: string, ownerName: string): string[] {
-  const hops: string[] = [];
+// Every gate atom a multi-hop path passes through when crossing a ref (mirrors pathToQuint's own
+// ref-hop detection). Two distinct reasons a hop can be ungrounded, both gated here:
+//
+// (1) Non-machine aggregates/entities start with `exists: false` and are only ever populated by a
+//     `create_*` action (see initValue/emitOwnerSig above) — but Quint's map model still returns a
+//     concrete (nondeterministically chosen) value for every key regardless of that flag, since
+//     field access is never itself gated on `exists`. Without requiring each hop's target to
+//     actually exist, Apalache is free to "read" a never-created record's placeholder fields to
+//     manufacture a counterexample that refers to data that was never instantiated.
+// (2) An OPTIONAL hop (`f.optional` on a ref field) draws its target id unconditionally too —
+//     `initValue` draws from `<TARGET>_IDS` regardless of the companion `${f}Present` flag (design
+//     §3.5's flag-beside-data encoding has no way to leave the id itself undrawn) — so even when
+//     the target record DOES exist, an absent optional hop still resolves to *some* record's
+//     placeholder fields, not the "no fact" the flag says it is. The flag must gate before the
+//     `.exists` check does (pushed first, below), matching evaluate.ts's judge: a missing operand
+//     is unknown regardless of what the drawn id happens to point at.
+//
+// predToQuint's cmp/present cases and candidateToQuint's unique/conservation/sumOverCollection
+// arms all route through this one derivation, so they cannot independently drift on either gate.
+export function refHopGates(m: DomainModel, path: Path, self: string, ownerName: string): string[] {
+  const gates: string[] = [];
   let expr = self, owner = ownerName;
   // Value hops walk the ValueDef's fields, never the owner's — see pathToQuint, which this mirrors
   // hop for hop. A value cannot hold a ref (value-flat), so no hop is ever pushed from inside one;
@@ -194,8 +204,8 @@ export function refHopsIn(m: DomainModel, path: Path, self: string, ownerName: s
   for (let i = 0; i < path.length; i++) {
     const seg = path[i]!;
     // Ref-hop machine-state segment: not a declared field, so it can't be looked up on `def` —
-    // but the hop to reach `owner` (e.g. `period`) was already pushed onto `hops` on a prior
-    // iteration, so the existence gate on that referenced record still composes correctly.
+    // but the gate(s) for the hop that reached `owner` (e.g. `period`) were already pushed onto
+    // `gates` on a prior iteration, so they still compose correctly.
     const stateMatch = seg.match(/^(\w+)\.state$/);
     if (stateMatch && i === path.length - 1) { expr = `${expr}.${stateMatch[1]}_state`; break; }
     // Children included, exactly as pathToQuint above — a child-subject candidate's every path
@@ -209,17 +219,20 @@ export function refHopsIn(m: DomainModel, path: Path, self: string, ownerName: s
     if (f?.type.kind === 'value') {
       vfields = m.values.find(v => v.name === (f.type as { kind: 'value'; value: string }).value)?.fields ?? [];
     } else if (i < path.length - 1 && f?.type.kind === 'ref') {
+      // The flag lives beside the ref field itself (pre-get-wrap `${expr}Present`), so it must be
+      // read and pushed BEFORE `expr` is rebound to the `<var>.get(...)` wrap below.
+      if (f.optional) gates.push(`${expr}Present`);
       owner = f.type.target;
       expr = `${varName(owner)}.get(${expr})`;
-      hops.push(expr);
+      gates.push(`${expr}.exists`);
     }
   }
-  return hops;
+  return gates;
 }
-function refHopsInTerm(m: DomainModel, t: Term, self: string, ownerName: string): string[] {
+function refHopGatesInTerm(m: DomainModel, t: Term, self: string, ownerName: string): string[] {
   switch (t.kind) {
-    case 'field': return refHopsIn(m, t.path, self, ownerName);
-    case 'plus': return [...refHopsInTerm(m, t.left, self, ownerName), ...refHopsInTerm(m, t.right, self, ownerName)];
+    case 'field': return refHopGates(m, t.path, self, ownerName);
+    case 'plus': return [...refHopGatesInTerm(m, t.left, self, ownerName), ...refHopGatesInTerm(m, t.right, self, ownerName)];
     case 'int': case 'enumval': case 'now': return [];
     case 'param': throw new Error('param terms never reach solvers/evaluator — method guards are carried structure');
   }
@@ -230,14 +243,14 @@ export function predToQuint(m: DomainModel, p: Predicate, self: string, ownerNam
       const ops: Record<Cmp, string> = { eq: '==', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' };
       const cmp = `(${termToQuint(m, p.left, self, ownerName)} ${ops[p.op]} ${termToQuint(m, p.right, self, ownerName)})`;
       // Match evaluate.ts's evalPred('cmp'): "unknown facts don't convict" — if either side reads
-      // through a ref to a record that was never created (see refHopsIn above), the comparison's
-      // operands are meaningless placeholder data, not a real fact, so this node must evaluate to
-      // true (vacuously) exactly like the TS judge does, rather than let Apalache read through to
-      // a never-created record to manufacture a spurious counterexample.
-      const hops = [...refHopsInTerm(m, p.left, self, ownerName), ...refHopsInTerm(m, p.right, self, ownerName)];
-      if (hops.length === 0) return cmp;
-      const allExist = [...new Set(hops)].map(h => `${h}.exists`).join(' and ');
-      return `((${allExist}) implies ${cmp})`;
+      // through a ref to a record that was never created, or through an OPTIONAL hop whose own
+      // Present flag is false (see refHopGates above), the comparison's operands are meaningless
+      // placeholder data, not a real fact, so this node must evaluate to true (vacuously) exactly
+      // like the TS judge does, rather than let Apalache read through to manufacture a spurious
+      // counterexample.
+      const gates = [...refHopGatesInTerm(m, p.left, self, ownerName), ...refHopGatesInTerm(m, p.right, self, ownerName)];
+      if (gates.length === 0) return cmp;
+      return `((${[...new Set(gates)].join(' and ')}) implies ${cmp})`;
     }
     case 'inState': return '(' + p.states.map(s => `${self}.${p.region}_state == "${s}"`).join(' or ') + ')';
     // pathToQuint's last hop is always `${prefix}.${lastSeg}` (ref-hop or not), so appending
@@ -245,17 +258,17 @@ export function predToQuint(m: DomainModel, p: Predicate, self: string, ownerNam
     // beside the field itself (see presentInitValue / the record-type `fields` construction above).
     case 'present': {
       const flag = `${pathToQuint(m, p.path, self, ownerName)}Present`;
-      // Same ref-hop existence gate as `cmp` above, with the OPPOSITE polarity — and the polarity is
-      // forced, not a taste. `cmp` reads absence as unknown and must not convict, so its gate is
-      // `allExist implies cmp` (ungrounded ⇒ vacuously true). `present` reads absence as a FACT
-      // (evaluate.ts's evalPred 'present' resolves the path and returns `!== undefined`), so a read
-      // through a never-created record is FALSE for the TS judge — a conjunction, not an implication.
-      // Without this, Apalache reads the placeholder flag of a record no create_ action ever made and
-      // may answer true where the judge answers false: a solver/judge divergence, not a real fact.
-      const hops = refHopsIn(m, p.path, self, ownerName);
-      if (hops.length === 0) return flag;
-      const allExist = [...new Set(hops)].map(h => `${h}.exists`).join(' and ');
-      return `((${allExist}) and ${flag})`;
+      // Same ref-hop gates as `cmp` above, with the OPPOSITE polarity — and the polarity is forced,
+      // not a taste. `cmp` reads absence as unknown and must not convict, so its gate is `gates
+      // implies cmp` (ungrounded ⇒ vacuously true). `present` reads absence as a FACT (evaluate.ts's
+      // evalPred 'present' resolves the path and returns `!== undefined`), so a read through a
+      // never-created record, OR through an optional hop whose own flag is false, is FALSE for the
+      // TS judge — a conjunction, not an implication. Without this, Apalache reads the placeholder
+      // flag of a record no create_ action ever made (or one an absent optional hop merely happens
+      // to point at) and may answer true where the judge answers false: a solver/judge divergence.
+      const gates = refHopGates(m, p.path, self, ownerName);
+      if (gates.length === 0) return flag;
+      return `((${[...new Set(gates)].join(' and ')}) and ${flag})`;
     }
     case 'and': return '(' + p.args.map(a => predToQuint(m, a, self, ownerName)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToQuint(m, a, self, ownerName)).join(' or ') + ')';
@@ -385,7 +398,14 @@ export function candidateToQuint(m: DomainModel, c: Candidate, name: string): st
   }
   if (c.kind === 'conservation') {
     const parts = c.parts.map(p => pathToQuint(m, p, 'x', c.aggregate)).join(' + ');
-    return `val ${name} = ${v}.keys().forall(k => { val x = ${v}.get(k) not(x.exists) or (${parts} == ${pathToQuint(m, c.total, 'x', c.aggregate)}) })`;
+    // Same permit polarity as the cmp arm: an ungrounded read (a part or the total crossing a
+    // never-created or absent-optional ref hop) is unknown, and unknown facts don't convict — gate
+    // the equation, not the quantifier. Pre-Task-1 this arm called pathToQuint bare with no hop
+    // gate at all (carried finding #5 from Slice B2's own review).
+    const gates = [...new Set([...c.parts, c.total].flatMap(p => refHopGates(m, p, 'x', c.aggregate)))];
+    const eq = `${parts} == ${pathToQuint(m, c.total, 'x', c.aggregate)}`;
+    const body = gates.length ? `(${gates.join(' and ')}) implies (${eq})` : eq;
+    return `val ${name} = ${v}.keys().forall(k => { val x = ${v}.get(k) not(x.exists) or (${body}) })`;
   }
   if (c.kind === 'cardinality') {
     const guard = c.where ? predToQuint(m, c.where, 'x', c.aggregate) : 'true';
@@ -395,14 +415,14 @@ export function candidateToQuint(m: DomainModel, c: Candidate, name: string): st
     // Alloy-routed as a query subject, but needed here as an ADOPTED constraint (QuintQuery.
     // adopted) so quint witnesses can't violate an adoption like One_Draft_Invoice_Per_
     // Subscription. Pairwise over map keys, inlined `get()`s (no block-vals — one line per pred).
-    // Ref-hop existence gates the by-key comparison the same way predToQuint's cmp case gates
-    // reads through refs: a key read through a never-created record is not a real fact and must
-    // not convict the pair.
+    // Ref-hop gates the by-key comparison the same way predToQuint's cmp case gates reads through
+    // refs: a key read through a never-created record, or through an optional hop whose own flag
+    // is false, is not a real fact and must not convict the pair.
     const rec = (k: string) => `${v}.get(${k})`;
     const inS = (k: string) => '(' + c.whileStates.states.map(st => `${rec(k)}.${c.whileStates.region}_state == "${st}"`).join(' or ') + ')';
-    const hops = [...new Set(c.by.flatMap(p => [...refHopsIn(m, p, rec('k1'), c.aggregate), ...refHopsIn(m, p, rec('k2'), c.aggregate)]))];
+    const gates = [...new Set(c.by.flatMap(p => [...refHopGates(m, p, rec('k1'), c.aggregate), ...refHopGates(m, p, rec('k2'), c.aggregate)]))];
     const eqs = c.by.map(p => `(${pathToQuint(m, p, rec('k1'), c.aggregate)} == ${pathToQuint(m, p, rec('k2'), c.aggregate)})`);
-    const collides = [`${rec('k1')}.exists`, `${rec('k2')}.exists`, inS('k1'), inS('k2'), ...hops.map(h => `${h}.exists`), ...eqs].join(' and ');
+    const collides = [`${rec('k1')}.exists`, `${rec('k2')}.exists`, inS('k1'), inS('k2'), ...gates, ...eqs].join(' and ');
     return `val ${name} = ${v}.keys().forall(k1 => ${v}.keys().forall(k2 => k1 == k2 or not(${collides})))`;
   }
   if (c.kind === 'sumOverCollection') {
@@ -414,7 +434,13 @@ export function candidateToQuint(m: DomainModel, c: Candidate, name: string): st
     // reads `.get(i).amount.amount`.
     const fold = `range(0, ${OWNED_BOUND}).foldl(0, (acc, i) => if (i < x.${c.collection}Count) acc + x.${c.collection}.get(i).${sumFieldPath(c).join('.')} else acc)`;
     const ops = { eq: '==', le: '<=', ge: '>=' } as const;
-    return `val ${name} = ${v}.keys().forall(k => { val x = ${v}.get(k) not(x.exists) or (${pathToQuint(m, c.total, 'x', c.aggregate)} ${ops[c.op]} ${fold}) })`;
+    // Same permit polarity as conservation above: the summed CHILD field never crosses a ref hop
+    // (a child's own field, read off `x.<collection>.get(i)`), but the aggregate-level `total` it's
+    // compared against can — gate on that read alone (carried finding #5, same as conservation).
+    const gates = refHopGates(m, c.total, 'x', c.aggregate);
+    const eq = `${pathToQuint(m, c.total, 'x', c.aggregate)} ${ops[c.op]} ${fold}`;
+    const body = gates.length ? `(${[...new Set(gates)].join(' and ')}) implies (${eq})` : eq;
+    return `val ${name} = ${v}.keys().forall(k => { val x = ${v}.get(k) not(x.exists) or (${body}) })`;
   }
   throw new Error(`${c.kind} is never solver-queried on quint in slice-1 (template auto-adopt only)`);
 }

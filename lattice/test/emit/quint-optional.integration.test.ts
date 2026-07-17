@@ -77,4 +77,32 @@ describe('quint — optional fields (integration, real quint)', () => {
     const r = await runQuintVerify(em, { invariant: 'Hi', maxSteps: 0 });
     expect(r.violated, 'an ungrounded present() read manufactured a spurious witness').toBe(false);
   }, 180_000);
+
+  // Flags are drawn once at init and never written, so `not(present(method))` as an adopted
+  // constraint pins methodPresent=false in every reachable state. Pre-fix, present(method.tag)
+  // still evaluated exists∧tagPresent through the placeholder id — Apalache could "violate" Hi
+  // with a state whose own flag says the hop is absent. The gate must make that unsat.
+  const optHop: DomainModel = {
+    context: 'OptHop', ticksPerDay: 24, enums: [], values: [],
+    entities: [{ kind: 'entity', name: 'Method', fields: [
+      { name: 'methodId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'tag', type: { kind: 'prim', prim: 'Int' }, optional: true }] }],
+    aggregates: [{ kind: 'aggregate', name: 'Payment', fields: [
+      { name: 'paymentId', type: { kind: 'prim', prim: 'Id' }, key: true },
+      { name: 'method', type: { kind: 'ref', target: 'Method' }, optional: true }],
+      machine: { regions: [{ name: 'intent', initial: 'pending', states: [{ name: 'pending' }] }], transitions: [] } }],
+    events: [], services: []
+  };
+  const methodAbsent: Candidate = { kind: 'statePredicate', aggregate: 'Payment',
+    body: { kind: 'not', arg: { kind: 'present', path: ['method'] } } };
+  const noTagThroughAbsentMethod: Candidate = { kind: 'statePredicate', aggregate: 'Payment',
+    body: { kind: 'not', arg: { kind: 'present', path: ['method', 'tag'] } } };
+
+  it('present() through a flag-false optional hop is FALSE even when the placeholder id resolves', async () => {
+    const em = astToQuint(optHop, { kind: 'probe-forbid', hi: noTagThroughAbsentMethod,
+      exclusions: [], maxSteps: 2, adopted: [methodAbsent] });
+    expect(em.source).toContain('x.methodPresent');   // the new gate atom
+    const r = await runQuintVerify(em, { invariant: em.invariantName, maxSteps: 2 });
+    expect(r.violated, 'a flag-false hop manufactured a spurious witness').toBe(false);
+  }, 180_000);
 });

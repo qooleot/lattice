@@ -1,7 +1,7 @@
 import type { DomainModel, TypeRef } from '../ast/domain.js';
 import type { Cmp, Predicate, Term } from '../ast/invariant.js';
 import {
-  INT_POOL, astToQuint, buildOwnerInit, isIntPrim, owners, pathToQuint, refHopsIn, varName,
+  INT_POOL, astToQuint, buildOwnerInit, isIntPrim, owners, pathToQuint, refHopGates, varName,
 } from './quint.js';
 import type { QuintEmission } from './quint.js';
 
@@ -12,7 +12,7 @@ import type { QuintEmission } from './quint.js';
 // (quint.ts:80/138) because transition guards may never legally carry one — and that throw MUST stay
 // intact. This module is the SEPARATE param-aware renderer: it mirrors termToQuint/predToQuint's
 // structure exactly, but resolves a `param` to a caller-supplied drawn var (via `paramVars`) instead
-// of throwing. Field/ref-hop rendering is reused verbatim from quint.ts (pathToQuint/refHopsIn), so
+// of throwing. Field/ref-hop rendering is reused verbatim from quint.ts (pathToQuint/refHopGates), so
 // the two renderers can never drift on the shared cases.
 
 function termToQuintParam(m: DomainModel, t: Term, self: string, ownerName: string, paramVars: Record<string, string>): string {
@@ -30,11 +30,12 @@ function termToQuintParam(m: DomainModel, t: Term, self: string, ownerName: stri
   }
 }
 
-// Param-aware twin of quint.ts's refHopsInTerm: a `param` term is a drawn scalar with no ref hop
-// (params are own-scope scalars — slice-4 §5.2.1), so it contributes no existence gate.
+// Param-aware twin of quint.ts's refHopGatesInTerm: a `param` term is a drawn scalar with no ref
+// hop (params are own-scope scalars — slice-4 §5.2.1), so it contributes no gate at all (neither
+// an existence check nor an optional-hop Present flag).
 function refHopsInTermParam(m: DomainModel, t: Term, self: string, ownerName: string): string[] {
   switch (t.kind) {
-    case 'field': return refHopsIn(m, t.path, self, ownerName);
+    case 'field': return refHopGates(m, t.path, self, ownerName);
     case 'plus': return [...refHopsInTermParam(m, t.left, self, ownerName), ...refHopsInTermParam(m, t.right, self, ownerName)];
     case 'int': case 'enumval': case 'now': case 'param': return [];
   }
@@ -47,25 +48,24 @@ export function predToQuintParam(
     case 'cmp': {
       const ops: Record<Cmp, string> = { eq: '==', ne: '!=', lt: '<', le: '<=', gt: '>', ge: '>=' };
       const cmp = `(${termToQuintParam(m, p.left, self, ownerName, paramVars)} ${ops[p.op]} ${termToQuintParam(m, p.right, self, ownerName, paramVars)})`;
-      // Mirror predToQuint's ref-hop existence gate exactly (quint.ts cmp case): a read through a
-      // never-created record is not a real fact and must evaluate vacuously true, not manufacture a
-      // spurious witness. Params add no hops, so an own-scalar guard has hops=[] (no gate).
-      const hops = [...refHopsInTermParam(m, p.left, self, ownerName), ...refHopsInTermParam(m, p.right, self, ownerName)];
-      if (hops.length === 0) return cmp;
-      const allExist = [...new Set(hops)].map(h => `${h}.exists`).join(' and ');
-      return `((${allExist}) implies ${cmp})`;
+      // Mirror predToQuint's ref-hop gates exactly (quint.ts cmp case): a read through a
+      // never-created record, or through an optional hop whose own flag is false, is not a real
+      // fact and must evaluate vacuously true, not manufacture a spurious witness. Params add no
+      // hops, so an own-scalar guard has gates=[] (no gate).
+      const gates = [...refHopsInTermParam(m, p.left, self, ownerName), ...refHopsInTermParam(m, p.right, self, ownerName)];
+      if (gates.length === 0) return cmp;
+      return `((${[...new Set(gates)].join(' and ')}) implies ${cmp})`;
     }
     case 'inState': return '(' + p.states.map(s => `${self}.${p.region}_state == "${s}"`).join(' or ') + ')';
-    // Mirrors predToQuint's 'present' arm verbatim (quint.ts), ref-hop existence gate included —
-    // conjoined, not implied, because presence reads absence as a fact (see the polarity note there).
-    // Params never appear in a present() path (present() takes a Path, not a Term), so this needs no
-    // param-aware variant and can reuse refHopsIn directly.
+    // Mirrors predToQuint's 'present' arm verbatim (quint.ts), ref-hop gates included — conjoined,
+    // not implied, because presence reads absence as a fact (see the polarity note there). Params
+    // never appear in a present() path (present() takes a Path, not a Term), so this needs no
+    // param-aware variant and can reuse refHopGates directly.
     case 'present': {
       const flag = `${pathToQuint(m, p.path, self, ownerName)}Present`;
-      const hops = refHopsIn(m, p.path, self, ownerName);
-      if (hops.length === 0) return flag;
-      const allExist = [...new Set(hops)].map(h => `${h}.exists`).join(' and ');
-      return `((${allExist}) and ${flag})`;
+      const gates = refHopGates(m, p.path, self, ownerName);
+      if (gates.length === 0) return flag;
+      return `((${[...new Set(gates)].join(' and ')}) and ${flag})`;
     }
     case 'and': return '(' + p.args.map(a => predToQuintParam(m, a, self, ownerName, paramVars)).join(' and ') + ')';
     case 'or': return '(' + p.args.map(a => predToQuintParam(m, a, self, ownerName, paramVars)).join(' or ') + ')';
