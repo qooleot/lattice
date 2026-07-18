@@ -113,9 +113,12 @@ export function validateModel(m: DomainModel): Diagnostic[] {
     checkTypeName('enum', en.name, en.name);
     for (const v of en.values) checkName('enum value', v, `${en.name}.${v}`);
   }
-  // `builtin` carriers are type names too — same namespace as enum/value/entity/aggregate, so they
-  // get checkTypeName (reject reserved words + prim spellings) and join the duplicate-name pool.
-  for (const b of m.builtins ?? []) checkTypeName('builtin', b, b);
+  // `builtin` carriers, `type` records, and `type` aliases are all type names — same namespace as
+  // enum/value/entity/aggregate, so they get checkTypeName (reject reserved words + prim spellings)
+  // and join the duplicate-name pool below.
+  for (const b of m.builtins ?? []) checkTypeName('builtin', b.name, b.name);
+  for (const r of m.records ?? []) { checkTypeName('type', r.name, r.name); for (const f of r.fields) checkName('field', f.name, `${r.name}.${f.name}`); }
+  for (const ta of m.typeAliases ?? []) checkTypeName('type', ta.name, ta.name);
   for (const v of m.values) {
     checkTypeName('value', v.name, v.name);
     for (const f of v.fields) checkName('field', f.name, `${v.name}.${f.name}`);
@@ -148,7 +151,8 @@ export function validateModel(m: DomainModel): Diagnostic[] {
 
   const names = new Map<string, number>();
   const all = [...m.enums.map(e => e.name), ...m.values.map(v => v.name), ...m.entities.map(e => e.name), ...m.aggregates.map(a => a.name),
-    ...m.aggregates.flatMap(a => (a.entities ?? []).map(e => e.name)), ...(m.builtins ?? [])];
+    ...m.aggregates.flatMap(a => (a.entities ?? []).map(e => e.name)), ...(m.builtins ?? []).map(b => b.name),
+    ...(m.records ?? []).map(r => r.name), ...(m.typeAliases ?? []).map(ta => ta.name)];
   for (const n of all) names.set(n, (names.get(n) ?? 0) + 1);
   for (const [n, c] of names) if (c > 1) out.push({ code: 'duplicate-name', message: `name ${n} declared ${c} times` });
 
@@ -157,7 +161,9 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   const enums = new Set(m.enums.map(e => e.name));
   const values = new Set(m.values.map(v => v.name));
   const events = new Set(m.events.map(e => e.name));
-  const carriers = new Set(m.builtins ?? []);
+  // Records resolve to a `carrier` reference exactly like builtins (both carried, codegen-only), so
+  // the carrier-resolution set is their union.
+  const carriers = new Set([...(m.builtins ?? []).map(b => b.name), ...(m.records ?? []).map(r => r.name)]);
 
   /**
    * child entity name -> the aggregate that owns it. A nested child is inlined into its owner in
@@ -347,6 +353,14 @@ export function validateModel(m: DomainModel): Diagnostic[] {
 
   m.entities.forEach(e => checkFields(e.fields, e.name, true));
   m.events.forEach(e => e.fields.forEach(f => { checkType(f.type, `${e.name}.${f.name}`); checkReservedField(f, `${e.name}.${f.name}`); checkRefTarget(f.type, `${e.name}.${f.name}`, null); }));
+  // `type` records (Slice 4): free-form carried structs — validate that field types resolve and refs
+  // target real owners, but NONE of the solver-restrictions (value-flat/optional-value/key) apply,
+  // since a record is never solver-encoded. No key requirement either.
+  (m.records ?? []).forEach(r => r.fields.forEach(f => { checkType(f.type, `${r.name}.${f.name}`); checkReservedField(f, `${r.name}.${f.name}`); checkRefTarget(f.type, `${r.name}.${f.name}`, null); }));
+  // `type` aliases (Slice 4): the target is an already-inlined TypeRef; validate it names real decls.
+  (m.typeAliases ?? []).forEach(ta => checkType(ta.target, `type ${ta.name}`));
+  // Sum-type enum payloads (Slice 4): each payload TypeRef must name real decls (carried; not solved).
+  m.enums.forEach(en => { for (const [variant, t] of Object.entries(en.payloads ?? {})) checkType(t, `${en.name}.${variant}`); });
   m.aggregates.forEach(a => {
     checkFields(a.fields, a.name, true, a.name);
     for (const child of a.entities ?? []) {

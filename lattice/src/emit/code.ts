@@ -153,13 +153,25 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
   if (m.ticksPerDay !== undefined) out.push(`  ticksPerDay = ${m.ticksPerDay}`, '');
   // `builtin` carriers (Slice 2): declared before the types that reference them, so a bare carrier
   // name re-parses to TypeRef 'carrier' instead of the unresolved-enum fallback.
-  if (m.builtins?.length) { for (const b of m.builtins) out.push(`  builtin ${b}`); out.push(''); }
+  if (m.builtins?.length) { for (const b of m.builtins) out.push(`  builtin ${b.name}${b.ref ? ` = "${b.ref}"` : ''}`); out.push(''); }
   for (const e of m.enums) {
     // grammar requires >= 1 value — 'enum X {  }' would not parse back
     if (!e.values.length) throw new Error(`cannot print enum ${e.name}: it has no values`);
-    out.push(`  enum ${e.name} { ${e.values.join(', ')} }`);
+    // sum-type variants (Slice 4) re-emit their payload: `monetary(Amount)`.
+    const variants = e.values.map(v => { const p = e.payloads?.[v]; return p ? `${v}(${typeStr({ name: '', type: p })})` : v; });
+    out.push(`  enum ${e.name} { ${variants.join(', ')} }`);
   }
   if (m.enums.length) out.push('');
+  // `type` aliases (Slice 4): use sites are inlined, but the declaration is retained & re-emitted.
+  for (const ta of m.typeAliases ?? []) { doc(ta.doc, '  ', out); out.push(`  type ${ta.name} = ${typeStr({ name: '', type: ta.target })}`); }
+  if (m.typeAliases?.length) out.push('');
+  // `type` records (Slice 4): free-form carried structs, declared before the types that reference them.
+  for (const r of m.records ?? []) {
+    doc(r.doc, '  ', out);
+    out.push(`  type ${r.name} = {`);
+    fieldLines(r.fields, '    ', out);
+    out.push('  }', '');
+  }
   for (const v of m.values) {
     doc(v.doc, '  ', out);
     out.push(`  value ${v.name} {`);

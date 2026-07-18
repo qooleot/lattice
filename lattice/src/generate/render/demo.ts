@@ -261,7 +261,7 @@ function demoBody(shape: ActivateLikeShape, subKey: string, invKey: string): str
 
 function defaultLiteralFor(f: Field): string {
   switch (f.type.kind) {
-    case 'prim': return f.type.prim === 'Text' || f.type.prim === 'Id' ? "''" : '0';
+    case 'prim': return f.type.prim === 'Text' || f.type.prim === 'Id' ? "''" : f.type.prim === 'Boolean' ? 'false' : '0';
     case 'enum': return "''";
     case 'ref': return "''";
     case 'list': return '[]';

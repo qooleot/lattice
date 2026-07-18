@@ -3,7 +3,7 @@ import type { Field, TypeRef } from '../../ast/domain.js';
 
 function tsType(t: TypeRef): string {
   switch (t.kind) {
-    case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? 'string' : 'number'; // Int/Money/Date/Duration → number (ticks)
+    case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? 'string' : t.prim === 'Boolean' ? 'boolean' : 'number'; // Int/Money/Date/Duration → number (ticks)
     case 'enum': return 'string';
     case 'ref': return 'string';           // foreign id
     case 'list': return `${tsType(t.of)}[]`;

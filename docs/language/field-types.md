@@ -30,8 +30,12 @@ context Billing {
 
 A field is `<camelId> : <type>[?] [key] [const] [@<tag>]*`. `<type>` is one of:
 
-- **Primitives:** `Int`, `Text`, `Date`, `Duration`, `Money`, `Id`.
+- **Primitives:** `Int`, `Text`, `Date`, `Duration`, `Money`, `Id`, `Boolean`. `Boolean` is carried:
+  codegen maps it (`boolean`), but like `Text`/`Id` it is dropped from the solver (invariants cannot
+  read it yet).
+- **A type-alias name** — any `type Name = …` declared in the same context (resolved/inlined at parse).
 - **An enum name** — any [enum](enum.md) declared in the same context.
+- **A `type` record name** — any `type Name = { … }` free-form struct (see [the `type` section](#type-aliases-and-records)).
 - **A [value](value.md) name** — any `value` declared in the same context. Structural and keyless;
   its own fields are prims, enums, or other values — no `ref`, no `List` — see `value.md`.
 - **`ref <Target>`** — a same-context reference: `<Target>` must be an entity or aggregate
@@ -50,9 +54,10 @@ A field is `<camelId> : <type>[?] [key] [const] [@<tag>]*`. `<type>` is one of:
 - **`Map<K, V>`**, **generics (`Ctor<T, …>`, e.g. `Result<T, E>`)**, **unions (`A | B | …`)**, and
   **`builtin` carriers** — the *carried* surface: see [Carried types](#carried-types) below.
 
-A bare identifier resolves in this order: primitive → declared value → declared entity/aggregate
-(`ref`) → declared `builtin` carrier → enum (the fallback, `unresolved-enum` if it matches nothing
-declared).
+A bare identifier resolves in this order: primitive → **type alias** → declared value → declared
+entity/aggregate (`ref`) → declared `builtin` carrier **or `type` record** → enum (the fallback,
+`unresolved-enum` if it matches nothing declared). The declared namespaces are mutually exclusive
+(`duplicate-name`), so only the final enum fallback is order-sensitive.
 
 A trailing `?` (immediately after the type, before `key`/`const`/tags) marks the field
 **optional**: the owner may exist with no value for it at all. Optionality is a property of the
@@ -230,12 +235,52 @@ context Billing {
   declared builtin resolves to a carrier (not the `unresolved-enum` fallback). Use it for external or
   primitive-like types lattice does not model structurally (`Metadata`, `Currency`, `Decimal`,
   `TimeRange`, …). A `builtin` name shares the type namespace with enums/values/entities/aggregates
-  (`duplicate-name`, `reserved-prim-name`) and should be PascalCase.
+  (`duplicate-name`, `reserved-prim-name`) and should be PascalCase. An optional **external ref** binds
+  it to an existing type — `builtin Amount = "Opus::Monetary::Core::Types::Amount"` — which a codegen
+  backend imports instead of emitting.
 
 Carried element types still validate: a `ref`, enum, value, or carrier buried inside a `Map`,
 generic, or union must still name a real declaration, and a `ref` to an aggregate-owned child inside
 one is still rejected (`ref-target-nested-child`) — only a direct `List<ref Child>` on the owning
 aggregate is an owned collection.
+
+## `type` aliases and records
+
+A `type` declaration is TypeScript-shaped and has two forms — an **alias** (RHS is a type) or a
+**record** (RHS is an object literal):
+
+```lat
+context Billing {
+  builtin Amount = "Opus::Monetary::Core::Types::Amount"
+
+  type CustomerId = Id
+  type MetaMap    = Map<Id, Text>
+
+  type LineItem = {
+    itemId : Id
+    amount : Amount
+    tags   : List<Text>
+    note   : Text?
+  }
+
+  aggregate Order {
+    orderId  : Id key
+    customer : CustomerId
+    lines    : List<LineItem>
+  }
+}
+```
+
+- An **alias** names an existing type. It is resolved at parse and **inlined** at every use site (the
+  declaration is retained so it round-trips, but use sites carry the resolved type — matching CML,
+  where aliases don't appear in generated code). An alias may target another alias; a cycle is
+  `alias-cycle`.
+- A **record** (`type X = { … }`) is a free-form, carried, codegen-only struct. Unlike a
+  [`value`](value.md) it is **not** solver-encoded and has **no** field restrictions — its fields may
+  be lists, optionals, refs, generics, or other records. A field referencing a record resolves to a
+  carrier (dropped from solving); codegen emits it as an interface. **Use `value` when you want
+  structural equality + verification; use `type X = {}` for a plain data shape** (e.g. a service/hook
+  DTO) that only needs to round-trip and generate.
 
 ## Semantic Rules
 

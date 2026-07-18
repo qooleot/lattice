@@ -17,7 +17,7 @@ export const RESERVED_WORDS: ReadonlySet<string> = new Set([
   'contextMap', 'count', 'creates', 'downstream', 'emits', 'entity', 'enum', 'event', 'exposes', 'fairness',
   'from', 'in', 'invariant', 'key', 'leads', 'lifecycle', 'List', 'Map', 'monotonic', 'now', 'of', 'on', 'openHost',
   'Optional', 'partnership', 'performs', 'present', 'publishedLanguage', 'read-only', 'ref', 'refs', 'requires', 'resolve', 'roles',
-  'service', 'sharedKernel', 'state', 'states', 'sum', 'terminal', 'ticksPerDay', 'to', 'transition',
+  'service', 'sharedKernel', 'state', 'states', 'sum', 'terminal', 'ticksPerDay', 'to', 'transition', 'type',
   'under', 'unique', 'upstream', 'value', 'when', 'where', 'while', 'with',
 ]);
 
@@ -48,6 +48,6 @@ export const RESERVED_WORDS: ReadonlySet<string> = new Set([
  * (a missing member would silently un-reserve the new name).
  */
 const PRIM_NAME_KEYS: Record<PrimType, true> = {
-  Int: true, Text: true, Date: true, Duration: true, Money: true, Id: true,
+  Int: true, Text: true, Date: true, Duration: true, Money: true, Id: true, Boolean: true,
 };
 export const PRIM_NAMES: ReadonlySet<string> = new Set(Object.keys(PRIM_NAME_KEYS));

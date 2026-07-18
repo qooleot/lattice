@@ -33,10 +33,21 @@ DownstreamRoleName returns string:
     'anticorruption' | 'conformist';
 
 ContextItem:
-    EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl | ValueDecl | ServiceDecl | BuiltinDecl;
+    EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl | ValueDecl | ServiceDecl | BuiltinDecl | TypeDecl;
+
+// `type Name = { … }` is a free-form carried struct (record); `type Name = <TypeExpr>` is an alias
+// (resolved/inlined at parse, like CML). `{` unambiguously starts the record form (no LatType begins
+// with `{`), so `target` set ⇒ alias, `target` unset ⇒ record.
+TypeDecl:
+    docs+=DOC* 'type' name=ID '=' ( '{' fields+=FieldDecl* '}' | target=LatType );
 
 EnumDecl:
-    'enum' name=ID '{' values+=ID (',' values+=ID)* '}';
+    'enum' name=ID '{' variants+=EnumVariant (',' variants+=EnumVariant)* '}';
+
+// A variant is a bare name, or a sum-type variant carrying a payload: `monetary(Amount)`. The payload
+// is carried (dropped from solving); codegen lowers a payload-bearing enum to a discriminated union.
+EnumVariant:
+    name=ID ('(' payload=LatType ')')?;
 
 // Opaque builtin/external carrier type (design: derived-invariants.md "carried vs solved"). A
 // declared name that a field may be typed with but the solver never encodes — codegen represents it
@@ -44,7 +55,7 @@ EnumDecl:
 // (`meta : Metadata`) resolve to a carried TypeRef instead of the unresolved-enum
 // fallback, and round-trips (astToCode re-emits the decl).
 BuiltinDecl:
-    'builtin' name=ID;
+    'builtin' name=ID ('=' ref=STRING)?;
 
 ValueDecl:
     docs+=DOC* 'value' name=ID '{' fields+=FieldDecl* invariants+=InvariantDecl* '}';

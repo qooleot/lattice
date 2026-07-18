@@ -14,7 +14,7 @@ import { ownedCollectionChild } from '../../ast/domain.js';
 /** Every TypeRef kind → its TS type. Exhaustive by design (no `default`) so tsc flags a new kind. */
 function tsType(t: TypeRef): string {
   switch (t.kind) {
-    case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? 'string' : 'number'; // Int/Money/Date/Duration → number (ticks)
+    case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? 'string' : t.prim === 'Boolean' ? 'boolean' : 'number'; // Int/Money/Date/Duration → number (ticks)
     case 'enum': return t.enum;            // the emitted string-literal-union alias
     case 'ref': return 'string';           // foreign id (incl. qualified cross-context refs)
     case 'value': return t.value;          // the emitted value interface
@@ -66,15 +66,26 @@ export function renderTsTypes(model: DomainModel): string {
 
   if (model.builtins?.length) {
     out.push('// Opaque `builtin` carriers — external types; supply a real type by editing/importing if wanted.');
-    for (const b of model.builtins) out.push(`export type ${b} = unknown;`);
+    for (const b of model.builtins) out.push(`export type ${b.name} = unknown;${b.ref ? `   // external: ${b.ref}` : ''}`);
     out.push('');
   }
 
-  // enums as string-literal unions (grammar guarantees >= 1 value)
-  for (const e of model.enums) out.push(`export type ${e.name} = ${e.values.map(v => `'${v}'`).join(' | ')};`);
+  // Plain enums → string-literal unions. Sum-type enums (any variant carries a payload) → a
+  // discriminated union tagged by `kind`, payload under `value` (TS has no positional ADT variant).
+  for (const e of model.enums) {
+    if (e.payloads && Object.keys(e.payloads).length) {
+      const arms = e.values.map(v => e.payloads![v] ? `{ kind: '${v}'; value: ${tsType(e.payloads![v]!)} }` : `{ kind: '${v}' }`);
+      out.push(`export type ${e.name} = ${arms.join(' | ')};`);
+    } else {
+      out.push(`export type ${e.name} = ${e.values.map(v => `'${v}'`).join(' | ')};`);
+    }
+  }
   if (model.enums.length) out.push('');
 
+  // `type` records → interfaces. Aliases are NOT emitted: they're inlined at use sites (CML
+  // semantics), so every reference already carries the resolved type.
   const blocks = [
+    ...(model.records ?? []).map(r => iface(r.name, r.fields)),
     ...model.values.map(valueIface),
     ...model.entities.map(entityIface),
     ...model.aggregates.map(aggregateIface),

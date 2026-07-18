@@ -9,7 +9,7 @@ export const qid = (name: string): string => `"${name}"`;
 
 function sqlType(t: TypeRef): 'TEXT' | 'INTEGER' {
   switch (t.kind) {
-    case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? 'TEXT' : 'INTEGER'; // Int/Money/Date/Duration → INTEGER (ticks)
+    case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? 'TEXT' : 'INTEGER'; // Int/Money/Date/Duration/Boolean → INTEGER (Boolean as 0/1)
     case 'enum': return 'TEXT';
     case 'ref': return 'TEXT';           // foreign id
     case 'optional': return sqlType(t.of);   // transparent wrapper — column nullability is orthogonal

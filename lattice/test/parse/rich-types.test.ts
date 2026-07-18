@@ -44,7 +44,7 @@ describe('rich field types — parse & resolve', () => {
 
   it('records declared builtins on the model', () => {
     if (!r.ok) return;
-    expect(r.model.builtins).toEqual(['Metadata', 'Currency']);
+    expect(r.model.builtins).toEqual([{ name: 'Metadata' }, { name: 'Currency' }]);
   });
 
   it('resolves a bare builtin name to a carrier (not an unresolved enum)', () => {
@@ -95,6 +95,41 @@ describe('rich field types — parse & resolve', () => {
     const pick = r3.model.aggregates[0]!.fields.find(f => f.name === 'pick')!;
     expect(pick.type).toEqual({ kind: 'union', arms: [
       { kind: 'carrier', name: 'A' }, { kind: 'carrier', name: 'B' }, { kind: 'carrier', name: 'D' }] });
+  });
+});
+
+describe('builtin external ref + Boolean prim (Slice 4 Phase A)', () => {
+  it('captures a builtin external ref and round-trips it', () => {
+    const src = `context C {
+  builtin Amount = "Opus::Monetary::Core::Types::Amount"
+  builtin Metadata
+  aggregate A { aId : Id key  amt : Amount  meta : Metadata }
+}
+`;
+    const r = loadLatText(src);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    expect(r.model.builtins).toEqual([{ name: 'Amount', ref: 'Opus::Monetary::Core::Types::Amount' }, { name: 'Metadata' }]);
+    const printed = astToCode(r.model, r.invariants);
+    expect(printed).toContain('builtin Amount = "Opus::Monetary::Core::Types::Amount"');
+    expect(printed).toContain('builtin Metadata');
+    const re = loadLatText(printed);
+    expect(re.ok, JSON.stringify(!re.ok && re.diagnostics)).toBe(true);
+    if (re.ok) expect(re.model.builtins).toEqual(r.model.builtins);
+  });
+
+  it('resolves a Boolean field as a prim (dropped from the solver, like Text/Id)', () => {
+    const r = loadLatText('context C { aggregate A { aId : Id key\n active : Boolean } }');
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    const f = r.model.aggregates[0]!.fields.find(x => x.name === 'active')!;
+    expect(f.type).toEqual({ kind: 'prim', prim: 'Boolean' });
+  });
+
+  it('rejects a declaration named like the Boolean prim (reserved-prim-name)', () => {
+    const bad = loadLatText('context C { enum Boolean { a }\n aggregate A { aId : Id key } }');
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'reserved-prim-name')).toBe(true);
   });
 });
 

@@ -6,7 +6,7 @@ import type { AggregateDef, DomainModel, Field, TypeRef } from '../ast/domain.js
 function tsType(model: DomainModel, t: TypeRef): string {
   switch (t.kind) {
     case 'prim':
-      return t.prim === 'Text' || t.prim === 'Id' ? 'string' : 'number'; // Int/Money/Date/Duration → number
+      return t.prim === 'Text' || t.prim === 'Id' ? 'string' : t.prim === 'Boolean' ? 'boolean' : 'number'; // Int/Money/Date/Duration → number
     case 'enum': {
       const en = model.enums.find(e => e.name === t.enum);
       if (!en) throw new Error(`unknown enum ${t.enum}`);

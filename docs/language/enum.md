@@ -20,6 +20,25 @@ context Billing {
 `enum <PascalId> { <camelId>, <camelId>, … }` — at least one value, comma-separated. Values are
 read back with `EnumName.value` in a predicate, e.g. `period == BillingPeriod.monthly`.
 
+## Sum-type (payload) variants
+
+A variant may carry a **payload type**, making the enum a sum type / tagged union:
+
+```lat
+context Billing {
+  builtin Amount = "Opus::Monetary::Core::Types::Amount"
+  type CustomUnit = { unitId : Id  qty : Int }
+
+  enum CreditGrantAmount { monetary(Amount), customPricingUnit(CustomUnit), none }
+}
+```
+
+The payload is **carried** — dropped from solving (the solver still sees the variant names). Codegen
+*lowers* the enum to each language's idiom: TypeScript emits a **discriminated union** tagged by
+`kind`, with the payload under `value` — `{ kind: 'monetary'; value: Amount } | … | { kind: 'none' }`
+— since TS has no positional ADT variant. A plain enum (no payloads) still lowers to a string-literal
+union. A payload type that names nothing declared reports `unresolved-enum`.
+
 Enums do **not** accept a `///` doc comment: the grammar has no doc-comment slot on `EnumDecl`, so
 attaching one is a dedicated parse error rather than a generic syntax error:
 

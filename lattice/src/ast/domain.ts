@@ -1,6 +1,6 @@
 import type { Path, Predicate } from './invariant.js';
 
-export type PrimType = 'Int' | 'Text' | 'Date' | 'Duration' | 'Money' | 'Id';
+export type PrimType = 'Int' | 'Text' | 'Date' | 'Duration' | 'Money' | 'Id' | 'Boolean';
 
 /**
  * A field/param type. Kinds fall into two tiers (see derived-invariants.md, "carried vs solved") — the
@@ -70,7 +70,13 @@ export interface TransitionDef {
   emits?: string;         // declared event this transition announces on firing (design §3.6)
 }
 export interface Machine { regions: Region[]; transitions: TransitionDef[] }
-export interface EnumDef { name: string; values: string[] }
+export interface EnumDef {
+  name: string;
+  values: string[];   // variant names — unchanged; every existing consumer (predicates, solvers) reads these
+  // Sum-type payloads (Slice 4): present only for variants carrying one (`monetary(Amount)`). Carried
+  // (dropped from solving); codegen lowers a payload-bearing enum to a discriminated union.
+  payloads?: { [variant: string]: TypeRef };
+}
 /** Structural, keyless value type (design §3.5): compared by structure, not identity — fields are
  *  prim, enum, or ANOTHER VALUE (slice B2: values nest; `value-flat` now rejects only ref/list, and
  *  `value-cycle` rejects a cycle in the value→value graph, which has no finite flattening). Its
@@ -84,6 +90,17 @@ export interface ValueDef {
   invariants?: { name: string; body: Predicate; doc?: string }[];
   doc?: string;
 }
+/** Free-form carried struct/DTO (Slice 4, `type Name = { … }`). Unlike `value` it is NOT
+ *  solver-encoded and has no field restrictions — its fields may be lists/optionals/refs/generics/
+ *  other records. A field typed with a record resolves to a `carrier` TypeRef (dropped from solving);
+ *  codegen emits it as an interface. Use `value` when you want structural equality + verification;
+ *  use `type X = {}` for a plain data shape (e.g. a service/hook DTO). */
+export interface RecordDef { name: string; fields: Field[]; doc?: string }
+
+/** A type alias (Slice 4, `type Name = <TypeExpr>`). Resolved (inlined) at parse like CML, so use
+ *  sites carry the resolved `target`; the declaration is retained here only so it round-trips. */
+export interface TypeAliasDef { name: string; target: TypeRef; doc?: string }
+
 export interface EntityDef { kind: 'entity'; name: string; fields: Field[]; doc?: string }
 export interface AggregateDef { kind: 'aggregate'; name: string; fields: Field[]; entities?: EntityDef[]; machine?: Machine; doc?: string }
 export interface EventDef { name: string; fields: Field[]; doc?: string }
@@ -172,14 +189,20 @@ export function numericFieldPaths(m: DomainModel, f: Field, visiting: ReadonlySe
   return fieldPathsWhere(m, f, p => NUM.has(p), visiting);
 }
 
+/** A declared opaque `builtin` carrier type (Slice 2/4). A field typed with one resolves to a
+ *  `carrier` TypeRef — codegen represents it, the solver never encodes it. `ref` (Slice 4) is an
+ *  optional external identifier (e.g. a Ruby FQN `Opus::Monetary::Core::Types::Amount`) so a codegen
+ *  backend imports the existing type rather than emitting a definition. */
+export interface BuiltinDef { name: string; ref?: string }
+
 export interface DomainModel {
   context: string;
   doc?: string;              // free-form human description; exempt from identifier validation
   ticksPerDay?: number;      // time granularity; default 24 (tick = 1 hour)
-  builtins?: string[];       // declared opaque `builtin` carrier type names (Slice 2): a field may be
-                             // typed with one (TypeRef 'carrier'), codegen represents it, the solver
-                             // never encodes it. Omitted (not []) when none are declared, so a model
-                             // without builtins is byte-identical to before.
+  builtins?: BuiltinDef[];   // declared `builtin` carriers. Omitted (not []) when none are declared,
+                             // so a model without builtins is byte-identical to before.
+  typeAliases?: TypeAliasDef[]; // `type Name = T` aliases (Slice 4). Inlined at use sites; retained for round-trip.
+  records?: RecordDef[];     // `type Name = { … }` free-form carried structs (Slice 4).
   enums: EnumDef[];
   values: ValueDef[];
   entities: EntityDef[];
