@@ -239,3 +239,55 @@ describe('renderTsTypes — field-level docs and visibility tags', () => {
     expect(ts).toContain('  /** @public */\n  amount: number;');
   });
 });
+
+describe('renderTsTypes — module grouping banners (Slice 6)', () => {
+  it('emits // ── module: <name> ── before a module\'s interfaces', () => {
+    const ts = render(`context Billing {
+  enum TopLevel { a, b }
+
+  module BillingEngine {
+    value Amount {
+      amount : Money
+    }
+    aggregate Invoice {
+      invoiceId : Id key
+      total     : Money @unsigned
+    }
+  }
+
+  module ItemTimelines {
+    entity LineItem {
+      lineId : Id key
+    }
+  }
+}`);
+    // Banner for each module
+    expect(ts).toContain('// ── module: BillingEngine ──');
+    expect(ts).toContain('// ── module: ItemTimelines ──');
+
+    // Module's interfaces appear after their banner
+    const engineBannerIdx = ts.indexOf('// ── module: BillingEngine ──');
+    const itemBannerIdx = ts.indexOf('// ── module: ItemTimelines ──');
+    const amountIdx = ts.indexOf('export interface Amount');
+    const invoiceIdx = ts.indexOf('export interface Invoice');
+    const lineItemIdx = ts.indexOf('export interface LineItem');
+
+    expect(engineBannerIdx).toBeGreaterThanOrEqual(0);
+    expect(itemBannerIdx).toBeGreaterThanOrEqual(0);
+    expect(amountIdx).toBeGreaterThan(engineBannerIdx);
+    expect(invoiceIdx).toBeGreaterThan(engineBannerIdx);
+    expect(lineItemIdx).toBeGreaterThan(itemBannerIdx);
+
+    // Top-level enum appears BEFORE any module banner
+    const topLevelIdx = ts.indexOf("export type TopLevel = 'a' | 'b';");
+    expect(topLevelIdx).toBeGreaterThanOrEqual(0);
+    expect(topLevelIdx).toBeLessThan(engineBannerIdx);
+  });
+
+  it('model without modules emits no banner lines', () => {
+    const ts = render(`context Plain {
+  entity Thing { thingId : Id key }
+}`);
+    expect(ts).not.toContain('// ── module:');
+  });
+});

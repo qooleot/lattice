@@ -113,20 +113,20 @@ function combineRequires(requires: Predicate | undefined, guards: Predicate[]): 
   return { kind: 'and', args: deduped };
 }
 
-function machineLines(agg: string, mach: Machine, guardsByTransition: Map<string, Predicate[]>, out: string[]): void {
+function machineLines(agg: string, mach: Machine, guardsByTransition: Map<string, Predicate[]>, out: string[], indent = '    '): void {
   for (const r of mach.regions) {
-    out.push(`    lifecycle ${r.name} {`);
+    out.push(`${indent}lifecycle ${r.name} {`);
     const states = r.states.map(s => {
       const tags = [...(s.name === r.initial ? ['initial'] : []), ...(s.tags ?? [])];
       return s.name + (tags.length ? ' @' + tags.join(' @') : '');
     }).join(', ');
-    out.push(`      states { ${states} }`);
+    out.push(`${indent}  states { ${states} }`);
     for (const t of mach.transitions.filter(t => t.region === r.name)) {
       const guards = guardsByTransition.get(`${agg}.${r.name}.${t.name}`) ?? [];
       const effective = combineRequires(t.requires, guards);
-      out.push(`      transition ${t.name} { from ${t.from.join(', ')} to ${t.to}${t.when ? `; when ${t.when}` : ''}${effective ? `; requires ${predToText(effective)}` : ''}${t.emits ? `; emits ${t.emits}` : ''} }`);
+      out.push(`${indent}  transition ${t.name} { from ${t.from.join(', ')} to ${t.to}${t.when ? `; when ${t.when}` : ''}${effective ? `; requires ${predToText(effective)}` : ''}${t.emits ? `; emits ${t.emits}` : ''} }`);
     }
-    out.push('    }');
+    out.push(`${indent}}`);
   }
 }
 
@@ -135,6 +135,106 @@ function invariantLines(inv: CandidateInvariant, indent: string, on: string | un
   const c = inv.candidate;
   const where = c.kind === 'statePredicate' && c.where ? ` where ${predToText(c.where)}` : '';
   out.push(`${indent}invariant ${inv.name}${on ? ` on ${on}` : ''}${where} { ${candidateBodyText(c)} }`);
+}
+
+// Emit per-kind blocks filtered to decls matching the given module (undefined = top-level only).
+function emitBuiltins(builtins: DomainModel['builtins'], modFilter: string | undefined, indent: string, out: string[]): void {
+  const items = (builtins ?? []).filter(b => b.module === modFilter);
+  if (items.length) { for (const b of items) out.push(`${indent}builtin ${b.name}${b.ref ? ` = "${b.ref}"` : ''}`); out.push(''); }
+}
+
+function emitEnums(enums: DomainModel['enums'], modFilter: string | undefined, indent: string, out: string[]): void {
+  const items = enums.filter(e => e.module === modFilter);
+  for (const e of items) {
+    if (!e.values.length) throw new Error(`cannot print enum ${e.name}: it has no values`);
+    const variants = e.values.map(v => { const p = e.payloads?.[v]; return p ? `${v}(${typeStr({ name: '', type: p })})` : v; });
+    out.push(`${indent}enum ${e.name} { ${variants.join(', ')} }`);
+  }
+  if (items.length) out.push('');
+}
+
+function emitTypeAliases(typeAliases: DomainModel['typeAliases'], modFilter: string | undefined, indent: string, out: string[]): void {
+  const items = (typeAliases ?? []).filter(ta => ta.module === modFilter);
+  for (const ta of items) { doc(ta.doc, indent, out); out.push(`${indent}type ${ta.name} = ${typeStr({ name: '', type: ta.target })}`); }
+  if (items.length) out.push('');
+}
+
+function emitRecords(records: DomainModel['records'], modFilter: string | undefined, indent: string, out: string[]): void {
+  for (const r of (records ?? []).filter(r => r.module === modFilter)) {
+    doc(r.doc, indent, out);
+    out.push(`${indent}type ${r.name} = {`);
+    fieldLines(r.fields, indent + '  ', out);
+    out.push(`${indent}}`, '');
+  }
+}
+
+function emitValues(values: DomainModel['values'], modFilter: string | undefined, indent: string, out: string[]): void {
+  for (const v of values.filter(v => v.module === modFilter)) {
+    doc(v.doc, indent, out);
+    out.push(`${indent}value ${v.name} {`);
+    fieldLines(v.fields, indent + '  ', out);
+    for (const inv of v.invariants ?? []) {
+      doc(inv.doc, indent + '  ', out);
+      out.push(`${indent}  invariant ${inv.name} { ${predToText(inv.body)} }`);
+    }
+    out.push(`${indent}}`, '');
+  }
+}
+
+function emitEntities(entities: DomainModel['entities'], modFilter: string | undefined, indent: string, out: string[]): void {
+  for (const ent of entities.filter(e => e.module === modFilter)) {
+    doc(ent.doc, indent, out);
+    out.push(`${indent}entity ${ent.name} {`);
+    fieldLines(ent.fields, indent + '  ', out);
+    out.push(`${indent}}`, '');
+  }
+}
+
+function emitEvents(events: DomainModel['events'], modFilter: string | undefined, indent: string, out: string[]): void {
+  for (const ev of events.filter(e => e.module === modFilter)) {
+    doc(ev.doc, indent, out);
+    out.push(`${indent}event ${ev.name} {`);
+    fieldLines(ev.fields, indent + '  ', out);
+    out.push(`${indent}}`, '');
+  }
+}
+
+function emitAggregates(aggregates: DomainModel['aggregates'], modFilter: string | undefined, indent: string, explicit: CandidateInvariant[], guardsByTransition: Map<string, Predicate[]>, out: string[]): void {
+  for (const a of aggregates.filter(a => a.module === modFilter)) {
+    doc(a.doc, indent, out);
+    out.push(`${indent}aggregate ${a.name} {`);
+    fieldLines(a.fields, indent + '  ', out);
+    for (const child of a.entities ?? []) {
+      out.push('');
+      doc(child.doc, indent + '  ', out);
+      out.push(`${indent}  entity ${child.name} {`);
+      fieldLines(child.fields, indent + '    ', out);
+      out.push(`${indent}  }`);
+    }
+    if (a.machine) { out.push(''); machineLines(a.name, a.machine, guardsByTransition, out, indent + '  '); }
+    for (const inv of explicit.filter(i => i.candidate.aggregate === a.name)) {
+      out.push('');
+      invariantLines(inv, indent + '  ', undefined, out);
+    }
+    out.push(`${indent}}`, '');
+  }
+}
+
+function emitServices(services: DomainModel['services'], modFilter: string | undefined, indent: string, out: string[]): void {
+  for (const s of services.filter(s => s.module === modFilter)) {
+    doc(s.doc, indent, out);
+    out.push(`${indent}service ${s.name} {`);
+    for (const mm of s.methods) {
+      doc(mm.doc, indent + '  ', out);
+      const params = mm.params.map(p => `${p.name}: ${typeStr({ name: p.name, type: p.type })}`).join(', ');
+      const ret = mm.returns ? `: ${typeStr({ name: '', type: mm.returns })}` : '';
+      const kind = 'readOnly' in mm.kind ? 'read-only'
+        : 'creates' in mm.kind ? `creates ${mm.kind.creates}`
+        : `performs ${mm.kind.performs.aggregate}.${mm.kind.performs.transition}`;
+      out.push(`${indent}  ${mm.name}(${params})${ret} ${kind}${mm.requires ? ` requires ${predToText(mm.requires)}` : ''}`);
+    }
+    out.push(`${indent}}`, '');
+  }
 }
 
 export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string {
@@ -153,85 +253,59 @@ export function astToCode(m: DomainModel, adopted: CandidateInvariant[]): string
   doc(m.doc, '', out);
   out.push(`context ${m.context} {`, '');
   if (m.ticksPerDay !== undefined) out.push(`  ticksPerDay = ${m.ticksPerDay}`, '');
-  // `builtin` carriers (Slice 2): declared before the types that reference them, so a bare carrier
-  // name re-parses to TypeRef 'carrier' instead of the unresolved-enum fallback.
-  if (m.builtins?.length) { for (const b of m.builtins) out.push(`  builtin ${b.name}${b.ref ? ` = "${b.ref}"` : ''}`); out.push(''); }
-  for (const e of m.enums) {
-    // grammar requires >= 1 value — 'enum X {  }' would not parse back
-    if (!e.values.length) throw new Error(`cannot print enum ${e.name}: it has no values`);
-    // sum-type variants (Slice 4) re-emit their payload: `monetary(Amount)`.
-    const variants = e.values.map(v => { const p = e.payloads?.[v]; return p ? `${v}(${typeStr({ name: '', type: p })})` : v; });
-    out.push(`  enum ${e.name} { ${variants.join(', ')} }`);
+
+  // Collect module names in first-appearance order across all decl kinds.
+  const allDeclsWithModule: Array<{ module?: string }> = [
+    ...(m.builtins ?? []),
+    ...m.enums,
+    ...(m.typeAliases ?? []),
+    ...(m.records ?? []),
+    ...m.values,
+    ...m.entities,
+    ...m.events,
+    ...m.aggregates,
+    ...m.services,
+  ];
+  const moduleOrder: string[] = [];
+  for (const d of allDeclsWithModule) {
+    if (d.module && !moduleOrder.includes(d.module)) moduleOrder.push(d.module);
   }
-  if (m.enums.length) out.push('');
-  // `type` aliases (Slice 4): use sites are inlined, but the declaration is retained & re-emitted.
-  for (const ta of m.typeAliases ?? []) { doc(ta.doc, '  ', out); out.push(`  type ${ta.name} = ${typeStr({ name: '', type: ta.target })}`); }
-  if (m.typeAliases?.length) out.push('');
-  // `type` records (Slice 4): free-form carried structs, declared before the types that reference them.
-  for (const r of m.records ?? []) {
-    doc(r.doc, '  ', out);
-    out.push(`  type ${r.name} = {`);
-    fieldLines(r.fields, '    ', out);
-    out.push('  }', '');
-  }
-  for (const v of m.values) {
-    doc(v.doc, '  ', out);
-    out.push(`  value ${v.name} {`);
-    fieldLines(v.fields, '    ', out);
-    for (const inv of v.invariants ?? []) {
-      doc(inv.doc, '    ', out);
-      out.push(`    invariant ${inv.name} { ${predToText(inv.body)} }`);
-    }
-    out.push('  }', '');
-  }
-  for (const ent of m.entities) {
-    doc(ent.doc, '  ', out);
-    out.push(`  entity ${ent.name} {`);
-    fieldLines(ent.fields, '    ', out);
-    out.push('  }', '');
-  }
-  for (const ev of m.events) {
-    doc(ev.doc, '  ', out);
-    out.push(`  event ${ev.name} {`);
-    fieldLines(ev.fields, '    ', out);
-    out.push('  }', '');
-  }
-  for (const a of m.aggregates) {
-    doc(a.doc, '  ', out);
-    out.push(`  aggregate ${a.name} {`);
-    fieldLines(a.fields, '    ', out);
-    for (const child of a.entities ?? []) {
-      out.push('');
-      doc(child.doc, '    ', out);
-      out.push(`    entity ${child.name} {`);
-      fieldLines(child.fields, '      ', out);
-      out.push('    }');
-    }
-    if (a.machine) { out.push(''); machineLines(a.name, a.machine, guardsByTransition, out); }
-    for (const inv of explicit.filter(i => i.candidate.aggregate === a.name)) {
-      out.push('');
-      invariantLines(inv, '    ', undefined, out);
-    }
-    out.push('  }', '');
-  }
-  for (const s of m.services) {
-    doc(s.doc, '  ', out);
-    out.push(`  service ${s.name} {`);
-    for (const mm of s.methods) {
-      doc(mm.doc, '    ', out);
-      const params = mm.params.map(p => `${p.name}: ${typeStr({ name: p.name, type: p.type })}`).join(', ');
-      const ret = mm.returns ? `: ${typeStr({ name: '', type: mm.returns })}` : '';
-      const kind = 'readOnly' in mm.kind ? 'read-only'
-        : 'creates' in mm.kind ? `creates ${mm.kind.creates}`
-        : `performs ${mm.kind.performs.aggregate}.${mm.kind.performs.transition}`;
-      out.push(`    ${mm.name}(${params})${ret} ${kind}${mm.requires ? ` requires ${predToText(mm.requires)}` : ''}`);
-    }
-    out.push('  }', '');
-  }
+
+  // Emit top-level (module === undefined) decls first, by kind — exactly as before.
+  // `builtin` carriers: declared before types that reference them.
+  emitBuiltins(m.builtins, undefined, '  ', out);
+  emitEnums(m.enums, undefined, '  ', out);
+  emitTypeAliases(m.typeAliases, undefined, '  ', out);
+  emitRecords(m.records, undefined, '  ', out);
+  emitValues(m.values, undefined, '  ', out);
+  emitEntities(m.entities, undefined, '  ', out);
+  emitEvents(m.events, undefined, '  ', out);
+  emitAggregates(m.aggregates, undefined, '  ', explicit, guardsByTransition, out);
+  emitServices(m.services, undefined, '  ', out);
+
+  // Context-level invariants that are not inside any aggregate.
   for (const inv of explicit.filter(i => !m.aggregates.some(a => a.name === i.candidate.aggregate))) {
     invariantLines(inv, '  ', inv.candidate.aggregate, out);
     out.push('');
   }
+
+  // Emit module blocks in first-appearance order.
+  for (const mod of moduleOrder) {
+    out.push(`  module ${mod} {`, '');
+    emitBuiltins(m.builtins, mod, '    ', out);
+    emitEnums(m.enums, mod, '    ', out);
+    emitTypeAliases(m.typeAliases, mod, '    ', out);
+    emitRecords(m.records, mod, '    ', out);
+    emitValues(m.values, mod, '    ', out);
+    emitEntities(m.entities, mod, '    ', out);
+    emitEvents(m.events, mod, '    ', out);
+    emitAggregates(m.aggregates, mod, '    ', explicit, guardsByTransition, out);
+    emitServices(m.services, mod, '    ', out);
+    // remove trailing empty line before closing brace
+    while (out[out.length - 1] === '') out.pop();
+    out.push('  }', '');
+  }
+
   while (out[out.length - 1] === '') out.pop();
   out.push('}');
   return out.join('\n') + '\n';

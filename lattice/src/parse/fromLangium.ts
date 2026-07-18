@@ -1,10 +1,11 @@
 import { parseLat, type ParseDiagnostic } from './parse.js';
 import type * as G from './generated/ast.js';
+import { isModuleDecl } from './generated/ast.js';
 import type { DomainModel, EnumDef, ValueDef, EntityDef, AggregateDef, EventDef, Field, TypeRef, Machine, Region, StateDef, TransitionDef, ServiceDef, MethodDef, ParamDef } from '../ast/domain.js';
 import { ownedCollectionChild } from '../ast/domain.js';
 import type { Candidate, CandidateInvariant, Predicate, Term, Path } from '../ast/invariant.js';
-import { validateModel } from '../ast/validate.js';
-import { PRIM_NAMES } from '../ast/reserved.js';
+import { validateModel, IDENT_RE } from '../ast/validate.js';
+import { PRIM_NAMES, RESERVED_WORDS } from '../ast/reserved.js';
 import { validateCandidate } from '../ast/grammar.js';
 import { isImplied } from '../engine/implied.js';
 import type { ContextMapModel, Relationship, Role } from '../ast/contextmap.js';
@@ -241,7 +242,7 @@ function mapBody(inv: G.InvariantDecl, aggregate: string, aggDef: AggregateDef |
 
 const CAMEL = /^[a-z][A-Za-z0-9]*$/, PASCAL = /^[A-Z][A-Za-z0-9]*$/;
 /** `loc` maps a construct key (see the `locs` population in loadLatText) to its CST position. */
-function namingWarnings(m: DomainModel, invNames: string[],
+function namingWarnings(m: DomainModel, invNames: string[], moduleNames: string[],
     loc: (key: string) => { line: number; col: number }): ParseDiagnostic[] {
   const out: ParseDiagnostic[] = [];
   const warn = (kind: string, n: string, re: RegExp, style: string, key: string) => {
@@ -272,6 +273,7 @@ function namingWarnings(m: DomainModel, invNames: string[],
     }
   }
   invNames.forEach(n => warn('invariant', n, CAMEL, 'camelCase', `invariant:${n}`));
+  moduleNames.forEach(n => warn('module', n, PASCAL, 'PascalCase', `module:${n}`));
   return out;
 }
 
@@ -290,16 +292,50 @@ export function loadLatText(text: string): LoadResult {
   const noteFields = (owner: string, fs: G.FieldDecl[]) => { for (const f of fs) locs.set(`field:${owner}.${f.name}`, at(f)); };
   locs.set('context', at(cst));
 
-  const enumDecls = cst.items.filter((i): i is G.EnumDecl => i.$type === 'EnumDecl');
-  for (const e of enumDecls) locs.set(`enum:${e.name}`, at(e));
-  const enumSet = new Set(enumDecls.map(e => e.name));
-  const enumMap = new Map(enumDecls.map(e => [e.name, e.variants.map(v => v.name)]));
+  // Slice 6: flatten cst.items so decls inside a `module` block are treated identically to
+  // top-level decls — the model stays flat, each decl just carries an optional `module` label.
+  // TicksDecl/InvariantDecl stay top-level only (grammar excludes them from ModuleItem).
+  type FlatEntry = { node: G.ModuleItem | G.TicksDecl | G.InvariantDecl; module?: string };
+  const flatItems: FlatEntry[] = [];
+  for (const item of cst.items) {
+    if (isModuleDecl(item)) {
+      for (const mi of item.items) flatItems.push({ node: mi, module: item.name });
+    } else {
+      flatItems.push({ node: item as G.TicksDecl | G.InvariantDecl | G.ModuleItem });
+    }
+  }
+
+  // Collect module names (for validation + naming warnings + locs).
+  const moduleNameList: string[] = [];
+  const moduleSeen = new Map<string, G.ModuleDecl>();
+  for (const item of cst.items) {
+    if (isModuleDecl(item)) {
+      locs.set(`module:${item.name}`, at(item));
+      if (moduleSeen.has(item.name)) {
+        diags.push(diag('duplicate-module', `module name '${item.name}' declared more than once`, item));
+      } else {
+        moduleSeen.set(item.name, item);
+        moduleNameList.push(item.name);
+      }
+      // Validate module name: reserved-word / invalid identifier
+      if (!IDENT_RE.test(item.name))
+        diags.push(diag('invalid-name', `module name '${item.name}' is not a valid identifier`, item));
+      else if (RESERVED_WORDS.has(item.name))
+        diags.push(diag('reserved-word', `module name '${item.name}' is a .lat keyword and cannot be used as a module name`, item));
+    }
+  }
+
+  const enumDecls: Array<{ node: G.EnumDecl; module?: string }> =
+    flatItems.filter((e): e is { node: G.EnumDecl; module?: string } => e.node.$type === 'EnumDecl');
+  for (const { node: e } of enumDecls) locs.set(`enum:${e.name}`, at(e));
+  const enumSet = new Set(enumDecls.map(({ node: e }) => e.name));
+  const enumMap = new Map(enumDecls.map(({ node: e }) => [e.name, e.variants.map(v => v.name)]));
 
   // owners in scope for bare-name ref resolution (mapType): top-level entities, aggregates, and
   // every nested entity name declared inside an aggregate — collected in a pre-pass so forward
   // references (a field naming an owner declared later in the file) still resolve.
   const ownerNames = new Set<string>();
-  for (const item of cst.items) {
+  for (const { node: item } of flatItems) {
     if (item.$type === 'EntityDecl') ownerNames.add((item as G.EntityDecl).name);
     if (item.$type === 'AggregateDecl') {
       const a = item as G.AggregateDecl;
@@ -309,17 +345,21 @@ export function loadLatText(text: string): LoadResult {
   }
   // value type names in scope for bare-name resolution (mapType: prim → value → owner-ref →
   // carrier → enum), same forward-reference rationale as ownerNames above.
-  const valueDecls = cst.items.filter((i): i is G.ValueDecl => i.$type === 'ValueDecl');
-  const valueNames = new Set(valueDecls.map(v => v.name));
+  const valueDecls: Array<{ node: G.ValueDecl; module?: string }> =
+    flatItems.filter((e): e is { node: G.ValueDecl; module?: string } => e.node.$type === 'ValueDecl');
+  const valueNames = new Set(valueDecls.map(({ node: v }) => v.name));
   // declared `builtin` carrier names — a bare name matching one maps to TypeRef kind 'carrier'.
-  const builtinDecls = cst.items.filter((i): i is G.BuiltinDecl => i.$type === 'BuiltinDecl');
+  const builtinDecls: Array<{ node: G.BuiltinDecl; module?: string }> =
+    flatItems.filter((e): e is { node: G.BuiltinDecl; module?: string } => e.node.$type === 'BuiltinDecl');
   // `type` declarations (Slice 4): `target` set ⇒ alias; unset ⇒ record (free-form carried struct).
-  const typeDecls = cst.items.filter((i): i is G.TypeDecl => i.$type === 'TypeDecl');
-  const recordDecls = typeDecls.filter(td => td.target === undefined);
-  const aliasDecls = new Map(typeDecls.filter(td => td.target !== undefined).map(td => [td.name, td]));
+  const typeDecls: Array<{ node: G.TypeDecl; module?: string }> =
+    flatItems.filter((e): e is { node: G.TypeDecl; module?: string } => e.node.$type === 'TypeDecl');
+  const recordDecls = typeDecls.filter(({ node: td }) => td.target === undefined);
+  const aliasDecls = new Map(typeDecls.filter(({ node: td }) => td.target !== undefined)
+    .map(({ node: td, module: mod }) => [td.name, { td, mod }]));
   // A record name resolves to a `carrier` (carried, codegen-only) exactly like a builtin — the two
   // differ only in what's declared (a record has fields), not in how a reference to them is typed.
-  const carrierNames = new Set([...builtinDecls.map(b => b.name), ...recordDecls.map(td => td.name)]);
+  const carrierNames = new Set([...builtinDecls.map(({ node: b }) => b.name), ...recordDecls.map(({ node: td }) => td.name)]);
 
   // Alias table (prim → alias → value → owner → carrier → enum). Resolved eagerly & cycle-guarded so
   // use sites carry the inlined target (CML semantics). resolveAlias recurses through mapType, so an
@@ -328,8 +368,9 @@ export function loadLatText(text: string): LoadResult {
   const resolvingAliases = new Set<string>();
   const resolveAlias = (name: string): TypeRef | null => {
     if (aliasTable.has(name)) return aliasTable.get(name)!;
-    const decl = aliasDecls.get(name);
-    if (!decl) return null;
+    const entry = aliasDecls.get(name);
+    if (!entry) return null;
+    const { td: decl } = entry;
     if (resolvingAliases.has(name)) {
       diags.push(diag('alias-cycle', `type alias ${name} is part of a cycle — an alias cannot resolve to itself`, decl));
       return { kind: 'carrier', name };   // break the cycle with a harmless placeholder
@@ -344,30 +385,40 @@ export function loadLatText(text: string): LoadResult {
 
   const model: DomainModel = {
     context: cst.name,
-    enums: enumDecls.map(e => ({ name: e.name, values: e.variants.map(v => v.name) }) as EnumDef),
+    enums: enumDecls.map(({ node: e, module: mod }) => {
+      const def: EnumDef = { name: e.name, values: e.variants.map(v => v.name) };
+      if (mod) def.module = mod;
+      return def;
+    }),
     values: [], entities: [], aggregates: [], events: [], services: [],
   };
   // STRING terminal already strips quotes (Langium ValueConverter — see leadsTo fairness note).
-  if (builtinDecls.length) model.builtins = builtinDecls.map(b => (b.ref ? { name: b.name, ref: b.ref } : { name: b.name }));
-  if (aliasDecls.size) model.typeAliases = [...aliasDecls.values()].map(td => {
-    const a: { name: string; target: TypeRef; doc?: string } = { name: td.name, target: aliasTable.get(td.name)! };
+  if (builtinDecls.length) model.builtins = builtinDecls.map(({ node: b, module: mod }) => {
+    const def: { name: string; ref?: string; module?: string } = b.ref ? { name: b.name, ref: b.ref } : { name: b.name };
+    if (mod) def.module = mod;
+    return def;
+  });
+  if (aliasDecls.size) model.typeAliases = [...aliasDecls.values()].map(({ td, mod }) => {
+    const a: { name: string; target: TypeRef; doc?: string; module?: string } = { name: td.name, target: aliasTable.get(td.name)! };
     const d = joinDocs([...td.docs]); if (d) a.doc = d;
+    if (mod) a.module = mod;
     locs.set(`owner:${td.name}`, at(td));
     return a;
   });
-  if (recordDecls.length) model.records = recordDecls.map(td => {
-    const r: { name: string; fields: Field[]; doc?: string } = { name: td.name,
+  if (recordDecls.length) model.records = recordDecls.map(({ node: td, module: mod }) => {
+    const r: { name: string; fields: Field[]; doc?: string; module?: string } = { name: td.name,
       fields: mapFields([...td.fields], enumSet, diags, ownerNames, valueNames, carrierNames, resolveAlias) };
     const d = joinDocs([...td.docs]); if (d) r.doc = d;
+    if (mod) r.module = mod;
     locs.set(`owner:${td.name}`, at(td)); noteFields(td.name, [...td.fields]);
     return r;
   });
   const topDoc = joinDocs([...file.docs]);
   if (topDoc) model.doc = topDoc;
-  for (const b of builtinDecls) locs.set(`builtin:${b.name}`, at(b));
+  for (const { node: b } of builtinDecls) locs.set(`builtin:${b.name}`, at(b));
   // Sum-type enum payloads (Slice 4): resolved now that the carrier set + alias table are ready.
   // model.enums is in enumDecls order, so the index aligns.
-  enumDecls.forEach((ed, i) => {
+  enumDecls.forEach(({ node: ed }, i) => {
     const withPayload = ed.variants.filter(v => v.payload);
     if (!withPayload.length) return;
     const payloads: Record<string, TypeRef> = {};
@@ -375,7 +426,7 @@ export function loadLatText(text: string): LoadResult {
     (model.enums[i] as EnumDef).payloads = payloads;
   });
 
-  for (const item of cst.items) {
+  for (const { node: item, module: moduleName } of flatItems) {
     switch (item.$type) {
       case 'TicksDecl': model.ticksPerDay = parseInt((item as G.TicksDecl).value, 10); break;
       case 'ValueDecl': {
@@ -394,6 +445,7 @@ export function loadLatText(text: string): LoadResult {
           return vi;
         });
         const d = joinDocs([...v.docs]); if (d) def.doc = d;
+        if (moduleName) def.module = moduleName;
         locs.set(`owner:${v.name}`, at(v)); noteFields(v.name, [...v.fields]);
         model.values.push(def); break;
       }
@@ -401,6 +453,7 @@ export function loadLatText(text: string): LoadResult {
         const e = item as G.EntityDecl;
         const def: EntityDef = { kind: 'entity', name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames, carrierNames, resolveAlias) };
         const d = joinDocs([...e.docs]); if (d) def.doc = d;
+        if (moduleName) def.module = moduleName;
         locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
         model.entities.push(def); break;
       }
@@ -408,6 +461,7 @@ export function loadLatText(text: string): LoadResult {
         const e = item as G.EventDecl;
         const def: EventDef = { name: e.name, fields: mapFields([...e.fields], enumSet, diags, ownerNames, valueNames, carrierNames, resolveAlias) };
         const d = joinDocs([...e.docs]); if (d) def.doc = d;
+        if (moduleName) def.module = moduleName;
         locs.set(`owner:${e.name}`, at(e)); noteFields(e.name, [...e.fields]);
         model.events.push(def); break;
       }
@@ -422,6 +476,7 @@ export function loadLatText(text: string): LoadResult {
         });
         if (a.lifecycles.length) def.machine = mapLifecycles([...a.lifecycles], a.name, diags, enumMap);
         const d = joinDocs([...a.docs]); if (d) def.doc = d;
+        if (moduleName) def.module = moduleName;
         locs.set(`owner:${a.name}`, at(a)); noteFields(a.name, [...a.fields]);
         for (const r of a.lifecycles) {
           locs.set(`region:${a.name}.${r.name}`, at(r));
@@ -434,6 +489,7 @@ export function loadLatText(text: string): LoadResult {
         const s = item as G.ServiceDecl;
         const def: ServiceDef = { name: s.name, methods: mapMethods([...s.methods], enumSet, diags, ownerNames, valueNames, carrierNames, enumMap, resolveAlias) };
         const d = joinDocs([...s.docs]); if (d) def.doc = d;
+        if (moduleName) def.module = moduleName;
         locs.set(`owner:${s.name}`, at(s));
         for (const mm of s.methods) locs.set(`method:${s.name}.${mm.name}`, at(mm));
         model.services.push(def); break;
@@ -442,8 +498,9 @@ export function loadLatText(text: string): LoadResult {
   }
 
   // invariants: inside aggregates (implicit owner) and at context level (require `on`)
+  // These are always top-level (grammar: InvariantDecl is ContextItem but not ModuleItem)
   const rawInvs: { decl: G.InvariantDecl; owner: string }[] = [];
-  for (const item of cst.items) {
+  for (const { node: item } of flatItems) {
     if (item.$type === 'AggregateDecl')
       for (const inv of (item as G.AggregateDecl).invariants) {
         if (inv.target && inv.target !== (item as G.AggregateDecl).name)
@@ -487,7 +544,7 @@ export function loadLatText(text: string): LoadResult {
   }
   if (diags.length) return { ok: false, diagnostics: diags };
 
-  warnings.push(...namingWarnings(model, invariants.map(i => i.name),
+  warnings.push(...namingWarnings(model, invariants.map(i => i.name), moduleNameList,
     k => locs.get(k) ?? { line: 1, col: 1 }));
   return { ok: true, model, invariants, warnings };
 }

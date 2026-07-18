@@ -23,7 +23,7 @@ context Billing {
 ```
 
 `context <PascalId> { <item>* }` where an item is an `enum`, `entity`, `event`, `aggregate`,
-context-level `invariant`, or `ticksPerDay`. The file holding this context lives at
+context-level `invariant`, `ticksPerDay`, or a [`module`](module.md) grouping block. The file holding this context lives at
 `specs/<path>/spec.lat`, one context per file — the workspace's [context map](context-map.md)
 declares which path backs which context name (`contains Billing from "billing"` →
 `billing/spec.lat`).
@@ -63,6 +63,7 @@ context Scheduling {
 ## See also
 
 - [Context map](context-map.md)
+- [Module](module.md)
 - [Enum](enum.md)
 - [Entity](entity.md)
 - [Aggregate](aggregate.md)

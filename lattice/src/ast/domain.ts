@@ -77,6 +77,7 @@ export interface EnumDef {
   // Sum-type payloads (Slice 4): present only for variants carrying one (`monetary(Amount)`). Carried
   // (dropped from solving); codegen lowers a payload-bearing enum to a discriminated union.
   payloads?: { [variant: string]: TypeRef };
+  module?: string;    // grouping label (Slice 6): set only when declared inside a `module` block
 }
 /** Structural, keyless value type (design §3.5): compared by structure, not identity — fields are
  *  prim, enum, or ANOTHER VALUE (slice B2: values nest; `value-flat` now rejects only ref/list, and
@@ -90,21 +91,22 @@ export interface ValueDef {
   kind: 'value'; name: string; fields: Field[];
   invariants?: { name: string; body: Predicate; doc?: string }[];
   doc?: string;
+  module?: string;    // grouping label (Slice 6)
 }
 /** Free-form carried struct/DTO (Slice 4, `type Name = { … }`). Unlike `value` it is NOT
  *  solver-encoded and has no field restrictions — its fields may be lists/optionals/refs/generics/
  *  other records. A field typed with a record resolves to a `carrier` TypeRef (dropped from solving);
  *  codegen emits it as an interface. Use `value` when you want structural equality + verification;
  *  use `type X = {}` for a plain data shape (e.g. a service/hook DTO). */
-export interface RecordDef { name: string; fields: Field[]; doc?: string }
+export interface RecordDef { name: string; fields: Field[]; doc?: string; module?: string }
 
 /** A type alias (Slice 4, `type Name = <TypeExpr>`). Resolved (inlined) at parse like CML, so use
  *  sites carry the resolved `target`; the declaration is retained here only so it round-trips. */
-export interface TypeAliasDef { name: string; target: TypeRef; doc?: string }
+export interface TypeAliasDef { name: string; target: TypeRef; doc?: string; module?: string }
 
-export interface EntityDef { kind: 'entity'; name: string; fields: Field[]; doc?: string }
-export interface AggregateDef { kind: 'aggregate'; name: string; fields: Field[]; entities?: EntityDef[]; machine?: Machine; doc?: string }
-export interface EventDef { name: string; fields: Field[]; doc?: string }
+export interface EntityDef { kind: 'entity'; name: string; fields: Field[]; doc?: string; module?: string }
+export interface AggregateDef { kind: 'aggregate'; name: string; fields: Field[]; entities?: EntityDef[]; machine?: Machine; doc?: string; module?: string }
+export interface EventDef { name: string; fields: Field[]; doc?: string; module?: string }
 
 /** Service methods (design §3.6): carried structure only — never solver-encoded. A method's
  *  `kind` names exactly one of: a read-only query, a `performs`-reference to a declared transition
@@ -117,7 +119,7 @@ export interface MethodDef {
   kind: { readOnly: true } | { performs: { aggregate: string; transition: string } } | { creates: string };
   requires?: Predicate;
 }
-export interface ServiceDef { name: string; methods: MethodDef[]; doc?: string }
+export interface ServiceDef { name: string; methods: MethodDef[]; doc?: string; module?: string }
 
 /** The nested child an owned collection ranges over, or null (design §3.2). */
 export function ownedCollectionChild(a: AggregateDef, f: Field): EntityDef | null {
@@ -194,7 +196,7 @@ export function numericFieldPaths(m: DomainModel, f: Field, visiting: ReadonlySe
  *  `carrier` TypeRef — codegen represents it, the solver never encodes it. `ref` (Slice 4) is an
  *  optional external identifier (e.g. a Ruby FQN `Opus::Monetary::Core::Types::Amount`) so a codegen
  *  backend imports the existing type rather than emitting a definition. */
-export interface BuiltinDef { name: string; ref?: string }
+export interface BuiltinDef { name: string; ref?: string; module?: string }
 
 export interface DomainModel {
   context: string;

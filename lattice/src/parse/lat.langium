@@ -33,7 +33,13 @@ DownstreamRoleName returns string:
     'anticorruption' | 'conformist';
 
 ContextItem:
-    EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl | ValueDecl | ServiceDecl | BuiltinDecl | TypeDecl;
+    ModuleItem | TicksDecl | InvariantDecl | ModuleDecl;
+
+ModuleItem:
+    EnumDecl | EntityDecl | AggregateDecl | EventDecl | ValueDecl | ServiceDecl | BuiltinDecl | TypeDecl;
+
+ModuleDecl:
+    docs+=DOC* 'module' name=ID '{' items+=ModuleItem* '}';
 
 // `type Name = { … }` is a free-form carried struct (record); `type Name = <TypeExpr>` is an alias
 // (resolved/inlined at parse, like CML). `{` unambiguously starts the record form (no LatType begins

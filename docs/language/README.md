@@ -11,7 +11,7 @@ between them.
 |---|---|
 | Overview | `README.md` (this page: index + tour), [`projections.md`](projections.md) (generated files: `spec.prose.md`, `spec.diagrams.md`, `diagrams/*.mmd`, `context-map.generated.md`) |
 | Strategic | [`context-map.md`](context-map.md) (`contextMap`, `contains`/`from`), [`upstream-downstream.md`](upstream-downstream.md) (incl. `exposes`), [`open-host.md`](open-host.md), [`published-language.md`](published-language.md), [`anticorruption.md`](anticorruption.md), [`conformist.md`](conformist.md), [`partnership.md`](partnership.md), [`shared-kernel.md`](shared-kernel.md) |
-| Structure | [`context.md`](context.md), [`enum.md`](enum.md), [`entity.md`](entity.md), [`value.md`](value.md), [`aggregate.md`](aggregate.md), [`field-types.md`](field-types.md), [`event.md`](event.md) |
+| Structure | [`context.md`](context.md), [`module.md`](module.md), [`enum.md`](enum.md), [`entity.md`](entity.md), [`value.md`](value.md), [`aggregate.md`](aggregate.md), [`field-types.md`](field-types.md), [`event.md`](event.md) |
 | Behavior | [`lifecycle.md`](lifecycle.md), [`transition.md`](transition.md), [`service.md`](service.md) (`performs`/`creates`/`read-only` methods — carried, never solver-encoded) |
 | Invariants | [`invariant.md`](invariant.md), [`invariant-forms.md`](invariant-forms.md), [`derived-invariants.md`](derived-invariants.md) |
 | Meta | [`doc-comments.md`](doc-comments.md), [`naming-conventions.md`](naming-conventions.md), [`tags.md`](tags.md), [`editing.md`](editing.md) |
