@@ -86,7 +86,7 @@ AggregateDecl:
     docs+=DOC* 'aggregate' name=ID '{' (fields+=FieldDecl | entities+=EntityDecl)* lifecycles+=LifecycleDecl* invariants+=InvariantDecl* '}';
 
 FieldDecl:
-    name=ID ':' type=LatType (optional?='?')? (key?='key')? (const?='const')? tags+=Tag*;
+    docs+=DOC* name=ID ':' type=LatType (optional?='?')? (key?='key')? (const?='const')? tags+=Tag*;
 
 // Rich CML type surface (see ast/domain.ts TypeRef, "carried vs solved"). Layered by precedence:
 // union `|` binds loosest, then the application forms (List/Optional/Map/generic/ref/named). Union

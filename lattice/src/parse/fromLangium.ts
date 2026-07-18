@@ -85,6 +85,7 @@ function mapFields(fs: G.FieldDecl[], enums: Set<string>, diags: ParseDiagnostic
     if (f.key) field.key = true;
     if (f.const) field.const = true;
     if (f.tags.length) field.tags = f.tags.map(t => t.name);
+    const d = joinDocs([...f.docs]); if (d) field.doc = d;
     return field;
   });
 }

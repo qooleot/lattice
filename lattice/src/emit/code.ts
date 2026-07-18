@@ -80,8 +80,10 @@ const pad = (n: string, w: number) => n + ' '.repeat(Math.max(1, w - n.length));
 
 function fieldLines(fields: Field[], indent: string, out: string[]): void {
   const w = Math.max(...fields.map(f => f.name.length)) + 1;
-  for (const f of fields)
+  for (const f of fields) {
+    doc(f.doc, indent, out);
     out.push(`${indent}${pad(f.name, w)}: ${typeStr(f)}${f.optional ? '?' : ''}${f.key ? ' key' : ''}${f.const ? ' const' : ''}${f.tags?.length ? ' @' + f.tags.join(' @') : ''}`);
+  }
 }
 
 // Adopted `guard` candidates (§8.5-8.7 CTI-strengthening write-back) conjoin into their transition's

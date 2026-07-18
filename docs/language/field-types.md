@@ -28,6 +28,27 @@ context Billing {
 }
 ```
 
+A field may optionally carry a leading `///` doc comment that attaches prose to that specific field
+(see [doc-comments](doc-comments.md)). The full syntax is:
+
+```lat
+context Billing {
+  aggregate Subscription {
+    subId : Id key
+    /// The external customer identifier visible to API consumers.
+    customerId : Id @public
+    /// Internal seat count — hook-only exposure.
+    seats      : Int @hookOnly
+    label      : Text
+  }
+}
+```
+
+`@public` and `@hookOnly` are the recognized **visibility tags** (see [tags](tags.md)): a field is
+**internal by default**; `@public` opts it in to API exposure; `@hookOnly` narrows that to
+hook-only access. The TypeScript codegen emits a JSDoc comment (`/** … @public */`) above any field
+that carries a doc, a visibility tag, or both.
+
 A field is `<camelId> : <type>[?] [key] [const] [@<tag>]*`. `<type>` is one of:
 
 - **Primitives:** `Int`, `Text`, `Date`, `Duration`, `Money`, `Id`, `Boolean`. `Boolean` is carried:

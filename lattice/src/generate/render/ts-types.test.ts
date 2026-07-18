@@ -166,3 +166,76 @@ describe('renderTsTypes — unions, nested children, exhaustiveness, determinism
     expect(renderTsTypes(clone)).toBe(a);
   });
 });
+
+describe('renderTsTypes — field-level docs and visibility tags', () => {
+  it('emits /** <doc> @public */ above a documented @public field', () => {
+    const ts = render(`context C {
+  aggregate Invoice {
+    invoiceId : Id key
+    /// The total amount due on this invoice.
+    totalDue  : Money @public
+  }
+}`);
+    expect(ts).toContain('  /** The total amount due on this invoice. @public */');
+    expect(ts).toContain('  totalDue: number;');
+    // JSDoc line immediately precedes the field line
+    expect(ts).toContain('  /** The total amount due on this invoice. @public */\n  totalDue: number;');
+  });
+
+  it('emits /** <doc> @public (hook-only) */ for a @hookOnly field', () => {
+    const ts = render(`context C {
+  aggregate Invoice {
+    invoiceId : Id key
+    /// Fee visible to hooks only.
+    hookFee   : Money @hookOnly
+  }
+}`);
+    expect(ts).toContain('  /** Fee visible to hooks only. @public (hook-only) */');
+    expect(ts).toContain('  /** Fee visible to hooks only. @public (hook-only) */\n  hookFee: number;');
+  });
+
+  it('emits /** <doc> @public (hook-only) */ when both @public and @hookOnly are present', () => {
+    const ts = render(`context C {
+  aggregate Invoice {
+    invoiceId : Id key
+    /// Both flags set.
+    both : Money @public @hookOnly
+  }
+}`);
+    expect(ts).toContain('  /** Both flags set. @public (hook-only) */');
+  });
+
+  it('emits just /** <doc> */ for an internal field with a doc but no visibility tag', () => {
+    const ts = render(`context C {
+  aggregate Invoice {
+    invoiceId : Id key
+    /// Internal notes field.
+    notes : Text
+  }
+}`);
+    expect(ts).toContain('  /** Internal notes field. */');
+    expect(ts).toContain('  /** Internal notes field. */\n  notes: string;');
+  });
+
+  it('emits no JSDoc for an undocumented field without visibility tags', () => {
+    const ts = render(`context C {
+  aggregate Invoice {
+    invoiceId : Id key
+    amount    : Money
+  }
+}`);
+    expect(ts).not.toContain('/**');
+    expect(ts).toContain('  amount: number;');
+  });
+
+  it('emits /** @public */ (no doc) for a @public field with no doc comment', () => {
+    const ts = render(`context C {
+  aggregate Invoice {
+    invoiceId : Id key
+    amount    : Money @public
+  }
+}`);
+    expect(ts).toContain('  /** @public */');
+    expect(ts).toContain('  /** @public */\n  amount: number;');
+  });
+});

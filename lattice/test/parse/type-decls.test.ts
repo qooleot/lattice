@@ -187,3 +187,70 @@ describe('sum-type (payload) enums', () => {
     if (!bad.ok) expect(bad.diagnostics.some(d => d.code === 'unresolved-enum' && d.message.includes('Nope'))).toBe(true);
   });
 });
+
+describe('field-level doc comments', () => {
+  const SPEC = `context C {
+  aggregate Invoice {
+    invoiceId : Id key
+    /// The total amount due on this invoice.
+    totalDue  : Money @public
+    /// Hook-only visibility field.
+    hookFee   : Money @hookOnly
+    internal  : Money
+  }
+}
+`;
+  const r = loadLatText(SPEC);
+
+  it('parses a field with a doc comment', () => {
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (!r.ok) return;
+    const agg = r.model.aggregates[0]!;
+    const totalDue = agg.fields.find(f => f.name === 'totalDue')!;
+    expect(totalDue.doc).toBe('The total amount due on this invoice.');
+    expect(totalDue.tags).toContain('public');
+  });
+
+  it('parses a @hookOnly field with a doc comment', () => {
+    if (!r.ok) return;
+    const agg = r.model.aggregates[0]!;
+    const hookFee = agg.fields.find(f => f.name === 'hookFee')!;
+    expect(hookFee.doc).toBe('Hook-only visibility field.');
+    expect(hookFee.tags).toContain('hookOnly');
+  });
+
+  it('leaves doc undefined on a field without a doc comment', () => {
+    if (!r.ok) return;
+    const agg = r.model.aggregates[0]!;
+    const internal = agg.fields.find(f => f.name === 'internal')!;
+    expect(internal.doc).toBeUndefined();
+  });
+
+  it('round-trips a documented @public field through astToCode', () => {
+    if (!r.ok) return;
+    const printed = astToCode(r.model, r.invariants);
+    expect(printed).toContain('/// The total amount due on this invoice.');
+    expect(printed).toMatch(/totalDue\s+: Money @public/);
+    const re = loadLatText(printed);
+    expect(re.ok, JSON.stringify(!re.ok && re.diagnostics)).toBe(true);
+    if (!re.ok) return;
+    const reAgg = re.model.aggregates[0]!;
+    const reTotalDue = reAgg.fields.find(f => f.name === 'totalDue')!;
+    expect(reTotalDue.doc).toBe('The total amount due on this invoice.');
+    expect(reTotalDue.tags).toContain('public');
+  });
+
+  it('round-trips a @hookOnly field through astToCode', () => {
+    if (!r.ok) return;
+    const printed = astToCode(r.model, r.invariants);
+    expect(printed).toContain('/// Hook-only visibility field.');
+    expect(printed).toMatch(/hookFee\s+: Money @hookOnly/);
+    const re = loadLatText(printed);
+    expect(re.ok, JSON.stringify(!re.ok && re.diagnostics)).toBe(true);
+    if (!re.ok) return;
+    const reAgg = re.model.aggregates[0]!;
+    const reHookFee = reAgg.fields.find(f => f.name === 'hookFee')!;
+    expect(reHookFee.doc).toBe('Hook-only visibility field.');
+    expect(reHookFee.tags).toContain('hookOnly');
+  });
+});

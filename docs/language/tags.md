@@ -27,10 +27,12 @@ context Billing {
 `@<tag>` follows a field's type (after an optional `key`) or a state name; a field or state may
 carry more than one tag.
 
-## The eight tags
+## The ten tags
 
 | Tag | Applies to | Meaning |
 |---|---|---|
+| `@public` | field | Marks this field as part of the public API surface (opt-in; **internal is the default**). The TypeScript codegen emits `/** @public */` above the field; the Ruby backend (future slice) will include it in the public interface. May be combined with `@hookOnly`. |
+| `@hookOnly` | field | Narrows public exposure to hook-only access (`@public (hook-only)` in generated JSDoc). Without `@public`, `@hookOnly` alone also implies public-but-hook-only exposure. |
 | `@total` | field | Marks this field as the "total" for the conservation template — paired with ≥2 `@balance` fields on the same owner, `matchTemplates` **adopts** `conserve <balances> == <total>`: `engine init` records it with `status: 'adopted'` and a ledger entry, with no review gate. Goes on a `Money` field, or on a **value-typed** field with exactly one numeric sub-field (see below). |
 | `@balance` | field | Marks this field as a "part" of that same adopted conservation rule. Same placement rule as `@total`. |
 | `@signed` | field | Suppresses the [derived](derived-invariants.md) non-negative rule that would otherwise apply to a money path — use it on a field that can legitimately go negative (a running balance, a refund adjustment). A **use-site** tag (see below). |
@@ -40,10 +42,11 @@ carry more than one tag.
 | `@terminal` | state | Once entered, this state is never left — [derived](derived-invariants.md) automatically as a `terminal` invariant, opt out by removing the tag. |
 | `@initial` | state | Marks the lifecycle block's starting state — **exactly one** per block is required (`multiple-initial` otherwise); this is the one tag that is structurally load-bearing, not just advisory. |
 
-`@total`/`@balance`/`@signed`/`@unsigned`/`@monotonic` are field tags; `@initial`/`@active`/`@terminal`
-are state tags. Applying a state tag to a field or vice versa is not blocked by the grammar itself
-(`TagName` accepts any identifier plus the keywords `terminal`, `monotonic`, `state`, `key`), but only
-the tags in the table above are read by the mapper and the engine — anything else is inert.
+`@public`/`@hookOnly`/`@total`/`@balance`/`@signed`/`@unsigned`/`@monotonic` are field tags;
+`@initial`/`@active`/`@terminal` are state tags. Applying a state tag to a field or vice versa is not
+blocked by the grammar itself (`TagName` accepts any identifier plus the keywords `terminal`,
+`monotonic`, `state`, `key`), but only the tags in the table above are read by the mapper and the
+engine — anything else is inert.
 
 ## Tags on a value-typed field
 

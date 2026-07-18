@@ -60,6 +60,7 @@ export interface Field {
                         // invariant reading an optional path must say what absence means
                         // (see grammar.ts's absence-undecided).
   tags?: string[];   // semantic tags (spec plan §10.1): 'balance', 'total', 'monotonic', …
+  doc?: string;      // field-level doc comment (from ///)
 }
 export interface StateDef { name: string; tags?: ('active' | 'terminal')[] }
 export interface Region { name: string; initial: string; states: StateDef[] }

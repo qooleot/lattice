@@ -32,8 +32,26 @@ function tsType(t: TypeRef): string {
 // head-optionality (a nested optional stays a `| null` union via tsType). `const` → `readonly`,
 // matching render/types.ts. `typeStr` overrides the field's own type (used for owned collections,
 // which embed the child interface rather than exposing meaningless foreign ids).
+//
+// When a field has a doc and/or a visibility tag (@public / @hookOnly), a JSDoc comment is emitted
+// above the field line. Visibility rules (CML semantics: internal is the default):
+//   @public + @hookOnly → @public (hook-only)
+//   @public only        → @public
+//   @hookOnly only      → @public (hook-only)
+//   neither             → no visibility marker
 function fieldLine(f: Field, typeStr = tsType(f.type)): string {
-  return `  ${f.const ? 'readonly ' : ''}${f.name}${f.optional ? '?' : ''}: ${typeStr};`;
+  const isPublic = f.tags?.includes('public') ?? false;
+  const isHookOnly = f.tags?.includes('hookOnly') ?? false;
+  let visMarker: string | undefined;
+  if (isPublic || isHookOnly) visMarker = isHookOnly ? '@public (hook-only)' : '@public';
+
+  const parts: string[] = [];
+  if (f.doc) parts.push(f.doc);
+  if (visMarker) parts.push(visMarker);
+
+  const propLine = `  ${f.const ? 'readonly ' : ''}${f.name}${f.optional ? '?' : ''}: ${typeStr};`;
+  if (parts.length === 0) return propLine;
+  return `  /** ${parts.join(' ')} */\n${propLine}`;
 }
 
 function iface(name: string, fields: Field[], extra: string[] = []): string {
