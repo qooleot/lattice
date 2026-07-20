@@ -1,0 +1,52 @@
+/// Abstract drift-guard fixture for `emit-ir` (deliberately not a real billing/tax domain — see
+/// test/cli-emit-ir.test.ts, "golden IR" test, for how the checked-in golden was generated and how
+/// to regenerate it after an intentional IR shape change).
+context Abstract {
+  builtin Metadata
+  builtin Currency = "Some::External::Currency"
+
+  type Note = Text
+  type Extra = { label : Text  qty : Int }
+
+  enum Status { pending, active }
+  enum Outcome { monetary(Amount), none }
+
+  value Amount {
+    amount   : Money
+    currency : Currency
+  }
+
+  entity Gadget {
+    gadgetId : Id key
+    label    : Text
+  }
+
+  aggregate Widget {
+    widgetId : Id key
+    status   : Status
+    outcome  : Outcome
+    note     : Note
+    extra    : Extra
+    approved : Optional<Money>
+    balances : Map<Id, Amount>
+    settle   : Result<Amount, Metadata>
+    variant  : Gadget | Amount
+    gadgets  : List<ref Gadget>
+
+    lifecycle Lifecycle {
+      states { draft @initial, live @active, done @terminal }
+      transition activate { from draft to live }
+      transition finish { from live to done }
+    }
+
+    /// Widgets stay non-negative once approved.
+    invariant approvedNonNegative { present(approved) && approved >= 0 }
+  }
+
+  service WidgetService {
+    tier = appPublic
+    getWidget(widgetId: Id): Widget read-only
+    activateWidget(widgetId: Id) performs Widget.activate
+    createWidget(label: Text): Widget creates Widget
+  }
+}
