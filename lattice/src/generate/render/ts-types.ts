@@ -80,11 +80,10 @@ function aggregateIface(a: AggregateDef): string {
 }
 
 function emitEnum(e: DomainModel['enums'][number]): string {
-  if (e.payloads && Object.keys(e.payloads).length) {
-    const arms = e.values.map(v => e.payloads![v] ? `{ kind: '${v}'; value: ${tsType(e.payloads![v]!)} }` : `{ kind: '${v}' }`);
-    return `export type ${e.name} = ${arms.join(' | ')};`;
-  }
-  return `export type ${e.name} = ${e.values.map(v => `'${v}'`).join(' | ')};`;
+  const body = e.payloads && Object.keys(e.payloads).length
+    ? `export type ${e.name} = ${e.values.map(v => e.payloads![v] ? `{ kind: '${v}'; value: ${tsType(e.payloads![v]!)} }` : `{ kind: '${v}' }`).join(' | ')};`
+    : `export type ${e.name} = ${e.values.map(v => `'${v}'`).join(' | ')};`;
+  return e.doc ? `/** ${e.doc} */\n${body}` : body;
 }
 
 export function renderTsTypes(model: DomainModel): string {

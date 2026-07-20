@@ -69,7 +69,7 @@ Counts are deliberately bucketed to order of magnitude — `none` / `one` / `sin
 | `Map<K,V>`                   | dozens             | common     |
 | `Result<T,E>`                | dozens             | common     |
 | Union `A \| B`               | dozens             | common     |
-| Qualified `Agg::Type`        | hundreds           | pervasive  |
+| Qualified `Agg::Type`        | dozens (see note)  | concentrated |
 | `@external(ref: "…")`        | hundreds           | pervasive  |
 
 ### Enum shape
@@ -125,16 +125,16 @@ Counts are deliberately bucketed to order of magnitude — `none` / `one` / `sin
 | Union `A \| B` | common | ✅ | `TypeUnion` in lattice grammar |
 | Field `@public(doc: "…")` | pervasive | ✅ | Tag on `FieldDecl` — `@public`; doc text via `///` |
 | Field `@hook-only` | common | ✅ | `@hookOnly` tag on `FieldDecl` |
-| `@internal_comment` | rare | ⚠️ | No lattice equivalent for internal-only field docs; maps to `///` (public) — **internal vs public doc distinction lost** |
+| `@internal_comment` | rare | ⚠️ | No lattice equivalent for internal-only field docs; maps to `///` (public) — **internal vs public doc distinction deferred** (rare; see gap list) |
 | `@public_doc` on a **Type/record** decl | common | ✅ | `///` doc comment on the `type` declaration (Slice 5) |
-| `@public_doc` on an **Enum** decl | common | ⚠️ | Lattice `enum` syntax does not accept leading `///` doc — **`enum-doc-unsupported`** |
+| `@public_doc` on an **Enum** decl | common | ✅ | `///` doc comment on the `enum` declaration (Slice 8) |
 | `public_doc(text: "…")` inline block stmt inside `Type` body | common | ⚠️ | CML allows a free-standing `public_doc()` call as the first statement in a `Type` body (type-level doc separate from field docs). Lattice maps the same to `///` on the `type` declaration; the inline-block form has no equivalent — **`type-body-doc-inline`** |
 | `aggregateRoot` flag inside `Entity` | common | ✅ (implicit) | Lattice's `aggregate` construct treats all its nested `entity` children as owned; the aggregate IS the root — semantic equivalent, no flag needed |
-| `Qualified Agg::Type` ref | pervasive | ❌ | CML intra-context qualifier `Agg::Type` resolves to a type scoped within a named aggregate. Lattice cross-context ref is `Context.Type` (across contexts, not within); there is no aggregate-scoped intra-context qualifier — **`intra-agg-qualifier`** |
+| `Qualified Agg::Type` ref | concentrated/dozens (translation convention — see note) | ✅ (convention) | Earlier audit overcounted this by including Ruby FQN segments inside `@external(ref: "…")` strings. Real `Agg::Type` refs in type positions are ~dozens, concentrated, and each short type name sits under a single aggregate — a namespacing/ownership convention, not cross-aggregate disambiguation. Translation: hoist the aggregate-scoped type to a uniquely-named context- or `module`-level `type`/`value`/`enum`; the qualifier resolves to that name (prefix only on a rare genuine collision). No language feature needed — see translation conventions below. |
 | Method `read-only` | common | ✅ | `read-only` on `MethodDecl` |
 | Method `write` | pervasive | ✅ | `performs` / `creates` on `MethodDecl` covers write semantics |
 | Method `documentation(text: "…")` | pervasive | ✅ | `///` doc comment on `MethodDecl` |
-| Service `type = APP_PRIVATE / DOMAIN` | pervasive | ❌ | CML annotates services with a visibility/layer tier. No equivalent in lattice `ServiceDecl` — **`service-tier-annotation`** |
+| Service `type = APP_PRIVATE / DOMAIN` | pervasive | ✅ | `tier = appPublic \| appPrivate \| domain` on `ServiceDecl` (Slice 8) |
 | Method `pessimistic_lock` / `lock_exempt` | absent | ❌ | Not observed in corpus; defined in CML grammar. No lattice equivalent — low priority |
 | Method `billing_context` | absent | ❌ | Not observed in corpus. No lattice equivalent — low priority |
 | `@TypeName` prefix on method return type / parameter type | common | ⚠️ | CML allows `@TypeName method(…)` and `method(@TypeName param)` as an alternative return-type notation. This is syntactic sugar for the same type system — the underlying types are representable. Lattice uses plain `method(param : T) : ReturnType` syntax. **Syntactic gap only; no semantic gap.** |
@@ -153,14 +153,11 @@ and a one-line description of the slice that would close it.
 
 | # | Gap id | Prevalence | One-line slice sketch |
 |---|--------|------------|-----------------------|
-| 1 | `intra-agg-qualifier` | pervasive | Add `Agg::Type` qualified-ref syntax to lattice's type grammar and resolver (resolves within the enclosing context, scoped to the named aggregate). |
-| 2 | `service-tier-annotation` | pervasive | Add an optional `tier = APP_PUBLIC \| APP_PRIVATE \| DOMAIN` keyword to `ServiceDecl` (carried, dropped from solving; used by codegen). |
-| 3 | `multi-file-import` | pervasive | Document and tool the one-file-per-context + `contextMap contains … from` pattern as the canonical translation of CML `import`; add a migration-aid CLI command. |
-| 4 | `enum-doc-unsupported` | common | Allow a leading `///` doc comment on `EnumDecl` in the lattice grammar (currently only `FieldDecl` and structural decls accept `DOC*`). |
-| 5 | `type-body-doc-inline` | common | Treat `public_doc()` inline block as type-level doc; map to a leading `///` on the `type` declaration. Translation is straightforward; the inline form can be folded to the decl doc at parse time. |
-| 6 | `internal-vs-public-doc` | rare | Add an `@internal` doc tag to distinguish `@internal_comment` (not emitted to public API) from `///` (public). Currently both collapse to `///`. |
-| 7 | `hooks-system` | rare | New slice: `hook(…)` method qualifier carrying phase/extension_interface/input_type/output_type/selection/resource_type/project/release-phase. Requires grammar extension + codegen target. Large scope — justified only when hooks are actively used beyond the current single instance. |
-| 8 | `pessimistic_lock` / `billing_context` | absent | Low priority: not observed in corpus; defer until a real need surfaces. |
+| 1 | `multi-file-import` | pervasive | Document and tool the one-file-per-context + `contextMap contains … from` pattern as the canonical translation of CML `import`; add a migration-aid CLI command. |
+| 2 | `type-body-doc-inline` | common | Treat `public_doc()` inline block as type-level doc; map to a leading `///` on the `type` declaration. Translation is straightforward; the inline form can be folded to the decl doc at parse time. |
+| 3 | `internal-vs-public-doc` | rare | Add an `@internal` doc tag to distinguish `@internal_comment` (not emitted to public API) from `///` (public). Currently both collapse to `///`. |
+| 4 | `hooks-system` | rare | New slice: `hook(…)` method qualifier carrying phase/extension_interface/input_type/output_type/selection/resource_type/project/release-phase. Requires grammar extension + codegen target. Large scope — justified only when hooks are actively used beyond the current single instance. |
+| 5 | `pessimistic_lock` / `billing_context` | absent | Low priority: not observed in corpus; defer until a real need surfaces. |
 
 ### Syntactic gaps (not semantic gaps)
 
@@ -172,20 +169,57 @@ and a one-line description of the slice that would close it.
 
 ---
 
+## Translation conventions
+
+These patterns have no dedicated language feature in lattice; they translate by convention.
+
+### `Agg::Type` qualified references
+
+CML uses `Agg::Type` to scope a short type name to a named aggregate — a namespacing/ownership
+convention. Each short name sits under a single aggregate; there are no genuine cross-aggregate
+collisions.
+
+**Translation:** hoist the aggregate-scoped type to a uniquely-named context- or `module`-level
+`type`/`value`/`enum` declaration. The qualifier resolves to that name. On the rare genuine
+collision (two aggregates each define a local type with the same short name), prefix the lattice
+declaration: `AggFooBar` instead of `Bar`.
+
+This is analogous to multi-file `import` (below): both are structural conventions without
+requiring new language syntax.
+
+### `public_doc(text: "…")` inline block inside a `Type` body
+
+CML allows a free-standing `public_doc()` call as the first statement in a `Type` body, providing
+a type-level doc separate from field docs.
+
+**Translation:** map to a leading `///` on the lattice `type` declaration. The inline-block form
+folds to the declaration doc at parse time, with no semantic distinction from a top-level `///`.
+
+### Multi-file `import` (one context split across files)
+
+CML splits one logical context across multiple files joined with `import`.
+
+**Translation:** one `.lat` file per context + a `contextMap` workspace file that uses
+`contains A from "path/to/a.lat"`. Structurally equivalent; each file is a complete parseable
+context.
+
+---
+
 ## Already covered: data-model layer is complete
 
 The core DDD data-model surface is fully representable:
 
 - All structural declaration kinds: `context`, `module`, `aggregate`, `entity`, `value`,
-  `enum` (plain and sum-type), `type` (record and alias), `builtin` carriers.
+  `enum` (plain and sum-type, with `///` doc), `type` (record and alias), `builtin` carriers.
 - Full type system: all primitives actually observed in the corpus (`String`/`Int`/`Boolean`/
   `Amount`/`Decimal`/`Time`/`TimeRange`/`Metadata`/`Currency`), `List`/`Optional`/`Map`/
   `Result` generics, union types (`A | B`), `@external` → `builtin` with ref.
-- Field visibility and docs: `@public`, `@hookOnly`, `///` field and type docs.
+- Field visibility and docs: `@public`, `@hookOnly`, `///` field, type, and enum docs.
 - `aggregateRoot` semantics: implicit in lattice's aggregate-as-root model.
-- Basic service methods: `read-only`, `performs`/`creates` (write), `///` doc.
+- Service methods: `read-only`, `performs`/`creates` (write), `///` doc, `tier` annotation.
 - Workspace-level `contextMap` with upstream/downstream relationships.
+- `Agg::Type` intra-context qualifiers: translation convention (hoist to named decl).
 
-The remaining gaps are concentrated in the **service metadata layer** (`service-tier`,
-`intra-agg-qualifier`) and the **hooks/extension system** — both of which are explicit
-scope for future slices and do not block the data-model backend work.
+The remaining gaps are concentrated in the **hooks/extension system** — explicit scope for a
+future slice and does not block the data-model backend work. The internal-vs-public doc
+distinction (`@internal_comment` vs `@public_doc`) is deferred as a rare case.

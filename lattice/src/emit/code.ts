@@ -147,6 +147,7 @@ function emitEnums(enums: DomainModel['enums'], modFilter: string | undefined, i
   const items = enums.filter(e => e.module === modFilter);
   for (const e of items) {
     if (!e.values.length) throw new Error(`cannot print enum ${e.name}: it has no values`);
+    doc(e.doc, indent, out);
     const variants = e.values.map(v => { const p = e.payloads?.[v]; return p ? `${v}(${typeStr({ name: '', type: p })})` : v; });
     out.push(`${indent}enum ${e.name} { ${variants.join(', ')} }`);
   }
@@ -224,6 +225,7 @@ function emitServices(services: DomainModel['services'], modFilter: string | und
   for (const s of services.filter(s => s.module === modFilter)) {
     doc(s.doc, indent, out);
     out.push(`${indent}service ${s.name} {`);
+    if (s.tier) out.push(`${indent}  tier = ${s.tier}`);
     for (const mm of s.methods) {
       doc(mm.doc, indent + '  ', out);
       const params = mm.params.map(p => `${p.name}: ${typeStr({ name: p.name, type: p.type })}`).join(', ');

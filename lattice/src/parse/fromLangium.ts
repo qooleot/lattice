@@ -387,6 +387,7 @@ export function loadLatText(text: string): LoadResult {
     context: cst.name,
     enums: enumDecls.map(({ node: e, module: mod }) => {
       const def: EnumDef = { name: e.name, values: e.variants.map(v => v.name) };
+      const d = joinDocs([...e.docs]); if (d) def.doc = d;
       if (mod) def.module = mod;
       return def;
     }),
@@ -489,6 +490,7 @@ export function loadLatText(text: string): LoadResult {
         const s = item as G.ServiceDecl;
         const def: ServiceDef = { name: s.name, methods: mapMethods([...s.methods], enumSet, diags, ownerNames, valueNames, carrierNames, enumMap, resolveAlias) };
         const d = joinDocs([...s.docs]); if (d) def.doc = d;
+        if (s.tier) def.tier = s.tier as ServiceDef['tier'];
         if (moduleName) def.module = moduleName;
         locs.set(`owner:${s.name}`, at(s));
         for (const mm of s.methods) locs.set(`method:${s.name}.${mm.name}`, at(mm));

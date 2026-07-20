@@ -8,6 +8,9 @@ merely discouraged, it is a parse error.
 ```lat
 /// Acme billing: catalog-driven subscriptions.
 context Billing {
+  /// The billing cadence for a subscription.
+  enum BillingPeriod { monthly, annual }
+
   /// Pricing definition: per-seat license fee plus usage billing.
   entity Plan {
     planId : Id key
@@ -26,18 +29,18 @@ context Billing {
 }
 ```
 
-A `///` line attaches to the construct that immediately follows it: the `context`, an `entity`,
-`aggregate`, `event`, `invariant`, or an individual **field**. Multiple consecutive `///` lines
-join into one string (space-joined) on that construct's `doc` field. The doc round-trips: it is
-stored on the AST, re-emitted by the printer, and rendered into the generated `spec.prose.md`
-projection alongside each construct's English description.
+A `///` line attaches to the construct that immediately follows it: the `context`, an `enum`,
+`entity`, `aggregate`, `event`, `invariant`, or an individual **field**. Multiple consecutive
+`///` lines join into one string (space-joined) on that construct's `doc` field. The doc
+round-trips: it is stored on the AST, re-emitted by the printer, and rendered into the generated
+`spec.prose.md` projection alongside each construct's English description.
 
 Field-level `///` docs are emitted by the TypeScript codegen as a JSDoc block above the property
 (`/** <doc> */`, optionally with a `@public` / `@public (hook-only)` visibility marker if the field
-carries `@public` or `@hookOnly` tags — see [tags](tags.md)).
+carries `@public` or `@hookOnly` tags — see [tags](tags.md)). Enum-level `///` docs are emitted
+as a `/** <doc> */` JSDoc block above the `export type` line.
 
-`///` doc comments are **not** supported on `enum` — see [enum](enum.md) for the dedicated
-`enum-doc-unsupported` diagnostic — nor on lifecycle blocks, states, or transitions; the
+`///` doc comments are not supported on lifecycle blocks, states, or transitions; the
 grammar has no `doc` slot for those constructs.
 
 ## `//` is banned
@@ -62,9 +65,8 @@ other diagnostic, and no `///`-doc attachment or grammar rule is even attempted.
 
 ## Semantic Rules
 
-- `///` immediately preceding `context`, `entity`, `aggregate`, `event`, `invariant`, or a **field**
-  attaches as that construct's doc; consecutive `///` lines join into one doc string.
-- `///` immediately preceding `enum` is a dedicated parse error, `enum-doc-unsupported`.
+- `///` immediately preceding `context`, `enum`, `entity`, `aggregate`, `event`, `invariant`, or
+  a **field** attaches as that construct's doc; consecutive `///` lines join into one doc string.
 - Any `//` (not inside a string literal) anywhere in the file is `comment-banned`, checked before
   the grammar parse runs.
 - Docs are free-form text — they are exempt from identifier validation (`invalid-name`,

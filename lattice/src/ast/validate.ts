@@ -143,6 +143,8 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   }
   for (const s of m.services) {
     checkName('service', s.name, s.name);
+    if (s.tier !== undefined && !['appPublic', 'appPrivate', 'domain'].includes(s.tier))
+      out.push({ code: 'unknown-service-tier', message: `service ${s.name}: tier '${s.tier}' is not a valid tier — use appPublic, appPrivate, or domain`, at: s.name });
     for (const mm of s.methods) {
       checkName('method', mm.name, `${s.name}.${mm.name}`);
       for (const p of mm.params) checkName('param', p.name, `${s.name}.${mm.name}.${p.name}`);

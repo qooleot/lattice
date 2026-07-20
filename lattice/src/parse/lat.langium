@@ -48,7 +48,7 @@ TypeDecl:
     docs+=DOC* 'type' name=ID '=' ( '{' fields+=FieldDecl* '}' | target=LatType );
 
 EnumDecl:
-    'enum' name=ID '{' variants+=EnumVariant (',' variants+=EnumVariant)* '}';
+    docs+=DOC* 'enum' name=ID '{' variants+=EnumVariant (',' variants+=EnumVariant)* '}';
 
 // A variant is a bare name, or a sum-type variant carrying a payload: `monetary(Amount)`. The payload
 // is carried (dropped from solving); codegen lowers a payload-bearing enum to a discriminated union.
@@ -67,7 +67,7 @@ ValueDecl:
     docs+=DOC* 'value' name=ID '{' fields+=FieldDecl* invariants+=InvariantDecl* '}';
 
 ServiceDecl:
-    docs+=DOC* 'service' name=ID '{' methods+=MethodDecl* '}';
+    docs+=DOC* 'service' name=ID '{' ('tier' '=' tier=ID)? methods+=MethodDecl* '}';
 
 MethodDecl:
     docs+=DOC* name=ID '(' (params+=ParamDecl (',' params+=ParamDecl)*)? ')' (':' returns=LatType)?

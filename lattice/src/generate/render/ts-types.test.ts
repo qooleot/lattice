@@ -240,6 +240,36 @@ describe('renderTsTypes — field-level docs and visibility tags', () => {
   });
 });
 
+describe('renderTsTypes — enum-level JSDoc (Slice 8)', () => {
+  it('emits /** <doc> */ above a documented plain enum', () => {
+    const ts = render(`context C {
+  /// The billing period.
+  enum Period { monthly, annual }
+  entity E { eId : Id key  p : Period }
+}`);
+    expect(ts).toContain("/** The billing period. */\nexport type Period = 'monthly' | 'annual';");
+  });
+
+  it('emits /** <doc> */ above a documented sum-type enum', () => {
+    const ts = render(`context C {
+  builtin Amount
+  /// A grant amount variant.
+  enum Grant { monetary(Amount), none }
+  entity E { eId : Id key  g : Grant }
+}`);
+    expect(ts).toContain("/** A grant amount variant. */\nexport type Grant =");
+  });
+
+  it('emits no JSDoc for an undocumented enum', () => {
+    const ts = render(`context C {
+  enum Mode { fast, slow }
+  entity E { eId : Id key  m : Mode }
+}`);
+    expect(ts).not.toContain('/**');
+    expect(ts).toContain("export type Mode = 'fast' | 'slow';");
+  });
+});
+
 describe('renderTsTypes — module grouping banners (Slice 6)', () => {
   it('emits // ── module: <name> ── before a module\'s interfaces', () => {
     const ts = render(`context Billing {

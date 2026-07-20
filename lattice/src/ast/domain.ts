@@ -77,6 +77,7 @@ export interface EnumDef {
   // Sum-type payloads (Slice 4): present only for variants carrying one (`monetary(Amount)`). Carried
   // (dropped from solving); codegen lowers a payload-bearing enum to a discriminated union.
   payloads?: { [variant: string]: TypeRef };
+  doc?: string;       // enum-level doc comment (from ///) — Slice 8
   module?: string;    // grouping label (Slice 6): set only when declared inside a `module` block
 }
 /** Structural, keyless value type (design §3.5): compared by structure, not identity — fields are
@@ -119,7 +120,7 @@ export interface MethodDef {
   kind: { readOnly: true } | { performs: { aggregate: string; transition: string } } | { creates: string };
   requires?: Predicate;
 }
-export interface ServiceDef { name: string; methods: MethodDef[]; doc?: string; module?: string }
+export interface ServiceDef { name: string; methods: MethodDef[]; doc?: string; tier?: 'appPublic' | 'appPrivate' | 'domain'; module?: string }
 
 /** The nested child an owned collection ranges over, or null (design §3.2). */
 export function ownedCollectionChild(a: AggregateDef, f: Field): EntityDef | null {

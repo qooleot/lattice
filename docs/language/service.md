@@ -23,6 +23,7 @@ context Billing {
   }
 
   service SubscriptionService {
+    tier = appPrivate
     createSubscription(plan: ref Subscription, seats: Int): Subscription creates Subscription
     getSubscription(subId: Id): Subscription read-only
     activate(subId: Id) performs Subscription.activate
@@ -31,7 +32,8 @@ context Billing {
 }
 ```
 
-`service <PascalId> { <method>* }`, with an optional leading `///` doc. Each method is one line:
+`service <PascalId> { <method>* }`, with an optional leading `///` doc and an optional `tier`
+annotation. Each method is one line:
 
 ```
 <camelId>(<param> (, <param>)*)? (: <type>)? (read-only | performs <Agg>.<transition> | creates <Agg>) (requires <predicate>)?
@@ -43,6 +45,23 @@ A `<param>` is `<camelId> : <type>` — the same type grammar as a field
 otherwise checked. Exactly one of `read-only`, `performs <Agg>.<transition>`, or `creates <Agg>`
 must follow — this is the method's *kind*, and it is exhaustive: every method is one of these
 three, nothing else.
+
+## Service tier
+
+An optional `tier` line may appear as the first line inside a service body, before any methods:
+
+```
+tier = appPublic | appPrivate | domain
+```
+
+- **`appPublic`** (default, may be omitted) — the service is exposed at the application public
+  boundary.
+- **`appPrivate`** — the service is internal to the application; not exposed at the public boundary.
+- **`domain`** — the service operates at the domain layer, below the application boundary.
+
+The tier is carried structure: it is validated, printed, and carried to the Ruby backend codegen,
+but it is never solver-encoded. An invalid tier value (anything other than the three above)
+reports `unknown-service-tier`.
 
 ## Method kinds
 
@@ -173,7 +192,9 @@ context Billing {
     }
   }
 
-  service Billing {
+  /// Public billing service.
+  service BillingService {
+    tier = appPublic
     settle(invId: Id) performs Invoice.settle
     getInvoice(invId: Id): Invoice read-only
   }

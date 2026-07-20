@@ -37,17 +37,6 @@ export function parseLat(text: string): LatParseResult {
     ...r.parserErrors.map(e => ({ code: 'syntax-error', message: e.message,
       line: e.token.startLine ?? 1, col: e.token.startColumn ?? 1 })),
   ];
-  // `///` docs are grammatical on context/entity/event/aggregate/invariant but NOT on enums;
-  // Langium's raw "Expecting: one of these possible Token sequences" for that case is unreadable.
-  const lines = text.split('\n');
-  for (const e of r.parserErrors) {
-    if (!e.token.image?.startsWith('///')) continue;
-    const line = e.token.startLine ?? 1, col = e.token.startColumn ?? 1;
-    const next = lines.slice(line).map(l => l.trim()).find(t => t && !t.startsWith('///'));
-    if (!/^enum\b/.test(next ?? '')) continue;
-    return { ok: false, diagnostics: [{ code: 'enum-doc-unsupported', line, col,
-      message: "'///' docs cannot attach to an enum — move the doc onto the context, an entity, event, aggregate, or invariant, or remove it" }] };
-  }
   if (diagnostics.length) return { ok: false, diagnostics };
   return { ok: true, cst: r.value };
 }
