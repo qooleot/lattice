@@ -48,4 +48,8 @@ See **[docs/plan.md](docs/plan.md)** for the full design: motivation, prior-art 
 example, architecture, the invariant-template catalog, risk analysis, and the first de-risking
 experiment.
 
+Lattice emits a versioned, language-neutral IR (**[docs/ir.md](docs/ir.md)**) that downstream
+code generators turn into source — see **[docs/writing-a-consumer.md](docs/writing-a-consumer.md)**
+for how to write one.
+
 Status: design plan. Not yet built.

@@ -137,6 +137,14 @@ on-disk SQLite database with no mocks: a guard-rejected call, a successful trans
 an outbox event, and a guard-passing call whose post-state invariant fails at commit time, rolling
 the whole transaction back. See `generated/subscriptions/demo.ts` for the real example.
 
+## Beyond generation: writing your own consumer
+
+`engine emit-ir` (see [docs/ir.md](ir.md)) emits a stable, versioned, language-neutral IR that
+any downstream code generator — a *consumer*, in whatever repo/language a team owns — can turn
+into source code in its own folder/architecture convention. If `lattice generate`'s TypeScript
+output isn't your target, see [docs/writing-a-consumer.md](writing-a-consumer.md) for the shape
+three independent consumers converged on.
+
 ## Where to go next
 
 - [`docs/language/README.md`](language/README.md) — the language reference, including a 10-line
