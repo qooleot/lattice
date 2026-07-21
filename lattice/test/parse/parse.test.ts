@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseLat, scanBannedComments } from '../../src/parse/parse.js';
+import { loadLatText } from '../../src/parse/fromLangium.js';
 
 const GOOD = `/// A tiny spec
 context Demo {
@@ -255,5 +256,30 @@ describe('Service tier annotation (Slice 8)', () => {
 }`);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.diagnostics.some(d => d.code === 'unknown-service-tier')).toBe(true);
+  });
+});
+
+describe('keyword field names (FieldName rule + reserved carve-out)', () => {
+  it('allows state/type/count/from/to as field and param names, preserving them', () => {
+    const r = loadLatText(`context Kw {
+  type Loc = { state : Text  type : Text  count : Int  from : Date  to : Date }
+  value V { state : Text }
+  service S { tier = appPublic  doThing(type : Text) : Loc read-only }
+}`);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (r.ok) {
+      const loc = r.model.records?.find(x => x.name === 'Loc');
+      expect(loc?.fields.map(f => f.name)).toEqual(['state', 'type', 'count', 'from', 'to']);
+    }
+  });
+
+  it("still rejects a 'state' field on an aggregate with a lifecycle (<Region>.state collision)", () => {
+    const r = loadLatText(`context KwAgg {
+  aggregate Order { orderId : Id key  state : Text
+    lifecycle L { states { draft @initial, done @terminal } transition go { from draft to done } }
+  }
+}`);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.diagnostics.some(d => d.code === 'reserved-field-name')).toBe(true);
   });
 });

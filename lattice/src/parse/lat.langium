@@ -77,7 +77,15 @@ MethodDecl:
         ('requires' requires=Predicate)?;
 
 ParamDecl:
-    name=ID ':' type=LatType;
+    name=FieldName ':' type=LatType;
+
+// Field/param names may be a bare ID or a small safe subset of keywords that are common real
+// field names (`state`, `type`, `count`, `from`, `to`). These keywords never start a sibling
+// construct inside a field body and are not FieldDecl flags, so they are unambiguous in the
+// `name ':'` position. `state` additionally stays rejected by validateModel on a machine-bearing
+// aggregate (where `<Region>.state` would collide) — see checkReservedField.
+FieldName returns string:
+    ID | 'state' | 'type' | 'count' | 'from' | 'to';
 
 TicksDecl:
     'ticksPerDay' '=' value=INT;
@@ -92,7 +100,7 @@ AggregateDecl:
     docs+=DOC* 'aggregate' name=ID '{' (fields+=FieldDecl | entities+=EntityDecl)* lifecycles+=LifecycleDecl* invariants+=InvariantDecl* '}';
 
 FieldDecl:
-    docs+=DOC* name=ID ':' type=LatType (optional?='?')? (key?='key')? (const?='const')? tags+=Tag*;
+    docs+=DOC* name=FieldName ':' type=LatType (optional?='?')? (key?='key')? (const?='const')? tags+=Tag*;
 
 // Rich CML type surface (see ast/domain.ts TypeRef, "carried vs solved"). Layered by precedence:
 // union `|` binds loosest, then the application forms (List/Optional/Map/generic/ref/named). Union

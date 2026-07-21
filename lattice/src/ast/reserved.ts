@@ -22,6 +22,17 @@ export const RESERVED_WORDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Keywords the grammar's `FieldName` rule additionally permits as FIELD and PARAM names. These
+ * never start a sibling construct inside a field body and are not FieldDecl flags, so they lex
+ * unambiguously in the `name ':'` position (common real field names like `state`, `type`, `count`,
+ * `from`, `to`). A subset of RESERVED_WORDS — a member being reserved everywhere else is exactly
+ * why it needs this carve-out in validateModel's checkName. Kept in lockstep with the `FieldName`
+ * rule in lat.langium (a parse test asserts they parse as field names). NOTE: `state` remains
+ * rejected on a machine-bearing aggregate by checkReservedField (the `<Region>.state` collision).
+ */
+export const FIELD_NAME_KEYWORDS: ReadonlySet<string> = new Set(['state', 'type', 'count', 'from', 'to']);
+
+/**
  * Built-in primitive type names, reserved against enum/value/entity/aggregate names — the type
  * namespace — by validateModel's `reserved-prim-name`.
  *

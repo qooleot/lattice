@@ -1,7 +1,7 @@
 import type { Diagnostic, Predicate, Term } from './invariant.js';
 import type { DomainModel, Field, TypeRef } from './domain.js';
 import { isQualifiedRef, moneyFieldPaths, numericFieldPaths, ownedCollectionChild } from './domain.js';
-import { PRIM_NAMES, RESERVED_WORDS } from './reserved.js';
+import { PRIM_NAMES, RESERVED_WORDS, FIELD_NAME_KEYWORDS } from './reserved.js';
 
 export const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -86,7 +86,7 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   const checkName = (kind: string, value: string, at?: string) => {
     if (!IDENT_RE.test(value))
       out.push({ code: 'invalid-name', message: `${kind} name '${value}' is not a valid identifier (letters, digits, underscore; no spaces)`, at });
-    else if (RESERVED_WORDS.has(value))
+    else if (RESERVED_WORDS.has(value) && !((kind === 'field' || kind === 'param') && FIELD_NAME_KEYWORDS.has(value)))
       out.push({ code: 'reserved-word', message: `${kind} name '${value}' is a .lat keyword and cannot be used as an identifier`, at });
   };
 
@@ -235,12 +235,16 @@ export function validateModel(m: DomainModel): Diagnostic[] {
     if (t.kind === 'generic') for (const a of t.args) checkType(a, at);
     if (t.kind === 'union') for (const a of t.arms) checkType(a, at);
   };
-  const checkReservedField = (f: Field, at: string) => {
-    if (f.name === 'state')
-      out.push({ code: 'reserved-field-name', message: `'state' is reserved for machine-state keys (<Region>.state)`, at });
+  // `state` collides with the machine-state keys (`<Region>.state`) ONLY on an aggregate that has a
+  // lifecycle/machine — so it is reserved there, and freely usable as a field name everywhere else
+  // (records, values, entities, events, machineless aggregates). The grammar (FieldName) already
+  // lets it lex as a field name; this is the semantic half of the gate.
+  const checkReservedField = (f: Field, at: string, reserveState = false) => {
+    if (reserveState && f.name === 'state')
+      out.push({ code: 'reserved-field-name', message: `'state' is reserved for machine-state keys (<Region>.state) on an aggregate with a lifecycle`, at });
   };
-  const checkFields = (fs: Field[], owner: string, needKey: boolean, ownerAgg: string | null = null) => {
-    fs.forEach(f => { checkType(f.type, `${owner}.${f.name}`); checkReservedField(f, `${owner}.${f.name}`);
+  const checkFields = (fs: Field[], owner: string, needKey: boolean, ownerAgg: string | null = null, reserveState = false) => {
+    fs.forEach(f => { checkType(f.type, `${owner}.${f.name}`); checkReservedField(f, `${owner}.${f.name}`, reserveState);
       checkRefTarget(f.type, `${owner}.${f.name}`, ownerAgg);
       if (f.optional && f.key)
         out.push({ code: 'optional-key', message: `${owner}.${f.name} is a key field and cannot be optional — identity is never absent`, at: `${owner}.${f.name}` });
@@ -364,12 +368,12 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   // Sum-type enum payloads (Slice 4): each payload TypeRef must name real decls (carried; not solved).
   m.enums.forEach(en => { for (const [variant, t] of Object.entries(en.payloads ?? {})) checkType(t, `${en.name}.${variant}`); });
   m.aggregates.forEach(a => {
-    checkFields(a.fields, a.name, true, a.name);
+    checkFields(a.fields, a.name, true, a.name, a.machine != null);
     for (const child of a.entities ?? []) {
       // nested children share the type namespace (duplicate-name pool above, `owners` below), so a
       // prim-named child has its bare form hijacked exactly as a top-level entity's would be
       checkTypeName('entity', child.name, `${a.name}.${child.name}`);
-      checkFields(child.fields, `${a.name}.${child.name}`, true, null);   // missing-key covers child-key-required
+      checkFields(child.fields, `${a.name}.${child.name}`, true, null, a.machine != null);   // missing-key covers child-key-required
       for (const f of child.fields) {
         // `ref` and value-typed child fields are structurally legal as of this slice — List is the
         // one remaining rejection below. A child's ref must name a TOP-LEVEL owner —
