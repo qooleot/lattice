@@ -124,6 +124,15 @@ it, and don't pretend a generated guess is a reproduction.
   rest are unmapped. For a kind you haven't exercised yet, mark it as an explicit TODO in
   the mapper (so it fails loudly if hit) rather than letting it fall through to a default
   that looks done but isn't.
+- **Cross-context references — explicit FQN, never inference.** A type owned by *another*
+  bounded context is named with an explicit fully-qualified path, because the referencing
+  spec does not know the foreign context's layout. The idiomatic form is an **external
+  builtin** (`builtin BillToken = "…::BillToken"` → a `carrier` you emit verbatim). A dotted
+  `ref Context.Type` must be resolved through an **explicit `Context.Type → FQN` mapping** the
+  consumer is given, and **fail loud** on an unmapped one — do NOT reconstruct the foreign
+  context's namespace by inferring its layout (see [ir.md](ir.md#cross-context-references)).
+  A silent fallback here (emitting `T.untyped`, or the raw dotted string as a type) is a
+  correctness bug, not a graceful degrade.
 
 ## Worked example
 

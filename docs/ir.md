@@ -98,6 +98,22 @@ kinds. A consumer's type mapper must handle all ten:
 
 All declarations carry an optional `module` grouping label.
 
+### Cross-context references
+
+A reference to a type owned by **another bounded context** is expressed with an explicit
+fully-qualified path, not by inferring the other context's layout. The idiomatic form is an
+**external builtin**: `builtin BillToken = "Opus::Billing::…::BillToken"` → a `carrier` whose
+`ref` is that FQN, which a consumer emits verbatim (imports, never defines). This mirrors the
+prior-art convention of an explicit external ref at the declaration site, and it is the
+recommended way to name a foreign type.
+
+The `ref` kind's `target` may also be a dotted `Context.Type`. Because the referencing spec
+does **not** know the foreign context's module/aggregate/visibility layout, a consumer must
+resolve such a qualified ref through an **explicit `Context.Type → FQN` mapping** it is given —
+and **fail loud** (error) on an unmapped one. A consumer must never guess a foreign context's
+namespace by reconstructing its layout; the explicit FQN (external builtin or mapping) is the
+contract.
+
 ## Versioning policy
 
 - `irVersion` is bumped only when the IR shape changes in a way a v1 consumer could not
