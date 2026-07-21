@@ -1,0 +1,328 @@
+{
+  "irVersion": "1",
+  "context": "Abstract",
+  "doc": "Abstract drift-guard fixture for `emit-ir` (deliberately not a real billing/tax domain — see test/cli-emit-ir.test.ts, \"golden IR\" test, for how the checked-in golden was generated and how to regenerate it after an intentional IR shape change).",
+  "builtins": [
+    {
+      "name": "Metadata"
+    },
+    {
+      "name": "Currency",
+      "ref": "Some::External::Currency"
+    }
+  ],
+  "typeAliases": [
+    {
+      "name": "Note",
+      "target": {
+        "kind": "prim",
+        "prim": "Text"
+      }
+    }
+  ],
+  "records": [
+    {
+      "name": "Extra",
+      "fields": [
+        {
+          "name": "label",
+          "type": {
+            "kind": "prim",
+            "prim": "Text"
+          }
+        },
+        {
+          "name": "qty",
+          "type": {
+            "kind": "prim",
+            "prim": "Int"
+          }
+        }
+      ]
+    }
+  ],
+  "enums": [
+    {
+      "name": "Status",
+      "values": [
+        "pending",
+        "active"
+      ]
+    },
+    {
+      "name": "Outcome",
+      "values": [
+        "monetary",
+        "none"
+      ],
+      "payloads": {
+        "monetary": {
+          "kind": "value",
+          "value": "Amount"
+        }
+      }
+    }
+  ],
+  "values": [
+    {
+      "kind": "value",
+      "name": "Amount",
+      "fields": [
+        {
+          "name": "amount",
+          "type": {
+            "kind": "prim",
+            "prim": "Money"
+          }
+        },
+        {
+          "name": "currency",
+          "type": {
+            "kind": "carrier",
+            "name": "Currency"
+          }
+        }
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "kind": "entity",
+      "name": "Gadget",
+      "fields": [
+        {
+          "name": "gadgetId",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          },
+          "key": true
+        },
+        {
+          "name": "label",
+          "type": {
+            "kind": "prim",
+            "prim": "Text"
+          }
+        }
+      ]
+    }
+  ],
+  "aggregates": [
+    {
+      "kind": "aggregate",
+      "name": "Widget",
+      "fields": [
+        {
+          "name": "widgetId",
+          "type": {
+            "kind": "prim",
+            "prim": "Id"
+          },
+          "key": true
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "enum",
+            "enum": "Status"
+          }
+        },
+        {
+          "name": "outcome",
+          "type": {
+            "kind": "enum",
+            "enum": "Outcome"
+          }
+        },
+        {
+          "name": "note",
+          "type": {
+            "kind": "prim",
+            "prim": "Text"
+          }
+        },
+        {
+          "name": "extra",
+          "type": {
+            "kind": "carrier",
+            "name": "Extra"
+          }
+        },
+        {
+          "name": "approved",
+          "type": {
+            "kind": "prim",
+            "prim": "Money"
+          },
+          "optional": true
+        },
+        {
+          "name": "balances",
+          "type": {
+            "kind": "map",
+            "key": {
+              "kind": "prim",
+              "prim": "Id"
+            },
+            "of": {
+              "kind": "value",
+              "value": "Amount"
+            }
+          }
+        },
+        {
+          "name": "settle",
+          "type": {
+            "kind": "generic",
+            "ctor": "Result",
+            "args": [
+              {
+                "kind": "value",
+                "value": "Amount"
+              },
+              {
+                "kind": "carrier",
+                "name": "Metadata"
+              }
+            ]
+          }
+        },
+        {
+          "name": "variant",
+          "type": {
+            "kind": "union",
+            "arms": [
+              {
+                "kind": "ref",
+                "target": "Gadget"
+              },
+              {
+                "kind": "value",
+                "value": "Amount"
+              }
+            ]
+          }
+        },
+        {
+          "name": "gadgets",
+          "type": {
+            "kind": "list",
+            "of": {
+              "kind": "ref",
+              "target": "Gadget"
+            }
+          }
+        }
+      ],
+      "machine": {
+        "regions": [
+          {
+            "name": "Lifecycle",
+            "initial": "draft",
+            "states": [
+              {
+                "name": "draft"
+              },
+              {
+                "name": "live",
+                "tags": [
+                  "active"
+                ]
+              },
+              {
+                "name": "done",
+                "tags": [
+                  "terminal"
+                ]
+              }
+            ]
+          }
+        ],
+        "transitions": [
+          {
+            "name": "activate",
+            "region": "Lifecycle",
+            "from": [
+              "draft"
+            ],
+            "to": "live"
+          },
+          {
+            "name": "finish",
+            "region": "Lifecycle",
+            "from": [
+              "live"
+            ],
+            "to": "done"
+          }
+        ]
+      }
+    }
+  ],
+  "events": [],
+  "services": [
+    {
+      "name": "WidgetService",
+      "methods": [
+        {
+          "name": "getWidget",
+          "params": [
+            {
+              "name": "widgetId",
+              "type": {
+                "kind": "prim",
+                "prim": "Id"
+              }
+            }
+          ],
+          "kind": {
+            "readOnly": true
+          },
+          "returns": {
+            "kind": "ref",
+            "target": "Widget"
+          }
+        },
+        {
+          "name": "activateWidget",
+          "params": [
+            {
+              "name": "widgetId",
+              "type": {
+                "kind": "prim",
+                "prim": "Id"
+              }
+            }
+          ],
+          "kind": {
+            "performs": {
+              "aggregate": "Widget",
+              "transition": "activate"
+            }
+          }
+        },
+        {
+          "name": "createWidget",
+          "params": [
+            {
+              "name": "label",
+              "type": {
+                "kind": "prim",
+                "prim": "Text"
+              }
+            }
+          ],
+          "kind": {
+            "creates": "Widget"
+          },
+          "returns": {
+            "kind": "ref",
+            "target": "Widget"
+          }
+        }
+      ],
+      "tier": "appPublic"
+    }
+  ]
+}

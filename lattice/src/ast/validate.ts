@@ -1,7 +1,7 @@
 import type { Diagnostic, Predicate, Term } from './invariant.js';
 import type { DomainModel, Field, TypeRef } from './domain.js';
 import { isQualifiedRef, moneyFieldPaths, numericFieldPaths, ownedCollectionChild } from './domain.js';
-import { PRIM_NAMES, RESERVED_WORDS } from './reserved.js';
+import { PRIM_NAMES, RESERVED_WORDS, FIELD_NAME_KEYWORDS } from './reserved.js';
 
 export const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -86,7 +86,7 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   const checkName = (kind: string, value: string, at?: string) => {
     if (!IDENT_RE.test(value))
       out.push({ code: 'invalid-name', message: `${kind} name '${value}' is not a valid identifier (letters, digits, underscore; no spaces)`, at });
-    else if (RESERVED_WORDS.has(value))
+    else if (RESERVED_WORDS.has(value) && !((kind === 'field' || kind === 'param') && FIELD_NAME_KEYWORDS.has(value)))
       out.push({ code: 'reserved-word', message: `${kind} name '${value}' is a .lat keyword and cannot be used as an identifier`, at });
   };
 
@@ -113,6 +113,12 @@ export function validateModel(m: DomainModel): Diagnostic[] {
     checkTypeName('enum', en.name, en.name);
     for (const v of en.values) checkName('enum value', v, `${en.name}.${v}`);
   }
+  // `builtin` carriers, `type` records, and `type` aliases are all type names — same namespace as
+  // enum/value/entity/aggregate, so they get checkTypeName (reject reserved words + prim spellings)
+  // and join the duplicate-name pool below.
+  for (const b of m.builtins ?? []) checkTypeName('builtin', b.name, b.name);
+  for (const r of m.records ?? []) { checkTypeName('type', r.name, r.name); for (const f of r.fields) checkName('field', f.name, `${r.name}.${f.name}`); }
+  for (const ta of m.typeAliases ?? []) checkTypeName('type', ta.name, ta.name);
   for (const v of m.values) {
     checkTypeName('value', v.name, v.name);
     for (const f of v.fields) checkName('field', f.name, `${v.name}.${f.name}`);
@@ -137,6 +143,8 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   }
   for (const s of m.services) {
     checkName('service', s.name, s.name);
+    if (s.tier !== undefined && !['appPublic', 'appPrivate', 'domain'].includes(s.tier))
+      out.push({ code: 'unknown-service-tier', message: `service ${s.name}: tier '${s.tier}' is not a valid tier — use appPublic, appPrivate, or domain`, at: s.name });
     for (const mm of s.methods) {
       checkName('method', mm.name, `${s.name}.${mm.name}`);
       for (const p of mm.params) checkName('param', p.name, `${s.name}.${mm.name}.${p.name}`);
@@ -145,7 +153,8 @@ export function validateModel(m: DomainModel): Diagnostic[] {
 
   const names = new Map<string, number>();
   const all = [...m.enums.map(e => e.name), ...m.values.map(v => v.name), ...m.entities.map(e => e.name), ...m.aggregates.map(a => a.name),
-    ...m.aggregates.flatMap(a => (a.entities ?? []).map(e => e.name))];
+    ...m.aggregates.flatMap(a => (a.entities ?? []).map(e => e.name)), ...(m.builtins ?? []).map(b => b.name),
+    ...(m.records ?? []).map(r => r.name), ...(m.typeAliases ?? []).map(ta => ta.name)];
   for (const n of all) names.set(n, (names.get(n) ?? 0) + 1);
   for (const [n, c] of names) if (c > 1) out.push({ code: 'duplicate-name', message: `name ${n} declared ${c} times` });
 
@@ -154,6 +163,9 @@ export function validateModel(m: DomainModel): Diagnostic[] {
   const enums = new Set(m.enums.map(e => e.name));
   const values = new Set(m.values.map(v => v.name));
   const events = new Set(m.events.map(e => e.name));
+  // Records resolve to a `carrier` reference exactly like builtins (both carried, codegen-only), so
+  // the carrier-resolution set is their union.
+  const carriers = new Set([...(m.builtins ?? []).map(b => b.name), ...(m.records ?? []).map(r => r.name)]);
 
   /**
    * child entity name -> the aggregate that owns it. A nested child is inlined into its owner in
@@ -183,6 +195,13 @@ export function validateModel(m: DomainModel): Diagnostic[] {
       checkRefTarget(t.of, at, null);
       return;
     }
+    // Rich containers (Slice 2): descend with ownerAgg reset to null — the owned-collection
+    // exception is ONLY a direct `List<ref Child>` on the aggregate, so a ref to a child buried in a
+    // Map/generic/union/optional is not one and stays subject to ref-target-nested-child.
+    if (t.kind === 'optional') { checkRefTarget(t.of, at, null); return; }
+    if (t.kind === 'map') { checkRefTarget(t.key, at, null); checkRefTarget(t.of, at, null); return; }
+    if (t.kind === 'generic') { for (const a of t.args) checkRefTarget(a, at, null); return; }
+    if (t.kind === 'union') { for (const a of t.arms) checkRefTarget(a, at, null); return; }
     if (t.kind !== 'ref') return;
     const target = t.target;   // capture before isQualifiedRef narrows t (its predicate type equals
                                 // this branch's narrowed type exactly, so the false branch is `never`)
@@ -205,14 +224,27 @@ export function validateModel(m: DomainModel): Diagnostic[] {
     }
     if (t.kind === 'enum' && !enums.has(t.enum)) out.push({ code: 'unresolved-enum', message: `enum ${t.enum} not declared`, at });
     if (t.kind === 'value' && !values.has(t.value)) out.push({ code: 'unresolved-value', message: `value type ${t.value} not declared`, at });
-    if (t.kind === 'list') checkType(t.of, at);
+    // A bare carrier only arises when the name matched a declared `builtin` (mapType), so this is
+    // reachable only for a hand-built model — but check it so the closed grammar stays honest.
+    if (t.kind === 'carrier' && !carriers.has(t.name)) out.push({ code: 'unresolved-carrier', message: `builtin type ${t.name} not declared`, at });
+    // Rich container kinds (Slice 2): recurse into sub-types so a nested unresolved ref/enum/value/
+    // carrier is still reported. Carried containers never reach the solver, but their element types
+    // must still name real declarations for faithful codegen.
+    if (t.kind === 'list' || t.kind === 'optional') checkType(t.of, at);
+    if (t.kind === 'map') { checkType(t.key, at); checkType(t.of, at); }
+    if (t.kind === 'generic') for (const a of t.args) checkType(a, at);
+    if (t.kind === 'union') for (const a of t.arms) checkType(a, at);
   };
-  const checkReservedField = (f: Field, at: string) => {
-    if (f.name === 'state')
-      out.push({ code: 'reserved-field-name', message: `'state' is reserved for machine-state keys (<Region>.state)`, at });
+  // `state` collides with the machine-state keys (`<Region>.state`) ONLY on an aggregate that has a
+  // lifecycle/machine — so it is reserved there, and freely usable as a field name everywhere else
+  // (records, values, entities, events, machineless aggregates). The grammar (FieldName) already
+  // lets it lex as a field name; this is the semantic half of the gate.
+  const checkReservedField = (f: Field, at: string, reserveState = false) => {
+    if (reserveState && f.name === 'state')
+      out.push({ code: 'reserved-field-name', message: `'state' is reserved for machine-state keys (<Region>.state) on an aggregate with a lifecycle`, at });
   };
-  const checkFields = (fs: Field[], owner: string, needKey: boolean, ownerAgg: string | null = null) => {
-    fs.forEach(f => { checkType(f.type, `${owner}.${f.name}`); checkReservedField(f, `${owner}.${f.name}`);
+  const checkFields = (fs: Field[], owner: string, needKey: boolean, ownerAgg: string | null = null, reserveState = false) => {
+    fs.forEach(f => { checkType(f.type, `${owner}.${f.name}`); checkReservedField(f, `${owner}.${f.name}`, reserveState);
       checkRefTarget(f.type, `${owner}.${f.name}`, ownerAgg);
       if (f.optional && f.key)
         out.push({ code: 'optional-key', message: `${owner}.${f.name} is a key field and cannot be optional — identity is never absent`, at: `${owner}.${f.name}` });
@@ -327,13 +359,21 @@ export function validateModel(m: DomainModel): Diagnostic[] {
 
   m.entities.forEach(e => checkFields(e.fields, e.name, true));
   m.events.forEach(e => e.fields.forEach(f => { checkType(f.type, `${e.name}.${f.name}`); checkReservedField(f, `${e.name}.${f.name}`); checkRefTarget(f.type, `${e.name}.${f.name}`, null); }));
+  // `type` records (Slice 4): free-form carried structs — validate that field types resolve and refs
+  // target real owners, but NONE of the solver-restrictions (value-flat/optional-value/key) apply,
+  // since a record is never solver-encoded. No key requirement either.
+  (m.records ?? []).forEach(r => r.fields.forEach(f => { checkType(f.type, `${r.name}.${f.name}`); checkReservedField(f, `${r.name}.${f.name}`); checkRefTarget(f.type, `${r.name}.${f.name}`, null); }));
+  // `type` aliases (Slice 4): the target is an already-inlined TypeRef; validate it names real decls.
+  (m.typeAliases ?? []).forEach(ta => checkType(ta.target, `type ${ta.name}`));
+  // Sum-type enum payloads (Slice 4): each payload TypeRef must name real decls (carried; not solved).
+  m.enums.forEach(en => { for (const [variant, t] of Object.entries(en.payloads ?? {})) checkType(t, `${en.name}.${variant}`); });
   m.aggregates.forEach(a => {
-    checkFields(a.fields, a.name, true, a.name);
+    checkFields(a.fields, a.name, true, a.name, a.machine != null);
     for (const child of a.entities ?? []) {
       // nested children share the type namespace (duplicate-name pool above, `owners` below), so a
       // prim-named child has its bare form hijacked exactly as a top-level entity's would be
       checkTypeName('entity', child.name, `${a.name}.${child.name}`);
-      checkFields(child.fields, `${a.name}.${child.name}`, true, null);   // missing-key covers child-key-required
+      checkFields(child.fields, `${a.name}.${child.name}`, true, null, a.machine != null);   // missing-key covers child-key-required
       for (const f of child.fields) {
         // `ref` and value-typed child fields are structurally legal as of this slice — List is the
         // one remaining rejection below. A child's ref must name a TOP-LEVEL owner —

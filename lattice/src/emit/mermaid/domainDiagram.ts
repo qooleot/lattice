@@ -8,9 +8,20 @@ function typeStr(t: TypeRef): string {
     case 'prim': return t.prim;
     case 'enum': return t.enum;
     case 'value': return t.value;
-    case 'list': return `List~${typeStr(t.of)}~`;
+    case 'list': return `List~${lbl(t.of)}~`;
+    case 'optional': return `${lbl(t.of)}?`;
+    case 'map': return `Map~${lbl(t.key)}, ${lbl(t.of)}~`;
+    case 'generic': return `${t.ctor}~${t.args.map(lbl).join(', ')}~`;
+    case 'union': return t.arms.map(lbl).join(' | ');
+    case 'carrier': return t.name;
     case 'ref': throw new Error(`typeStr: ref ${t.target} should have been filtered as an association`);
   }
+}
+
+/** Non-throwing label used INSIDE containers, where a nested `ref` is a plain type argument (not an
+ *  association to filter) — so it renders the target name rather than tripping typeStr's ref guard. */
+function lbl(t: TypeRef): string {
+  return t.kind === 'ref' ? t.target : typeStr(t);
 }
 
 const stubId = (target: string) => target.replace('.', '_');

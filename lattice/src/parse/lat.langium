@@ -33,16 +33,41 @@ DownstreamRoleName returns string:
     'anticorruption' | 'conformist';
 
 ContextItem:
-    EnumDecl | EntityDecl | AggregateDecl | EventDecl | TicksDecl | InvariantDecl | ValueDecl | ServiceDecl;
+    ModuleItem | TicksDecl | InvariantDecl | ModuleDecl;
+
+ModuleItem:
+    EnumDecl | EntityDecl | AggregateDecl | EventDecl | ValueDecl | ServiceDecl | BuiltinDecl | TypeDecl;
+
+ModuleDecl:
+    docs+=DOC* 'module' name=ID '{' items+=ModuleItem* '}';
+
+// `type Name = { … }` is a free-form carried struct (record); `type Name = <TypeExpr>` is an alias
+// (resolved/inlined at parse, like CML). `{` unambiguously starts the record form (no LatType begins
+// with `{`), so `target` set ⇒ alias, `target` unset ⇒ record.
+TypeDecl:
+    docs+=DOC* 'type' name=ID '=' ( '{' fields+=FieldDecl* '}' | target=LatType );
 
 EnumDecl:
-    'enum' name=ID '{' values+=ID (',' values+=ID)* '}';
+    docs+=DOC* 'enum' name=ID '{' variants+=EnumVariant (',' variants+=EnumVariant)* '}';
+
+// A variant is a bare name, or a sum-type variant carrying a payload: `monetary(Amount)`. The payload
+// is carried (dropped from solving); codegen lowers a payload-bearing enum to a discriminated union.
+EnumVariant:
+    name=ID ('(' payload=LatType ')')?;
+
+// Opaque builtin/external carrier type (design: derived-invariants.md "carried vs solved"). A
+// declared name that a field may be typed with but the solver never encodes — codegen represents it
+// (Ruby T::Struct / TS interface), derivation folds it to nothing. Lets a bare carrier name
+// (`meta : Metadata`) resolve to a carried TypeRef instead of the unresolved-enum
+// fallback, and round-trips (astToCode re-emits the decl).
+BuiltinDecl:
+    'builtin' name=ID ('=' ref=STRING)?;
 
 ValueDecl:
     docs+=DOC* 'value' name=ID '{' fields+=FieldDecl* invariants+=InvariantDecl* '}';
 
 ServiceDecl:
-    docs+=DOC* 'service' name=ID '{' methods+=MethodDecl* '}';
+    docs+=DOC* 'service' name=ID '{' ('tier' '=' tier=ID)? methods+=MethodDecl* '}';
 
 MethodDecl:
     docs+=DOC* name=ID '(' (params+=ParamDecl (',' params+=ParamDecl)*)? ')' (':' returns=LatType)?
@@ -52,7 +77,15 @@ MethodDecl:
         ('requires' requires=Predicate)?;
 
 ParamDecl:
-    name=ID ':' type=LatType;
+    name=FieldName ':' type=LatType;
+
+// Field/param names may be a bare ID or a small safe subset of keywords that are common real
+// field names (`state`, `type`, `count`, `from`, `to`). These keywords never start a sibling
+// construct inside a field body and are not FieldDecl flags, so they are unambiguous in the
+// `name ':'` position. `state` additionally stays rejected by validateModel on a machine-bearing
+// aggregate (where `<Region>.state` would collide) — see checkReservedField.
+FieldName returns string:
+    ID | 'state' | 'type' | 'count' | 'from' | 'to';
 
 TicksDecl:
     'ticksPerDay' '=' value=INT;
@@ -67,12 +100,25 @@ AggregateDecl:
     docs+=DOC* 'aggregate' name=ID '{' (fields+=FieldDecl | entities+=EntityDecl)* lifecycles+=LifecycleDecl* invariants+=InvariantDecl* '}';
 
 FieldDecl:
-    name=ID ':' type=LatType (optional?='?')? (key?='key')? (const?='const')? tags+=Tag*;
+    docs+=DOC* name=FieldName ':' type=LatType (optional?='?')? (key?='key')? (const?='const')? tags+=Tag*;
 
+// Rich CML type surface (see ast/domain.ts TypeRef, "carried vs solved"). Layered by precedence:
+// union `|` binds loosest, then the application forms (List/Optional/Map/generic/ref/named). Union
+// is parsed left-assoc and flattened to n-ary arms in fromLangium (as `&&`/`||` predicates are).
 LatType:
+    TypeUnion;
+
+TypeUnion infers LatType:
+    TypeApp ({infer UnionType.left=current} '|' right=TypeApp)*;
+
+TypeApp infers LatType:
     {infer ListType} 'List' '<' of=LatType '>'
+  | {infer OptionalType} 'Optional' '<' of=LatType '>'
+  | {infer MapType} 'Map' '<' key=LatType ',' of=LatType '>'
   | {infer RefType} 'ref' target=QualifiedName
-  | {infer NamedType} name=ID;
+    // A bare `name` is a prim/value/owner/carrier/enum (resolved in mapType). With type arguments
+    // it is a generic constructor (`Result<T, E>`, user generics) — carried, ctor left opaque.
+  | {infer NamedType} name=ID ('<' args+=LatType (',' args+=LatType)* '>')?;
 
 QualifiedName returns string:
     ID ('.' ID)?;

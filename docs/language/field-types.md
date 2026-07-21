@@ -28,10 +28,35 @@ context Billing {
 }
 ```
 
+A field may optionally carry a leading `///` doc comment that attaches prose to that specific field
+(see [doc-comments](doc-comments.md)). The full syntax is:
+
+```lat
+context Billing {
+  aggregate Subscription {
+    subId : Id key
+    /// The external customer identifier visible to API consumers.
+    customerId : Id @public
+    /// Internal seat count — hook-only exposure.
+    seats      : Int @hookOnly
+    label      : Text
+  }
+}
+```
+
+`@public` and `@hookOnly` are the recognized **visibility tags** (see [tags](tags.md)): a field is
+**internal by default**; `@public` opts it in to API exposure; `@hookOnly` narrows that to
+hook-only access. The TypeScript codegen emits a JSDoc comment (`/** … @public */`) above any field
+that carries a doc, a visibility tag, or both.
+
 A field is `<camelId> : <type>[?] [key] [const] [@<tag>]*`. `<type>` is one of:
 
-- **Primitives:** `Int`, `Text`, `Date`, `Duration`, `Money`, `Id`.
+- **Primitives:** `Int`, `Text`, `Date`, `Duration`, `Money`, `Id`, `Boolean`. `Boolean` is carried:
+  codegen maps it (`boolean`), but like `Text`/`Id` it is dropped from the solver (invariants cannot
+  read it yet).
+- **A type-alias name** — any `type Name = …` declared in the same context (resolved/inlined at parse).
 - **An enum name** — any [enum](enum.md) declared in the same context.
+- **A `type` record name** — any `type Name = { … }` free-form struct (see [the `type` section](#type-aliases-and-records)).
 - **A [value](value.md) name** — any `value` declared in the same context. Structural and keyless;
   its own fields are prims, enums, or other values — no `ref`, no `List` — see `value.md`.
 - **`ref <Target>`** — a same-context reference: `<Target>` must be an entity or aggregate
@@ -43,9 +68,17 @@ A field is `<camelId> : <type>[?] [key] [const] [@<tag>]*`. `<type>` is one of:
   (`nested-entity-flat`), not inside a value (`value-flat`) — neither has a list encoding to give
   it. A nested list (`List<List<T>>`) parses, but only an owned collection is solver-encoded; every
   other list is dropped before solving, nested or not.
+- **`Optional<T>`** — the fact may be absent. At a field **head** this is exactly the `?` suffix and
+  is normalized to it (`fee : Optional<Money>` ≡ `fee : Money?`, printed back as `Money?`); its value
+  is in **nested** positions the `?` suffix cannot reach, e.g. `Map<Id, Optional<Money>>`. Transparent
+  to derivation — the fold reaches the same leaf `T` would, guarded by presence.
+- **`Map<K, V>`**, **generics (`Ctor<T, …>`, e.g. `Result<T, E>`)**, **unions (`A | B | …`)**, and
+  **`builtin` carriers** — the *carried* surface: see [Carried types](#carried-types) below.
 
-A bare identifier resolves in this order: primitive → declared value → declared entity/aggregate
-(`ref`) → enum (the fallback, `unresolved-enum` if it matches nothing declared).
+A bare identifier resolves in this order: primitive → **type alias** → declared value → declared
+entity/aggregate (`ref`) → declared `builtin` carrier **or `type` record** → enum (the fallback,
+`unresolved-enum` if it matches nothing declared). The declared namespaces are mutually exclusive
+(`duplicate-name`), so only the final enum fallback is order-sensitive.
 
 A trailing `?` (immediately after the type, before `key`/`const`/tags) marks the field
 **optional**: the owner may exist with no value for it at all. Optionality is a property of the
@@ -172,6 +205,104 @@ while Quint made it a real flag, and the two solvers would then disagree about t
 this list promises they agree on. So the list is exhaustive — every type `?` is *legal* on either
 carries semantic weight or is `Text`/`Id`.
 
+## Carried types
+
+Lattice splits the field-type surface into two tiers so the full rich type system can coexist with
+bounded, decidable verification (see [derived invariants](derived-invariants.md), "carried vs
+solved"):
+
+- The **solved core** — `prim`, enum, `ref`, `value`, owned-collection `List`, and `Optional` — is
+  encoded into the solver, and derivation reaches its semantic leaves (`Money` non-negativity,
+  refs-resolve, value laws) through it.
+- The **carried surface** — `Map<K, V>`, generics (`Ctor<…>`), unions (`A | B`), and `builtin`
+  carriers — is *represented* for faithful codegen but **not** solver-encoded. Derivation folds it to
+  no leaf and the encoders drop it, exactly as a non-owned `List<Int>` is dropped today. An invariant
+  *over* a carried collection (∀ entries of a map, per union arm) is a later slice.
+
+```lat
+context Billing {
+  builtin Metadata
+
+  value Amount {
+    amount   : Money
+    currency : Text
+  }
+
+  entity DraftWithBill    { draftId : Id key }
+  entity DraftWithInvoice { draftId : Id key }
+
+  aggregate Ledger {
+    ledgerId : Id key
+    meta     : Metadata
+    balances : Map<Id, Amount>
+    settle   : Result<Amount, Text>
+    draft    : DraftWithBill | DraftWithInvoice
+    holds    : Map<Id, Optional<Money>>
+  }
+}
+```
+
+`meta` is a carrier; `balances` a map; `settle` a generic; `draft` a union; `holds` shows a nested
+`Optional` inside a carried map. All of these are carried — represented, never solved.
+
+- **`Map<K, V>`** — a keyed collection. Both `K` and `V` are ordinary types validated by the same
+  rules. Carried: the solver never sees it.
+- **Generics `Ctor<T, …>`** — any name (other than `List`/`Optional`/`Map`) followed by
+  `<`-delimited type arguments is a generic constructor. The constructor name is left opaque
+  (carried); the arguments are validated.
+- **Unions `A | B | …`** — an alternation of types. Parsed left-associatively and flattened, so
+  `A | B | C` is one union of three arms. Carried.
+- **`builtin <Name>`** — a top-level declaration of an opaque carrier type. A field typed with a
+  declared builtin resolves to a carrier (not the `unresolved-enum` fallback). Use it for external or
+  primitive-like types lattice does not model structurally (`Metadata`, `Currency`, `Decimal`,
+  `TimeRange`, …). A `builtin` name shares the type namespace with enums/values/entities/aggregates
+  (`duplicate-name`, `reserved-prim-name`) and should be PascalCase. An optional **external ref** binds
+  it to an existing type — `builtin Amount = "Opus::Monetary::Core::Types::Amount"` — which a codegen
+  backend imports instead of emitting.
+
+Carried element types still validate: a `ref`, enum, value, or carrier buried inside a `Map`,
+generic, or union must still name a real declaration, and a `ref` to an aggregate-owned child inside
+one is still rejected (`ref-target-nested-child`) — only a direct `List<ref Child>` on the owning
+aggregate is an owned collection.
+
+## `type` aliases and records
+
+A `type` declaration is TypeScript-shaped and has two forms — an **alias** (RHS is a type) or a
+**record** (RHS is an object literal):
+
+```lat
+context Billing {
+  builtin Amount = "Opus::Monetary::Core::Types::Amount"
+
+  type CustomerId = Id
+  type MetaMap    = Map<Id, Text>
+
+  type LineItem = {
+    itemId : Id
+    amount : Amount
+    tags   : List<Text>
+    note   : Text?
+  }
+
+  aggregate Order {
+    orderId  : Id key
+    customer : CustomerId
+    lines    : List<LineItem>
+  }
+}
+```
+
+- An **alias** names an existing type. It is resolved at parse and **inlined** at every use site (the
+  declaration is retained so it round-trips, but use sites carry the resolved type — matching CML,
+  where aliases don't appear in generated code). An alias may target another alias; a cycle is
+  `alias-cycle`.
+- A **record** (`type X = { … }`) is a free-form, carried, codegen-only struct. Unlike a
+  [`value`](value.md) it is **not** solver-encoded and has **no** field restrictions — its fields may
+  be lists, optionals, refs, generics, or other records. A field referencing a record resolves to a
+  carrier (dropped from solving); codegen emits it as an interface. **Use `value` when you want
+  structural equality + verification; use `type X = {}` for a plain data shape** (e.g. a service/hook
+  DTO) that only needs to round-trip and generate.
+
 ## Semantic Rules
 
 - An unqualified `ref Target` must name a real entity or aggregate declared in the same context
@@ -180,7 +311,11 @@ carries semantic weight or is `Text`/`Id`.
   `docs`-compile time.
 - A value-typed field must name a declared value (`unresolved-value`) — see [value](value.md).
 - An enum-typed field must name a declared enum (`unresolved-enum`).
-- `List<T>` recurses: the element type `T` is validated by the same rules.
+- A carrier-typed field must name a declared `builtin` (`unresolved-carrier`) — but a bare name only
+  resolves to a carrier when a `builtin` of that name exists, so this fires only on a hand-built
+  model; a source spelling that matches no declaration falls through to `unresolved-enum`.
+- `List<T>`, `Optional<T>`, `Map<K,V>`, generics, and unions recurse: every element/argument/arm type
+  is validated by the same rules.
 - A `key` field cannot be optional (`optional-key`) — identity is never absent.
 - A `List<T>` field cannot be optional (`optional-list`) — an absent list and an empty list are the
   same fact; `List<T>` already means zero or more.

@@ -25,14 +25,30 @@ const good: DomainModel = {
 };
 
 describe('validateModel rejects grammar-keyword identifiers (spec §3.4 conformance)', () => {
-  it('rejects a field named "count" (a reserved .lat keyword)', () => {
+  it('allows a field named "count" (in the FieldName carve-out)', () => {
     const m = structuredClone(good);
     m.aggregates[0]!.fields.push({ name: 'count', type: { kind: 'prim', prim: 'Int' } });
-    const diags = validateModel(m);
-    expect(diags.map(d => d.code)).toContain('reserved-word');
-    const d = diags.find(x => x.code === 'reserved-word')!;
-    expect(d.message).toContain("'count'");
-    expect(d.message).toContain('keyword');
+    expect(validateModel(m).map(d => d.code)).not.toContain('reserved-word');
+  });
+
+  it('still rejects a field named "entity" (a reserved word NOT in the FieldName carve-out)', () => {
+    const m = structuredClone(good);
+    m.aggregates[0]!.fields.push({ name: 'entity', type: { kind: 'prim', prim: 'Int' } });
+    const d = validateModel(m).find(x => x.code === 'reserved-word');
+    expect(d).toBeDefined();
+    expect(d!.message).toContain("'entity'");
+  });
+
+  it('rejects a "state" field on a machine-bearing aggregate but allows it on a machineless type', () => {
+    const onAgg = structuredClone(good);
+    onAgg.aggregates[0]!.fields.push({ name: 'state', type: { kind: 'prim', prim: 'Text' } });
+    expect(validateModel(onAgg).map(d => d.code)).toContain('reserved-field-name');
+
+    const onEntity = structuredClone(good);
+    onEntity.entities[0]!.fields.push({ name: 'state', type: { kind: 'prim', prim: 'Text' } });
+    const entityCodes = validateModel(onEntity).map(d => d.code);
+    expect(entityCodes).not.toContain('reserved-field-name');
+    expect(entityCodes).not.toContain('reserved-word');
   });
 
   it('rejects an aggregate named "terminal"', () => {

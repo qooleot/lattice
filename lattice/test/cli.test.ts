@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { runCommand, inferRenameSpec } from '../src/cli.js';
 import { appendLedger } from '../src/engine/session.js';
 import { traceAModel, traceDModel, invoiceLinesModel, sumCandidate, someStatePredicateOnInvoice } from './fixtures.js';
+import type { CaseState } from '../src/engine/evaluate.js';
 
-const dpsf = { entities: [
+const dpsf: CaseState = { entities: [
   { type: 'Customer', id: 'c1', fields: {} }, { type: 'Family', id: 'f1', fields: {} },
   { type: 'Plan', id: 'p1', fields: { family: 'f1' } }, { type: 'Plan', id: 'p2', fields: { family: 'f1' } },
   { type: 'Subscription', id: 's1', fields: { customer: 'c1', plan: 'p1', 'Access.state': 'Active' } },

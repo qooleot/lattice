@@ -9,11 +9,14 @@ export const qid = (name: string): string => `"${name}"`;
 
 function sqlType(t: TypeRef): 'TEXT' | 'INTEGER' {
   switch (t.kind) {
-    case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? 'TEXT' : 'INTEGER'; // Int/Money/Date/Duration → INTEGER (ticks)
+    case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? 'TEXT' : 'INTEGER'; // Int/Money/Date/Duration/Boolean → INTEGER (Boolean as 0/1)
     case 'enum': return 'TEXT';
     case 'ref': return 'TEXT';           // foreign id
+    case 'optional': return sqlType(t.of);   // transparent wrapper — column nullability is orthogonal
     case 'list': throw new Error(`unsupported field type kind: list (${JSON.stringify(t.of)}) — the SQL DDL renderer does not yet support list-type fields`);
     case 'value': throw new Error(`unsupported field type kind: value (${t.value}) — the SQL DDL renderer does not yet support value-type fields`);
+    case 'map': case 'generic': case 'union': case 'carrier':
+      throw new Error(`unsupported field type kind: ${t.kind} — the SQL DDL renderer does not yet support carried rich types (they are not scalar columns)`);
   }
 }
 

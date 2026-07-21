@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseLat, scanBannedComments } from '../../src/parse/parse.js';
+import { loadLatText } from '../../src/parse/fromLangium.js';
 
 const GOOD = `/// A tiny spec
 context Demo {
@@ -51,15 +52,12 @@ describe('parseLat', () => {
     }
   });
 
-  it("explains that '///' docs cannot attach to an enum", () => {
+  it("attaches a '///' doc to an enum and stores it on the CST node", () => {
     const r = parseLat('context C {\n  /// billing modes\n  enum Mode { fast, slow }\n}');
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.diagnostics).toHaveLength(1);
-      const d = r.diagnostics[0]!;
-      expect(d.code).toBe('enum-doc-unsupported');
-      expect(d.line).toBe(2);
-      expect(d.message).toContain('enum');
+    expect(r.ok, JSON.stringify(!r.ok && (r as any).diagnostics)).toBe(true);
+    if (r.ok) {
+      const enumDecl = r.cst.context?.items.find((i: any) => i.$type === 'EnumDecl') as any;
+      expect(enumDecl?.docs).toEqual(['/// billing modes']);
     }
   });
 
@@ -181,5 +179,107 @@ describe('RESERVED_WORDS matches the grammar keywords (single source enforced by
     for (const w of RESERVED_WORDS) expect(grammarKeywords.has(w), `'${w}' not found as a quoted keyword in lat.langium`).toBe(true);
     for (const w of grammarKeywords) if (/^[a-z]/i.test(w))
       expect(RESERVED_WORDS.has(w), `grammar keyword '${w}' missing from RESERVED_WORDS`).toBe(true);
+  });
+});
+
+describe('Enum-level doc comments (Slice 8)', () => {
+  it('/// before enum parses and attaches doc via loadLatText', async () => {
+    const { loadLatText } = await import('../../src/parse/fromLangium.js');
+    const r = loadLatText('context C {\n  /// Billing cadence.\n  enum Period { monthly, annual }\n}');
+    expect(r.ok, JSON.stringify(!r.ok && (r as any).diagnostics)).toBe(true);
+    if (r.ok) expect(r.model.enums[0]!.doc).toBe('Billing cadence.');
+  });
+
+  it('/// before enum round-trips through astToCode', async () => {
+    const { loadLatText } = await import('../../src/parse/fromLangium.js');
+    const { astToCode } = await import('../../src/emit/code.js');
+    const src = 'context C {\n  /// Billing cadence.\n  enum Period { monthly, annual }\n}';
+    const r = loadLatText(src);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const printed = astToCode(r.model, []);
+    expect(printed).toContain('/// Billing cadence.');
+    const reparsed = loadLatText(printed);
+    expect(reparsed.ok, JSON.stringify(!reparsed.ok && (reparsed as any).diagnostics)).toBe(true);
+    if (reparsed.ok) expect(reparsed.model.enums[0]!.doc).toBe('Billing cadence.');
+  });
+});
+
+describe('Service tier annotation (Slice 8)', () => {
+  it('parses tier = appPrivate and sets model.services[0].tier', async () => {
+    const { loadLatText } = await import('../../src/parse/fromLangium.js');
+    const r = loadLatText(`context C {
+  aggregate A { aId : Id key
+    lifecycle r { states { s @initial, t @terminal } transition x { from s to t } }
+  }
+  service MyService {
+    tier = appPrivate
+    doIt(id: Id) performs A.x
+  }
+}`);
+    expect(r.ok, JSON.stringify(!r.ok && (r as any).diagnostics)).toBe(true);
+    if (r.ok) expect(r.model.services[0]!.tier).toBe('appPrivate');
+  });
+
+  it('round-trips tier = appPrivate through astToCode', async () => {
+    const { loadLatText } = await import('../../src/parse/fromLangium.js');
+    const { astToCode } = await import('../../src/emit/code.js');
+    const src = `context C {
+  aggregate A { aId : Id key
+    lifecycle r { states { s @initial, t @terminal } transition x { from s to t } }
+  }
+  service MySvc {
+    tier = appPrivate
+    doIt(id: Id) performs A.x
+  }
+}`;
+    const r = loadLatText(src);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const printed = astToCode(r.model, []);
+    expect(printed).toContain('tier = appPrivate');
+    const reparsed = loadLatText(printed);
+    expect(reparsed.ok, JSON.stringify(!reparsed.ok && (reparsed as any).diagnostics)).toBe(true);
+    if (reparsed.ok) expect(reparsed.model.services[0]!.tier).toBe('appPrivate');
+  });
+
+  it('invalid tier produces unknown-service-tier diagnostic', async () => {
+    const { loadLatText } = await import('../../src/parse/fromLangium.js');
+    const r = loadLatText(`context C {
+  aggregate A { aId : Id key
+    lifecycle r { states { s @initial, t @terminal } transition x { from s to t } }
+  }
+  service MySvc {
+    tier = bogus
+    doIt(id: Id) performs A.x
+  }
+}`);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.diagnostics.some(d => d.code === 'unknown-service-tier')).toBe(true);
+  });
+});
+
+describe('keyword field names (FieldName rule + reserved carve-out)', () => {
+  it('allows state/type/count/from/to as field and param names, preserving them', () => {
+    const r = loadLatText(`context Kw {
+  type Loc = { state : Text  type : Text  count : Int  from : Date  to : Date }
+  value V { state : Text }
+  service S { tier = appPublic  doThing(type : Text) : Loc read-only }
+}`);
+    expect(r.ok, JSON.stringify(!r.ok && r.diagnostics)).toBe(true);
+    if (r.ok) {
+      const loc = r.model.records?.find(x => x.name === 'Loc');
+      expect(loc?.fields.map(f => f.name)).toEqual(['state', 'type', 'count', 'from', 'to']);
+    }
+  });
+
+  it("still rejects a 'state' field on an aggregate with a lifecycle (<Region>.state collision)", () => {
+    const r = loadLatText(`context KwAgg {
+  aggregate Order { orderId : Id key  state : Text
+    lifecycle L { states { draft @initial, done @terminal } transition go { from draft to done } }
+  }
+}`);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.diagnostics.some(d => d.code === 'reserved-field-name')).toBe(true);
   });
 });

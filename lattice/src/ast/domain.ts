@@ -1,13 +1,55 @@
 import type { Path, Predicate } from './invariant.js';
 
-export type PrimType = 'Int' | 'Text' | 'Date' | 'Duration' | 'Money' | 'Id';
+export type PrimType = 'Int' | 'Text' | 'Date' | 'Duration' | 'Money' | 'Id' | 'Boolean';
 
+/**
+ * A field/param type. Kinds fall into two tiers (see derived-invariants.md, "carried vs solved") — the
+ * split is what lets the full CML rich type system coexist with bounded, decidable verification:
+ *
+ *   SOLVED core — solver-encoded; derivation reaches semantic leaves (Money, refs, value laws) through
+ *   these. `prim`, `enum`, `ref`, `value`, `list` (in its owned-collection form), and `optional` (a
+ *   transparent 1:1 wrapper the fold sees straight through).
+ *
+ *   CARRIED surface — represented for FAITHFUL codegen (Ruby `T::Struct` / TS interfaces) but NOT
+ *   solver-encoded. Derivation folds to no leaf and the encoders drop them — exactly as a non-owned
+ *   `List<Int>` is dropped today. `map`, `generic`, `union`, and `carrier`.
+ *
+ * Slice 1 (this change) introduces the CARRIED kinds as first-class representation so the whole CML
+ * surface — `Map<K,V>`, `Result<T,E>` and other generics, `A | B` unions, and opaque builtins like
+ * `Metadata`/`Currency`/`Decimal`/`TimeRange` — round-trips through the AST. Deriving an invariant
+ * OVER a collection/arm (∀ entries of a map, per union arm) is a LATER slice: it adds a
+ * collection-scoped Candidate that reuses the owned-collection encoding quint.ts/alloy.ts already have
+ * (`sumOverCollection` is the existing precedent). It does NOT widen `Path` — element quantification
+ * lives in the Candidate, not the path.
+ */
 export type TypeRef =
   | { kind: 'prim'; prim: PrimType }
   | { kind: 'enum'; enum: string }
   | { kind: 'ref'; target: string }
   | { kind: 'list'; of: TypeRef }
-  | { kind: 'value'; value: string };
+  | { kind: 'value'; value: string }
+  // — rich CML types (Slice 1) —
+  | { kind: 'optional'; of: TypeRef }                  // Optional<T>: the fact may be absent. Transparent
+                                                       // to the fold; at a FIELD HEAD it is equivalent to
+                                                       // Field.optional (the parser normalizes head
+                                                       // `Optional<T>` to the flag; this kind carries a
+                                                       // NESTED optional, e.g. `Map<K, Optional<V>>`).
+  | { kind: 'map'; key: TypeRef; of: TypeRef }         // Map<K,V> — carried; ∀-entry derivation is later.
+  | { kind: 'generic'; ctor: string; args: TypeRef[] } // Result<T,E>, user generics — carried; per-arm later.
+  | { kind: 'union'; arms: TypeRef[] }                 // A | B | C — carried; per-arm derivation later.
+  | { kind: 'carrier'; name: string };                 // opaque builtin/external named type — codegen-only.
+
+/** Unwrap a head `optional` wrapper (idempotent for non-optional types). */
+export const unwrapOptional = (t: TypeRef): TypeRef => (t.kind === 'optional' ? unwrapOptional(t.of) : t);
+
+/** True for the CARRIED-surface kinds: represented for codegen, dropped from solving/derivation. */
+export const isCarriedType = (t: TypeRef): boolean => {
+  switch (t.kind) {
+    case 'map': case 'generic': case 'union': case 'carrier': return true;
+    case 'optional': return isCarriedType(t.of);
+    default: return false;   // prim, enum, ref, list, value — solved core
+  }
+};
 
 export interface Field {
   name: string;
@@ -18,6 +60,7 @@ export interface Field {
                         // invariant reading an optional path must say what absence means
                         // (see grammar.ts's absence-undecided).
   tags?: string[];   // semantic tags (spec plan §10.1): 'balance', 'total', 'monotonic', …
+  doc?: string;      // field-level doc comment (from ///)
 }
 export interface StateDef { name: string; tags?: ('active' | 'terminal')[] }
 export interface Region { name: string; initial: string; states: StateDef[] }
@@ -28,7 +71,15 @@ export interface TransitionDef {
   emits?: string;         // declared event this transition announces on firing (design §3.6)
 }
 export interface Machine { regions: Region[]; transitions: TransitionDef[] }
-export interface EnumDef { name: string; values: string[] }
+export interface EnumDef {
+  name: string;
+  values: string[];   // variant names — unchanged; every existing consumer (predicates, solvers) reads these
+  // Sum-type payloads (Slice 4): present only for variants carrying one (`monetary(Amount)`). Carried
+  // (dropped from solving); codegen lowers a payload-bearing enum to a discriminated union.
+  payloads?: { [variant: string]: TypeRef };
+  doc?: string;       // enum-level doc comment (from ///) — Slice 8
+  module?: string;    // grouping label (Slice 6): set only when declared inside a `module` block
+}
 /** Structural, keyless value type (design §3.5): compared by structure, not identity — fields are
  *  prim, enum, or ANOTHER VALUE (slice B2: values nest; `value-flat` now rejects only ref/list, and
  *  `value-cycle` rejects a cycle in the value→value graph, which has no finite flattening). Its
@@ -41,10 +92,22 @@ export interface ValueDef {
   kind: 'value'; name: string; fields: Field[];
   invariants?: { name: string; body: Predicate; doc?: string }[];
   doc?: string;
+  module?: string;    // grouping label (Slice 6)
 }
-export interface EntityDef { kind: 'entity'; name: string; fields: Field[]; doc?: string }
-export interface AggregateDef { kind: 'aggregate'; name: string; fields: Field[]; entities?: EntityDef[]; machine?: Machine; doc?: string }
-export interface EventDef { name: string; fields: Field[]; doc?: string }
+/** Free-form carried struct/DTO (Slice 4, `type Name = { … }`). Unlike `value` it is NOT
+ *  solver-encoded and has no field restrictions — its fields may be lists/optionals/refs/generics/
+ *  other records. A field typed with a record resolves to a `carrier` TypeRef (dropped from solving);
+ *  codegen emits it as an interface. Use `value` when you want structural equality + verification;
+ *  use `type X = {}` for a plain data shape (e.g. a service/hook DTO). */
+export interface RecordDef { name: string; fields: Field[]; doc?: string; module?: string }
+
+/** A type alias (Slice 4, `type Name = <TypeExpr>`). Resolved (inlined) at parse like CML, so use
+ *  sites carry the resolved `target`; the declaration is retained here only so it round-trips. */
+export interface TypeAliasDef { name: string; target: TypeRef; doc?: string; module?: string }
+
+export interface EntityDef { kind: 'entity'; name: string; fields: Field[]; doc?: string; module?: string }
+export interface AggregateDef { kind: 'aggregate'; name: string; fields: Field[]; entities?: EntityDef[]; machine?: Machine; doc?: string; module?: string }
+export interface EventDef { name: string; fields: Field[]; doc?: string; module?: string }
 
 /** Service methods (design §3.6): carried structure only — never solver-encoded. A method's
  *  `kind` names exactly one of: a read-only query, a `performs`-reference to a declared transition
@@ -57,7 +120,7 @@ export interface MethodDef {
   kind: { readOnly: true } | { performs: { aggregate: string; transition: string } } | { creates: string };
   requires?: Predicate;
 }
-export interface ServiceDef { name: string; methods: MethodDef[]; doc?: string }
+export interface ServiceDef { name: string; methods: MethodDef[]; doc?: string; tier?: 'appPublic' | 'appPrivate' | 'domain'; module?: string }
 
 /** The nested child an owned collection ranges over, or null (design §3.2). */
 export function ownedCollectionChild(a: AggregateDef, f: Field): EntityDef | null {
@@ -84,6 +147,13 @@ export function ownedCollectionChild(a: AggregateDef, f: Field): EntityDef | nul
 function fieldPathsWhere(m: DomainModel, f: Field, match: (p: PrimType) => boolean,
     visiting: ReadonlySet<string> = new Set()): Path[] {
   if (f.type.kind === 'prim') return match(f.type.prim) ? [[f.name]] : [];
+  // `optional` is a transparent 1:1 wrapper (Slice 1): fold straight through to the inner type,
+  // reusing `f.name` so the path is unchanged — `Optional<Amount>` yields exactly what `Amount`
+  // would. Presence is handled at the derivation site (impliedInvariants reads headOptional).
+  if (f.type.kind === 'optional') return fieldPathsWhere(m, { ...f, type: f.type.of }, match, visiting);
+  // Everything else with no FLAT leaf — list/map/generic/union/carrier/enum/ref — folds to nothing:
+  // carried to codegen, dropped from solving. Deriving THROUGH a collection (∀ entries) is a later
+  // slice via a collection-scoped Candidate, not this flat-path walk.
   if (f.type.kind !== 'value') return [];
   const valueName = (f.type as { kind: 'value'; value: string }).value;
   if (visiting.has(valueName)) return [];
@@ -123,10 +193,20 @@ export function numericFieldPaths(m: DomainModel, f: Field, visiting: ReadonlySe
   return fieldPathsWhere(m, f, p => NUM.has(p), visiting);
 }
 
+/** A declared opaque `builtin` carrier type (Slice 2/4). A field typed with one resolves to a
+ *  `carrier` TypeRef — codegen represents it, the solver never encodes it. `ref` (Slice 4) is an
+ *  optional external identifier (e.g. a Ruby FQN `Opus::Monetary::Core::Types::Amount`) so a codegen
+ *  backend imports the existing type rather than emitting a definition. */
+export interface BuiltinDef { name: string; ref?: string; module?: string }
+
 export interface DomainModel {
   context: string;
   doc?: string;              // free-form human description; exempt from identifier validation
   ticksPerDay?: number;      // time granularity; default 24 (tick = 1 hour)
+  builtins?: BuiltinDef[];   // declared `builtin` carriers. Omitted (not []) when none are declared,
+                             // so a model without builtins is byte-identical to before.
+  typeAliases?: TypeAliasDef[]; // `type Name = T` aliases (Slice 4). Inlined at use sites; retained for round-trip.
+  records?: RecordDef[];     // `type Name = { … }` free-form carried structs (Slice 4).
   enums: EnumDef[];
   values: ValueDef[];
   entities: EntityDef[];

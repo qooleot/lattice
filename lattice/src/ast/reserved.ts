@@ -13,13 +13,24 @@ import type { PrimType } from './domain.js';
  * parse/ (parse/ already imports from ast/ — see fromLangium.ts, diff.ts).
  */
 export const RESERVED_WORDS: ReadonlySet<string> = new Set([
-  'aggregate', 'anticorruption', 'by', 'conformist', 'conserve', 'const', 'contains', 'context',
+  'aggregate', 'anticorruption', 'builtin', 'by', 'conformist', 'conserve', 'const', 'contains', 'context',
   'contextMap', 'count', 'creates', 'downstream', 'emits', 'entity', 'enum', 'event', 'exposes', 'fairness',
-  'from', 'in', 'invariant', 'key', 'leads', 'lifecycle', 'List', 'monotonic', 'now', 'of', 'on', 'openHost',
-  'partnership', 'performs', 'present', 'publishedLanguage', 'read-only', 'ref', 'refs', 'requires', 'resolve', 'roles',
-  'service', 'sharedKernel', 'state', 'states', 'sum', 'terminal', 'ticksPerDay', 'to', 'transition',
+  'from', 'in', 'invariant', 'key', 'leads', 'lifecycle', 'List', 'Map', 'module', 'monotonic', 'now', 'of', 'on', 'openHost',
+  'Optional', 'partnership', 'performs', 'present', 'publishedLanguage', 'read-only', 'ref', 'refs', 'requires', 'resolve', 'roles',
+  'service', 'sharedKernel', 'state', 'states', 'sum', 'terminal', 'ticksPerDay', 'tier', 'to', 'transition', 'type',
   'under', 'unique', 'upstream', 'value', 'when', 'where', 'while', 'with',
 ]);
+
+/**
+ * Keywords the grammar's `FieldName` rule additionally permits as FIELD and PARAM names. These
+ * never start a sibling construct inside a field body and are not FieldDecl flags, so they lex
+ * unambiguously in the `name ':'` position (common real field names like `state`, `type`, `count`,
+ * `from`, `to`). A subset of RESERVED_WORDS — a member being reserved everywhere else is exactly
+ * why it needs this carve-out in validateModel's checkName. Kept in lockstep with the `FieldName`
+ * rule in lat.langium (a parse test asserts they parse as field names). NOTE: `state` remains
+ * rejected on a machine-bearing aggregate by checkReservedField (the `<Region>.state` collision).
+ */
+export const FIELD_NAME_KEYWORDS: ReadonlySet<string> = new Set(['state', 'type', 'count', 'from', 'to']);
 
 /**
  * Built-in primitive type names, reserved against enum/value/entity/aggregate names — the type
@@ -48,6 +59,6 @@ export const RESERVED_WORDS: ReadonlySet<string> = new Set([
  * (a missing member would silently un-reserve the new name).
  */
 const PRIM_NAME_KEYS: Record<PrimType, true> = {
-  Int: true, Text: true, Date: true, Duration: true, Money: true, Id: true,
+  Int: true, Text: true, Date: true, Duration: true, Money: true, Id: true, Boolean: true,
 };
 export const PRIM_NAMES: ReadonlySet<string> = new Set(Object.keys(PRIM_NAME_KEYS));

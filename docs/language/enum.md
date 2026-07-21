@@ -8,6 +8,7 @@ by name from any entity, aggregate, or event field.
 
 ```lat
 context Billing {
+  /// Billing cadence for a subscription plan.
   enum BillingPeriod { monthly, annual }
 
   entity Plan {
@@ -17,20 +18,28 @@ context Billing {
 }
 ```
 
-`enum <PascalId> { <camelId>, <camelId>, … }` — at least one value, comma-separated. Values are
+`enum <PascalId> { <camelId>, <camelId>, … }` — at least one value, comma-separated. A leading
+`///` doc comment is supported (it attaches to the enum declaration and round-trips). Values are
 read back with `EnumName.value` in a predicate, e.g. `period == BillingPeriod.monthly`.
 
-Enums do **not** accept a `///` doc comment: the grammar has no doc-comment slot on `EnumDecl`, so
-attaching one is a dedicated parse error rather than a generic syntax error:
+## Sum-type (payload) variants
 
-```
-/// Billing cadence.
-enum BillingPeriod { monthly, annual }
+A variant may carry a **payload type**, making the enum a sum type / tagged union:
+
+```lat
+context Billing {
+  builtin Amount = "Opus::Monetary::Core::Types::Amount"
+  type CustomUnit = { unitId : Id  qty : Int }
+
+  enum CreditGrantAmount { monetary(Amount), customPricingUnit(CustomUnit), none }
+}
 ```
 
-This produces `enum-doc-unsupported` — "`///` docs cannot attach to an enum — move the doc onto
-the context, an entity, event, aggregate, or invariant, or remove it." Put the explanatory doc on
-the entity or aggregate that uses the enum instead.
+The payload is **carried** — dropped from solving (the solver still sees the variant names). Codegen
+*lowers* the enum to each language's idiom: TypeScript emits a **discriminated union** tagged by
+`kind`, with the payload under `value` — `{ kind: 'monetary'; value: Amount } | … | { kind: 'none' }`
+— since TS has no positional ADT variant. A plain enum (no payloads) still lowers to a string-literal
+union. A payload type that names nothing declared reports `unresolved-enum`.
 
 ## Semantic Rules
 
@@ -40,13 +49,15 @@ the entity or aggregate that uses the enum instead.
 - Each value must be camelCase by convention (`naming-convention`) and a valid, non-reserved
   identifier.
 - A field typed with an undeclared enum name reports `unresolved-enum` at load.
-- `///` immediately before `enum` is rejected at parse time (`enum-doc-unsupported`), before
-  semantic validation runs.
+- A leading `///` doc comment attaches to the enum and is stored on `EnumDef.doc`. It round-trips
+  through the printer and is emitted by the TypeScript codegen as a `/** doc */` JSDoc block above
+  the `export type` line.
 
 ## Example
 
 ```lat
 context Billing {
+  /// How usage overage is priced for this plan.
   enum UsagePricing { overage, allUnits }
 
   entity Plan {

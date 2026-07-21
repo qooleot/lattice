@@ -261,10 +261,15 @@ function demoBody(shape: ActivateLikeShape, subKey: string, invKey: string): str
 
 function defaultLiteralFor(f: Field): string {
   switch (f.type.kind) {
-    case 'prim': return f.type.prim === 'Text' || f.type.prim === 'Id' ? "''" : '0';
+    case 'prim': return f.type.prim === 'Text' || f.type.prim === 'Id' ? "''" : f.type.prim === 'Boolean' ? 'false' : '0';
     case 'enum': return "''";
     case 'ref': return "''";
     case 'list': return '[]';
     case 'value': return '{}';
+    case 'optional': return 'null';
+    case 'map': return '{}';
+    case 'generic': return 'null';
+    case 'union': return defaultLiteralFor({ ...f, type: f.type.arms[0]! });
+    case 'carrier': return 'null';
   }
 }

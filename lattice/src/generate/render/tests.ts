@@ -23,11 +23,16 @@ function keyField(a: PlanAggregate): string {
 // doesn't override a field.
 function defaultLiteral(t: TypeRef): string {
   switch (t.kind) {
-    case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? "''" : '0'; // Int/Money/Date/Duration -> 0 (ticks)
+    case 'prim': return t.prim === 'Text' || t.prim === 'Id' ? "''" : t.prim === 'Boolean' ? 'false' : '0'; // Int/Money/Date/Duration -> 0 (ticks)
     case 'enum': return "''";
     case 'ref': return "''";
     case 'list': return '[]';
     case 'value': return '{}';
+    case 'optional': return 'null';
+    case 'map': return '{}';
+    case 'generic': return 'null';   // no general default for an arbitrary type constructor
+    case 'union': return defaultLiteral(t.arms[0]!);
+    case 'carrier': return 'null';
   }
 }
 
